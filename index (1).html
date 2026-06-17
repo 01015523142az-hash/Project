@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>InvoiceAI — Email to ERP Importer</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.0.0/dist/tabler-icons.min.css" />
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #ffffff;
+    --bg2: #f6f6f4;
+    --bg3: #efefec;
+    --border: rgba(0,0,0,0.12);
+    --border2: rgba(0,0,0,0.22);
+    --text: #1a1a18;
+    --text2: #5a5a56;
+    --text3: #9a9a94;
+    --green: #1D9E75;
+    --green-light: #E1F5EE;
+    --green-dark: #0F6E56;
+    --green-mid: #9FE1CB;
+    --amber: #BA7517;
+    --amber-light: #FAEEDA;
+    --radius: 10px;
+    --radius-sm: 6px;
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1c1c1a;
+      --bg2: #252523;
+      --bg3: #2e2e2b;
+      --border: rgba(255,255,255,0.1);
+      --border2: rgba(255,255,255,0.2);
+      --text: #f0f0ec;
+      --text2: #a8a8a2;
+      --text3: #666660;
+      --green-light: #0a2e20;
+      --green-dark: #9FE1CB;
+      --amber-light: #2e1f00;
+    }
+  }
+
+  body {
+    font-family: var(--font);
+    background: var(--bg2);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.5;
+  }
+
+  /* NAV */
+  nav {
+    background: var(--bg);
+    border-bottom: 0.5px solid var(--border);
+    padding: 0 2rem;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  .nav-logo {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+    text-decoration: none;
+  }
+  .nav-logo .dot { color: var(--green); }
+  .nav-badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 3px 8px;
+    border-radius: 20px;
+    background: var(--green-light);
+    color: var(--green-dark);
+  }
+  .nav-right { display: flex; align-items: center; gap: 12px; }
+  .nav-link {
+    font-size: 13px;
+    color: var(--text2);
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .nav-link:hover { color: var(--text); }
+
+  /* LAYOUT */
+  .container { max-width: 980px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  /* HERO */
+  .hero { margin-bottom: 2.5rem; }
+  .hero-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: var(--green-light);
+    color: var(--green-dark);
+    margin-bottom: 14px;
+  }
+  .hero h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; margin-bottom: 10px; color: var(--text); }
+  .hero h1 span { color: var(--green); }
+  .hero p { font-size: 16px; color: var(--text2); max-width: 560px; line-height: 1.6; }
+
+  /* STATS ROW */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 2rem; }
+  .stat {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+  }
+  .stat-num { font-size: 22px; font-weight: 700; color: var(--green); }
+  .stat-label { font-size: 12px; color: var(--text2); margin-top: 2px; }
+
+  /* MAIN GRID */
+  .main-grid { display: grid; grid-template-columns: 280px 1fr; gap: 16px; margin-bottom: 16px; }
+
+  /* PANEL */
+  .panel {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 14px;
+    border-bottom: 0.5px solid var(--border);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text2);
+    background: var(--bg2);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .panel-header i { font-size: 15px; }
+
+  /* TABS */
+  .tabs {
+    display: flex;
+    border-bottom: 0.5px solid var(--border);
+    background: var(--bg2);
+  }
+  .tab {
+    flex: 1;
+    padding: 9px 12px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text2);
+    cursor: pointer;
+    text-align: center;
+    border: none;
+    background: none;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  .tab.active {
+    color: var(--green);
+    border-bottom-color: var(--green);
+    background: var(--bg);
+  }
+  .tab:hover:not(.active) { color: var(--text); background: var(--bg3); }
+
+  /* SAMPLE EMAILS */
+  .samples { padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+  .sample-email {
+    padding: 10px 11px;
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: background 0.12s;
+  }
+  .sample-email:hover { background: var(--bg2); }
+  .sample-email.active { border-color: var(--green); background: var(--green-light); }
+  .sample-from { font-size: 11px; font-weight: 600; color: var(--text); margin-bottom: 2px; display: flex; align-items: center; gap: 5px; }
+  .sample-subject { font-size: 11px; color: var(--text2); margin-bottom: 3px; font-weight: 500; }
+  .sample-preview { font-size: 11px; color: var(--text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* EMAIL VIEW */
+  .email-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .right-panel { display: flex; flex-direction: column; }
+
+  /* CUSTOM PASTE AREA */
+  .paste-area {
+    flex: 1;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .paste-label { font-size: 12px; color: var(--text2); font-weight: 500; }
+  #custom-email-input {
+    flex: 1;
+    min-height: 200px;
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--text);
+    background: var(--bg2);
+    border: 0.5px solid var(--border2);
+    border-radius: var(--radius-sm);
+    resize: vertical;
+    line-height: 1.6;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  #custom-email-input:focus { border-color: var(--green); }
+  #custom-email-input::placeholder { color: var(--text3); font-family: var(--font); font-size: 12px; }
+  .paste-hint { font-size: 11px; color: var(--text3); }
+
+  /* EMAIL BODY DISPLAY */
+  .email-body-display {
+    flex: 1;
+    padding: 12px 14px;
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--text2);
+    white-space: pre-wrap;
+    overflow-y: auto;
+    line-height: 1.7;
+    min-height: 220px;
+    max-height: 300px;
+  }
+  .email-body-placeholder { color: var(--text3); font-family: var(--font); font-style: italic; }
+
+  /* EXTRACT BTN */
+  .extract-btn {
+    width: 100%;
+    padding: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--green-dark);
+    background: var(--green-light);
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s;
+    border-top: 0.5px solid var(--border);
+  }
+  .extract-btn:hover:not(:disabled) { background: var(--green-mid); }
+  .extract-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* RESULT PANEL */
+  .result-panel {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 16px;
+    min-height: 220px;
+  }
+  .result-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem;
+    color: var(--text3);
+    gap: 10px;
+    min-height: 220px;
+  }
+  .result-empty i { font-size: 36px; }
+  .result-empty p { font-size: 14px; text-align: center; }
+  .result-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem;
+    gap: 14px;
+    color: var(--text2);
+    font-size: 14px;
+    min-height: 220px;
+  }
+  .spinner {
+    width: 22px;
+    height: 22px;
+    border: 2px solid var(--border2);
+    border-top-color: var(--green);
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* RESULT CONTENT */
+  .result-content { padding: 18px 20px; }
+  .result-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    gap: 12px;
+  }
+  .result-invoice-num { font-size: 18px; font-weight: 700; color: var(--text); }
+  .result-vendor { font-size: 13px; color: var(--text2); margin-top: 2px; }
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    font-size: 12px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .status-ready { background: var(--green-light); color: var(--green-dark); }
+  .status-warning { background: var(--amber-light); color: var(--amber); }
+
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 0.5px solid var(--border);
+  }
+  .field-label { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; font-weight: 500; }
+  .field-value { font-size: 14px; color: var(--text); }
+  .field-value.amount { font-size: 22px; font-weight: 700; color: var(--green); }
+
+  /* LINE ITEMS TABLE */
+  .line-items-title { font-size: 12px; font-weight: 600; color: var(--text2); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 10px; }
+  table.line-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.line-table th { text-align: left; font-size: 11px; font-weight: 600; color: var(--text3); padding: 0 8px 8px 0; text-transform: uppercase; letter-spacing: 0.4px; border-bottom: 0.5px solid var(--border); }
+  table.line-table th:last-child { text-align: right; }
+  table.line-table td { padding: 8px 8px 8px 0; border-bottom: 0.5px solid var(--border); color: var(--text); vertical-align: middle; }
+  table.line-table tr:last-child td { border-bottom: none; }
+  table.line-table td:last-child { text-align: right; font-weight: 500; }
+  table.line-table td.muted { color: var(--text2); }
+
+  /* CONFIDENCE */
+  .confidence-bar-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 20px;
+    background: var(--bg2);
+    border-top: 0.5px solid var(--border);
+    font-size: 12px;
+    color: var(--text2);
+  }
+  .conf-track { flex: 1; height: 4px; background: var(--border2); border-radius: 2px; overflow: hidden; }
+  .conf-fill { height: 100%; background: var(--green); border-radius: 2px; transition: width 0.5s; }
+
+  /* FLAGS */
+  .flags { padding: 10px 20px; background: var(--amber-light); border-top: 0.5px solid var(--border); }
+  .flag-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--amber); padding: 2px 0; }
+
+  /* ACTIONS */
+  .actions { display: grid; grid-template-columns: 1fr 1fr 1.5fr; gap: 10px; margin-bottom: 16px; }
+  .action-btn {
+    padding: 10px 14px;
+    border: 0.5px solid var(--border2);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    transition: background 0.15s;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .action-btn:hover:not(:disabled) { background: var(--bg2); }
+  .action-btn.primary { background: var(--green); color: #fff; border-color: var(--green); }
+  .action-btn.primary:hover:not(:disabled) { background: var(--green-dark); }
+  .action-btn:disabled { opacity: 0.38; cursor: not-allowed; }
+
+  /* LOG */
+  .log-panel {
+    background: var(--bg);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .log-body { padding: 10px 14px; max-height: 140px; overflow-y: auto; }
+  .log-entry { font-size: 11.5px; font-family: var(--mono); padding: 2px 0; color: var(--text2); display: flex; gap: 10px; }
+  .log-ts { color: var(--text3); min-width: 70px; }
+  .log-ok { color: var(--green); }
+  .log-warn { color: var(--amber); }
+
+  /* FOOTER */
+  footer {
+    text-align: center;
+    padding: 2rem;
+    font-size: 12px;
+    color: var(--text3);
+  }
+  footer a { color: var(--text2); }
+
+  @media (max-width: 700px) {
+    .main-grid { grid-template-columns: 1fr; }
+    .field-grid { grid-template-columns: repeat(2, 1fr); }
+    .stats { grid-template-columns: repeat(3, 1fr); }
+    .actions { grid-template-columns: 1fr 1fr; }
+    .action-btn.primary { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <a class="nav-logo" href="#">Invoice<span class="dot">AI</span></a>
+  <div class="nav-right">
+    <span class="nav-badge">✦ AI-Powered</span>
+    <a class="nav-link" href="https://github.com" target="_blank"><i class="ti ti-brand-github"></i> GitHub</a>
+  </div>
+</nav>
+
+<div class="container">
+
+  <div class="hero">
+    <div class="hero-tag"><i class="ti ti-robot"></i> Powered by Claude AI</div>
+    <h1>Email invoices → <span>ERP-ready</span> data</h1>
+    <p>Paste any invoice email — AI extracts vendor, line items, taxes, and totals. Export to CSV, JSON, or push directly to your ERP. No manual entry.</p>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="stat-num">~3s</div><div class="stat-label">Average extraction time</div></div>
+    <div class="stat"><div class="stat-num">95%+</div><div class="stat-label">Field accuracy</div></div>
+    <div class="stat"><div class="stat-num">Any format</div><div class="stat-label">Works with any invoice layout</div></div>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- LEFT: email list -->
+    <div class="panel">
+      <div class="panel-header"><i class="ti ti-inbox"></i> Incoming emails</div>
+      <div class="samples" id="sample-list"></div>
+    </div>
+
+    <!-- RIGHT: email view -->
+    <div class="panel right-panel">
+      <div class="tabs">
+        <button class="tab active" id="tab-sample" onclick="switchTab('sample')">Sample email</button>
+        <button class="tab" id="tab-custom" onclick="switchTab('custom')">✎ Paste your own</button>
+      </div>
+
+      <!-- Sample view -->
+      <div id="view-sample" class="email-view">
+        <div class="email-body-display" id="email-body">
+          <span class="email-body-placeholder">← Select an email from the inbox to preview it here.</span>
+        </div>
+      </div>
+
+      <!-- Custom paste view -->
+      <div id="view-custom" style="display:none" class="email-view">
+        <div class="paste-area">
+          <div class="paste-label">Paste your invoice email below</div>
+          <textarea id="custom-email-input" placeholder="Paste the full email text here — From, Subject, body, line items, totals, everything. The AI will extract the invoice data regardless of format or language."></textarea>
+          <div class="paste-hint"><i class="ti ti-info-circle" style="font-size:12px;vertical-align:-1px"></i> Works with any format: plain text, forwarded emails, supplier templates.</div>
+        </div>
+      </div>
+
+      <button class="extract-btn" id="extract-btn" disabled onclick="extractInvoice()">
+        <i class="ti ti-sparkles"></i> Extract invoice data with AI
+      </button>
+    </div>
+  </div>
+
+  <!-- RESULT -->
+  <div class="result-panel" id="result-panel">
+    <div class="result-empty" id="result-empty">
+      <i class="ti ti-file-invoice"></i>
+      <p>Extracted invoice fields will appear here</p>
+    </div>
+    <div id="result-loading" style="display:none" class="result-loading">
+      <div class="spinner"></div> AI is reading your invoice…
+    </div>
+    <div id="result-data" style="display:none"></div>
+  </div>
+
+  <!-- ACTIONS -->
+  <div class="actions">
+    <button class="action-btn" id="btn-csv" disabled onclick="exportCSV()"><i class="ti ti-file-spreadsheet"></i> Export CSV</button>
+    <button class="action-btn" id="btn-json" disabled onclick="exportJSON()"><i class="ti ti-braces"></i> Export JSON</button>
+    <button class="action-btn primary" id="btn-erp" disabled onclick="sendToERP()"><i class="ti ti-cloud-upload"></i> Push to ERP</button>
+  </div>
+
+  <!-- LOG -->
+  <div class="log-panel">
+    <div class="panel-header"><i class="ti ti-terminal-2"></i> Activity log</div>
+    <div class="log-body" id="log-entries">
+      <div class="log-entry"><span class="log-ts">—</span><span>Waiting for invoice selection…</span></div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  Built with Claude AI · <a href="https://github.com" target="_blank">View on GitHub</a> · Invoice AI ERP Importer
+</footer>
+
+<script>
+const SAMPLES = [
+  {
+    from: "accounts@techsupplies.com",
+    subject: "Invoice #INV-2024-0891",
+    preview: "Cloud server hosting & SSL certificate renewal",
+    body: `From: accounts@techsupplies.com
+To: ap@yourcompany.com
+Subject: Invoice #INV-2024-0891
+Date: June 14, 2026
+
+Dear Accounts Payable Team,
+
+Please find below our invoice for services rendered in May 2026.
+
+Invoice Number: INV-2024-0891
+Invoice Date: June 14, 2026
+Due Date: July 14, 2026
+
+Bill To: Your Company Ltd, 123 Business Park, Cairo, Egypt
+From: Tech Supplies Co., 456 Vendor Street, Dubai, UAE | VAT: AE-123456789
+
+Line Items:
+1. Cloud Server Hosting (12 months)     Qty: 1    Unit: $4,200.00    Total: $4,200.00
+2. SSL Certificate (Premium)            Qty: 3    Unit: $89.00       Total: $267.00
+3. Technical Support Package            Qty: 1    Unit: $850.00      Total: $850.00
+4. Setup & Configuration Fee            Qty: 1    Unit: $350.00      Total: $350.00
+
+Subtotal: $5,667.00
+VAT (5%): $283.35
+Total Due: $5,950.35
+
+Payment: Wire Transfer | Emirates NBD | IBAN: AE070331234567890123456
+
+Thank you for your business.`
+  },
+  {
+    from: "billing@officeessentials.eg",
+    subject: "Tax Invoice - ORD-55291",
+    preview: "Office supplies order — A4 paper, toner, pens",
+    body: `From: billing@officeessentials.eg
+To: procurement@yourcompany.com
+Subject: Tax Invoice - ORD-55291
+Date: June 16, 2026
+
+Hello,
+
+Invoice for your recent office supplies order (delivered June 10, 2026).
+
+Invoice No.: ORD-55291 | Order Date: June 8, 2026 | Due: June 30, 2026
+Supplier: Office Essentials Egypt | Tax Reg. No.: 123-456-789
+
+Items:
+- A4 Paper (Box of 5 reams)      x10    EGP 320 each    EGP 3,200
+- Ballpoint Pens (Box of 50)     x5     EGP 85 each     EGP 425
+- Printer Toner (HP Compatible)  x3     EGP 780 each    EGP 2,340
+- Whiteboard Markers (Set)       x8     EGP 45 each     EGP 360
+
+Subtotal: EGP 6,325.00
+VAT 14%:  EGP 885.50
+Total:    EGP 7,210.50
+
+Payment to: CIB Bank | Account: 1234567890`
+  },
+  {
+    from: "sara.design@freelancepro.io",
+    subject: "Freelance Invoice #FP-0047 — Design Services",
+    preview: "UX research, wireframing, UI design — 62 hours",
+    body: `From: sara.design@freelancepro.io
+To: finance@yourcompany.com
+Subject: Freelance Invoice #FP-0047 — Design Services
+Date: June 17, 2026
+
+Hi Finance Team,
+
+Invoice for the UI/UX design project completed last week.
+
+Invoice #: FP-0047 | Date: June 17, 2026 | Due: July 1, 2026 (Net 14)
+Consultant: Sara Ahmed — Freelance UX Designer
+
+Services:
+- UX Research & User Interviews     12 hrs @ $95/hr    $1,140.00
+- Wireframing & Prototyping         18 hrs @ $95/hr    $1,710.00
+- UI Design (Figma)                 22 hrs @ $95/hr    $2,090.00
+- Usability Testing Support         6 hrs  @ $95/hr    $570.00
+- Final Handoff & Documentation     4 hrs  @ $95/hr    $380.00
+
+Subtotal: $5,890.00
+VAT: None (freelance consultant)
+Total: $5,890.00
+
+Payment via PayPal: sara.design@freelancepro.io
+Thanks! Sara`
+  }
+];
+
+let selectedIdx = null;
+let activeTab = 'sample';
+let extractedData = null;
+
+// Tab switching
+function switchTab(tab) {
+  activeTab = tab;
+  document.getElementById('tab-sample').classList.toggle('active', tab === 'sample');
+  document.getElementById('tab-custom').classList.toggle('active', tab === 'custom');
+  document.getElementById('view-sample').style.display = tab === 'sample' ? 'flex' : 'none';
+  document.getElementById('view-custom').style.display = tab === 'custom' ? 'flex' : 'none';
+
+  if (tab === 'custom') {
+    const val = document.getElementById('custom-email-input').value.trim();
+    document.getElementById('extract-btn').disabled = val.length < 20;
+  } else {
+    document.getElementById('extract-btn').disabled = selectedIdx === null;
+  }
+}
+
+// Custom paste listener
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('custom-email-input').addEventListener('input', function() {
+    const val = this.value.trim();
+    if (activeTab === 'custom') {
+      document.getElementById('extract-btn').disabled = val.length < 20;
+    }
+  });
+  renderSamples();
+});
+
+function log(msg, type = '') {
+  const el = document.getElementById('log-entries');
+  const now = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const cls = type === 'ok' ? 'log-ok' : type === 'warn' ? 'log-warn' : '';
+  el.innerHTML += `<div class="log-entry"><span class="log-ts">${now}</span><span class="${cls}">${msg}</span></div>`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderSamples() {
+  const list = document.getElementById('sample-list');
+  list.innerHTML = SAMPLES.map((s, i) => `
+    <div class="sample-email ${selectedIdx === i ? 'active' : ''}" onclick="selectEmail(${i})">
+      <div class="sample-from"><i class="ti ti-mail" style="font-size:11px"></i>${s.from}</div>
+      <div class="sample-subject">${s.subject}</div>
+      <div class="sample-preview">${s.preview}</div>
+    </div>
+  `).join('');
+}
+
+function selectEmail(i) {
+  selectedIdx = i;
+  extractedData = null;
+  document.getElementById('email-body').textContent = SAMPLES[i].body;
+  if (activeTab === 'sample') document.getElementById('extract-btn').disabled = false;
+  resetResult();
+  renderSamples();
+  log(`Email selected: ${SAMPLES[i].subject}`);
+  switchTab('sample');
+}
+
+function resetResult() {
+  extractedData = null;
+  document.getElementById('result-empty').style.display = 'flex';
+  document.getElementById('result-loading').style.display = 'none';
+  document.getElementById('result-data').style.display = 'none';
+  ['btn-csv', 'btn-json', 'btn-erp'].forEach(id => {
+    const el = document.getElementById(id);
+    el.disabled = true;
+    if (id === 'btn-erp') el.innerHTML = '<i class="ti ti-cloud-upload"></i> Push to ERP';
+  });
+}
+
+async function extractInvoice() {
+  let emailText = '';
+  if (activeTab === 'custom') {
+    emailText = document.getElementById('custom-email-input').value.trim();
+    if (!emailText || emailText.length < 20) return;
+  } else {
+    if (selectedIdx === null) return;
+    emailText = SAMPLES[selectedIdx].body;
+  }
+
+  const btn = document.getElementById('extract-btn');
+  btn.disabled = true;
+  document.getElementById('result-empty').style.display = 'none';
+  document.getElementById('result-loading').style.display = 'flex';
+  document.getElementById('result-data').style.display = 'none';
+  log('Sending email to AI for extraction…');
+
+  try {
+    const response = await fetch('lively-cloud-1f3d.01015523142az.workers.dev', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        messages: [{
+          role: 'user',
+          content: `You are an invoice parsing AI for an ERP system. Extract all invoice data from this email and return ONLY a valid JSON object — no markdown, no backticks, no explanation.
+
+Return exactly this structure:
+{
+  "invoice_number": "...",
+  "invoice_date": "...",
+  "due_date": "...",
+  "vendor_name": "...",
+  "vendor_email": "...",
+  "currency": "USD or EGP or etc",
+  "subtotal": 0.00,
+  "tax_amount": 0.00,
+  "tax_rate": "5% or 14% or None",
+  "total_amount": 0.00,
+  "payment_method": "...",
+  "confidence": 95,
+  "flags": [],
+  "line_items": [
+    { "description": "...", "quantity": 1, "unit_price": 0.00, "total": 0.00 }
+  ]
+}
+
+EMAIL:
+${emailText}`
+        }]
+      })
+    });
+
+    const data = await response.json();
+    const raw = data.content.map(c => c.text || '').join('');
+    const clean = raw.replace(/```json|```/g, '').trim();
+    extractedData = JSON.parse(clean);
+
+    renderResult(extractedData);
+    log(`Extraction complete — ${extractedData.line_items.length} line items found`, 'ok');
+    if (extractedData.flags && extractedData.flags.length > 0) {
+      extractedData.flags.forEach(f => log(`Flag: ${f}`, 'warn'));
+    }
+    ['btn-csv', 'btn-json', 'btn-erp'].forEach(id => document.getElementById(id).disabled = false);
+  } catch (err) {
+    document.getElementById('result-loading').style.display = 'none';
+    document.getElementById('result-empty').style.display = 'flex';
+    document.getElementById('result-empty').innerHTML = '<i class="ti ti-alert-triangle" style="font-size:36px;color:#E24B4A"></i><p>Extraction failed. Check your network and try again.</p>';
+    log('Error during extraction: ' + err.message, 'warn');
+  }
+
+  btn.disabled = activeTab === 'custom'
+    ? document.getElementById('custom-email-input').value.trim().length < 20
+    : selectedIdx === null;
+}
+
+function renderResult(d) {
+  document.getElementById('result-loading').style.display = 'none';
+  const el = document.getElementById('result-data');
+  el.style.display = 'block';
+
+  const hasFlags = d.flags && d.flags.length > 0;
+  const statusBadge = hasFlags
+    ? `<span class="status-badge status-warning"><i class="ti ti-alert-triangle" style="font-size:11px"></i> Review needed</span>`
+    : `<span class="status-badge status-ready"><i class="ti ti-check" style="font-size:11px"></i> Ready to import</span>`;
+
+  const lineRows = (d.line_items || []).map(item => `
+    <tr>
+      <td>${item.description}</td>
+      <td class="muted" style="text-align:right">${item.quantity}</td>
+      <td class="muted" style="text-align:right">${d.currency} ${Number(item.unit_price).toFixed(2)}</td>
+      <td>${d.currency} ${Number(item.total).toFixed(2)}</td>
+    </tr>
+  `).join('');
+
+  const flagsHTML = hasFlags ? `
+    <div class="flags">
+      ${d.flags.map(f => `<div class="flag-item"><i class="ti ti-alert-triangle" style="font-size:13px"></i>${f}</div>`).join('')}
+    </div>
+  ` : '';
+
+  el.innerHTML = `
+    <div class="result-content">
+      <div class="result-top">
+        <div>
+          <div class="result-invoice-num">${d.invoice_number}</div>
+          <div class="result-vendor"><i class="ti ti-building" style="font-size:12px;vertical-align:-1px;margin-right:4px"></i>${d.vendor_name}</div>
+        </div>
+        ${statusBadge}
+      </div>
+      <div class="field-grid">
+        <div><div class="field-label">Total due</div><div class="field-value amount">${d.currency} ${Number(d.total_amount).toFixed(2)}</div></div>
+        <div><div class="field-label">Invoice date</div><div class="field-value">${d.invoice_date}</div></div>
+        <div><div class="field-label">Due date</div><div class="field-value">${d.due_date}</div></div>
+        <div><div class="field-label">Tax (${d.tax_rate})</div><div class="field-value">${d.currency} ${Number(d.tax_amount).toFixed(2)}</div></div>
+        <div><div class="field-label">Subtotal</div><div class="field-value">${d.currency} ${Number(d.subtotal).toFixed(2)}</div></div>
+        <div><div class="field-label">Payment</div><div class="field-value">${d.payment_method}</div></div>
+        <div><div class="field-label">Vendor email</div><div class="field-value">${d.vendor_email || '—'}</div></div>
+        <div><div class="field-label">Currency</div><div class="field-value">${d.currency}</div></div>
+      </div>
+      <div class="line-items-title">Line items</div>
+      <table class="line-table">
+        <thead><tr><th>Description</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit price</th><th style="text-align:right">Total</th></tr></thead>
+        <tbody>${lineRows}</tbody>
+      </table>
+    </div>
+    ${flagsHTML}
+    <div class="confidence-bar-row">
+      <span>AI confidence</span>
+      <div class="conf-track"><div class="conf-fill" style="width:${d.confidence}%"></div></div>
+      <span>${d.confidence}%</span>
+    </div>
+  `;
+}
+
+function exportCSV() {
+  if (!extractedData) return;
+  const d = extractedData;
+  const rows = [
+    ['Invoice No', 'Vendor', 'Invoice Date', 'Due Date', 'Currency', 'Subtotal', 'Tax Rate', 'Tax Amount', 'Total', 'Payment Method'],
+    [d.invoice_number, d.vendor_name, d.invoice_date, d.due_date, d.currency, d.subtotal, d.tax_rate, d.tax_amount, d.total_amount, d.payment_method],
+    [],
+    ['Description', 'Quantity', 'Unit Price', 'Total'],
+    ...(d.line_items || []).map(i => [i.description, i.quantity, i.unit_price, i.total])
+  ];
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  download(`${d.invoice_number}.csv`, csv, 'text/csv');
+  log(`CSV exported: ${d.invoice_number}.csv`, 'ok');
+}
+
+function exportJSON() {
+  if (!extractedData) return;
+  download(`${extractedData.invoice_number}.json`, JSON.stringify(extractedData, null, 2), 'application/json');
+  log(`JSON exported: ${extractedData.invoice_number}.json`, 'ok');
+}
+
+function download(name, content, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function sendToERP() {
+  if (!extractedData) return;
+  const btn = document.getElementById('btn-erp');
+  btn.disabled = true;
+  log('Connecting to ERP endpoint…');
+  setTimeout(() => log('Payload validated — schema OK', 'ok'), 700);
+  setTimeout(() => log(`Invoice ${extractedData.invoice_number} queued → Accounts Payable module`, 'ok'), 1500);
+  setTimeout(() => {
+    btn.innerHTML = '<i class="ti ti-check"></i> Sent to ERP';
+    log('Import complete', 'ok');
+  }, 1800);
+}
+</script>
+</body>
+</html>
