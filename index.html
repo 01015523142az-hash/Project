@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dialed In — Ops Console</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+  :root{
+    --bg:#10131A; --card:#171B23; --card-hover:#1D222C; --inset:#0C0F14;
+    --border:#262D39; --border-light:#323A48;
+    --text:#E8EAED; --text-2:#8B94A3; --text-dim:#4E5768;
+    --focus:#3DDC84; --focus-dim:#1E4A31; --away:#F5A623; --away-dim:#4A3818; --idle:#2A313C; --danger:#E5484D;
+    --mono:'IBM Plex Mono', monospace; --sans:'Inter', sans-serif;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:var(--bg); color:var(--text); font-family:var(--sans); min-height:100vh; }
+
+  /* Login */
+  #loginScreen{ max-width:380px; margin:100px auto; padding:0 20px; }
+  #loginScreen h1{ font-family:var(--mono); font-size:22px; margin-bottom:4px; }
+  #loginScreen .sub{ font-family:var(--mono); font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:1.5px; margin-bottom:28px; }
+  .card{ background:var(--card); border:1px solid var(--border); border-radius:12px; padding:22px; }
+  label{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); display:block; margin:12px 0 6px; }
+  input,select{ width:100%; background:var(--inset); border:1px solid var(--border-light); color:var(--text); padding:10px 12px; border-radius:8px; font-size:14px; }
+  button{ border:none; border-radius:8px; padding:10px 18px; font-weight:600; font-size:13px; cursor:pointer; font-family:var(--sans); }
+  .btn-primary{ background:var(--focus); color:#06210F; width:100%; margin-top:18px; }
+  .msg{ font-family:var(--mono); font-size:11px; margin-top:10px; }
+  .msg.error{ color:var(--danger); }
+
+  /* App shell */
+  #app{ display:none; max-width:1100px; margin:0 auto; padding:28px 20px 60px; }
+  header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }
+  header h1{ font-family:var(--mono); font-size:18px; }
+  header .sub{ font-family:var(--mono); font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; }
+  #signOutBtn{ background:transparent; border:1px solid var(--border-light); color:var(--text-2); }
+
+  table{ width:100%; border-collapse:collapse; }
+  th{ text-align:left; font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); padding:10px 12px; border-bottom:1px solid var(--border); }
+  td{ padding:12px; border-bottom:1px solid var(--border); font-size:13px; }
+  tr.agent-row{ cursor:pointer; }
+  tr.agent-row:hover{ background:var(--card-hover); }
+  .dot{ width:8px; height:8px; border-radius:50%; display:inline-block; margin-right:8px; }
+  .dot.on{ background:var(--focus); box-shadow:0 0 0 3px var(--focus-dim); }
+  .dot.off{ background:var(--idle); }
+  .mono{ font-family:var(--mono); }
+  .pct-focus{ color:var(--focus); }
+
+  #detailPanel{ display:none; margin-top:20px; }
+  .detail-header{ display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .back-link{ font-family:var(--mono); font-size:11px; color:var(--text-dim); cursor:pointer; text-decoration:underline; margin-bottom:16px; display:inline-block; }
+
+  .timeline-track{ position:relative; height:40px; background:var(--inset); border-radius:8px; border:1px solid var(--border); overflow:hidden; margin-bottom:6px; }
+  .segment{ position:absolute; top:0; bottom:0; opacity:0.9; }
+  .hour-marks{ display:flex; justify-content:space-between; font-family:var(--mono); font-size:9px; color:var(--text-dim); margin-bottom:20px; }
+
+  .shots-grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(140px, 1fr)); gap:10px; }
+  .shot-card{ background:var(--card); border:1px solid var(--border); border-radius:8px; overflow:hidden; }
+  .shot-card img{ width:100%; display:block; aspect-ratio:16/10; object-fit:cover; background:var(--inset); }
+  .shot-meta{ padding:8px; font-family:var(--mono); font-size:10px; color:var(--text-dim); }
+  .empty{ text-align:center; padding:30px; color:var(--text-dim); font-family:var(--mono); font-size:12px; }
+</style>
+</head>
+<body>
+
+<div id="loginScreen">
+  <h1>DIALED IN</h1>
+  <div class="sub">ops console — admin</div>
+  <div class="card">
+    <label>Supabase project URL</label>
+    <input id="supabaseUrl" placeholder="https://xxxx.supabase.co">
+    <label>Supabase anon key</label>
+    <input id="anonKey">
+    <label>Email</label>
+    <input id="email" type="email">
+    <label>Password</label>
+    <input id="password" type="password">
+    <button class="btn-primary" id="loginBtn">Sign in</button>
+    <div class="msg error" id="loginMsg"></div>
+  </div>
+</div>
+
+<div id="app">
+  <header>
+    <div>
+      <h1>DIALED IN</h1>
+      <div class="sub">ops console</div>
+    </div>
+    <button id="signOutBtn">Sign out</button>
+  </header>
+
+  <div class="card" id="teamCard">
+    <table>
+      <thead>
+        <tr><th>Agent</th><th>Status</th><th>Focus today</th><th>Away today</th><th>Activity</th></tr>
+      </thead>
+      <tbody id="teamBody"></tbody>
+    </table>
+  </div>
+
+  <div id="detailPanel">
+    <span class="back-link" id="backLink">← back to team</span>
+    <div class="detail-header">
+      <h2 id="detailName" class="mono" style="font-size:15px;"></h2>
+    </div>
+    <div class="timeline-track" id="detailTimeline"></div>
+    <div class="hour-marks"><span>00</span><span>04</span><span>08</span><span>12</span><span>16</span><span>20</span><span>24</span></div>
+    <h3 class="mono" style="font-size:12px; color:var(--text-2); margin:20px 0 10px; text-transform:uppercase; letter-spacing:1px;">Screenshots</h3>
+    <div class="shots-grid" id="shotsGrid"></div>
+  </div>
+</div>
+
+<script>
+let sb = null;
+let config = null;
+let currentDetailAgent = null;
+let pollHandle = null;
+const TASK_COLORS = ['#3DDC84','#5AC8FA','#BF5AF2','#FF9F0A','#FF375F','#64D2FF','#30D158','#FFD60A'];
+
+function $(id){ return document.getElementById(id); }
+
+function todayRangeISO(){
+  const start = new Date(); start.setHours(0,0,0,0);
+  const end = new Date(); end.setHours(23,59,59,999);
+  return { start: start.toISOString(), end: end.toISOString(), dayStartMs: start.getTime() };
+}
+function fmtShort(sec){
+  sec = Math.max(0, Math.round(sec));
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60);
+  return h>0 ? h+'h '+m+'m' : m+'m';
+}
+function colorFor(id, list){
+  const idx = list.findIndex(x=>x.id===id);
+  return TASK_COLORS[Math.max(0,idx) % TASK_COLORS.length];
+}
+
+$('loginBtn').addEventListener('click', async () => {
+  const supabaseUrl = $('supabaseUrl').value.trim().replace(/\/$/,'');
+  const anonKey = $('anonKey').value.trim();
+  const email = $('email').value.trim();
+  const password = $('password').value;
+  if(!supabaseUrl || !anonKey || !email || !password){
+    $('loginMsg').textContent = 'All fields are required.';
+    return;
+  }
+  try{
+    sb = window.supabase.createClient(supabaseUrl, anonKey);
+    config = { supabaseUrl, anonKey };
+    const { data, error } = await sb.auth.signInWithPassword({ email, password });
+    if(error) throw error;
+
+    const { data: profile } = await sb.from('profiles').select('role').eq('id', data.user.id).single();
+    if(!profile || profile.role !== 'admin'){
+      $('loginMsg').textContent = 'This account is not an admin.';
+      await sb.auth.signOut();
+      return;
+    }
+    $('loginScreen').style.display = 'none';
+    $('app').style.display = 'block';
+    loadTeam();
+    pollHandle = setInterval(refreshAll, 20000);
+  }catch(e){
+    $('loginMsg').textContent = e.message || 'Login failed.';
+  }
+});
+
+$('signOutBtn').addEventListener('click', async () => {
+  if(pollHandle) clearInterval(pollHandle);
+  if(sb) await sb.auth.signOut();
+  location.reload();
+});
+$('backLink').addEventListener('click', () => {
+  currentDetailAgent = null;
+  $('detailPanel').style.display = 'none';
+  $('teamCard').style.display = 'block';
+});
+
+async function refreshAll(){
+  await loadTeam();
+  if(currentDetailAgent){
+    await renderDetail(currentDetailAgent);
+  }
+}
+
+async function loadTeam(){
+  const { start, end } = todayRangeISO();
+  const { data: agents } = await sb.from('profiles').select('id, full_name, email, role').order('full_name');
+  const { data: entries } = await sb.from('time_entries')
+    .select('id, user_id, start_time, end_time, task_id')
+    .gte('start_time', start).lte('start_time', end);
+  const { data: samples } = await sb.from('activity_samples')
+    .select('user_id, activity_pct, sampled_at')
+    .gte('sampled_at', start).lte('sampled_at', end);
+
+  const body = $('teamBody');
+  body.innerHTML = '';
+  (agents || []).filter(a => a.role !== 'admin').forEach(agent => {
+    const myEntries = (entries || []).filter(e => e.user_id === agent.id);
+    let focusSec = 0;
+    let live = false;
+    myEntries.forEach(e => {
+      const end = e.end_time ? new Date(e.end_time).getTime() : Date.now();
+      focusSec += (end - new Date(e.start_time).getTime()) / 1000;
+      if(!e.end_time) live = true;
+    });
+    const mySamples = (samples || []).filter(s => s.user_id === agent.id);
+    const avgActivity = mySamples.length
+      ? Math.round(mySamples.reduce((a,s)=>a+(s.activity_pct||0),0) / mySamples.length)
+      : null;
+
+    const tr = document.createElement('tr');
+    tr.className = 'agent-row';
+    tr.innerHTML = `
+      <td>${agent.full_name || agent.email}</td>
+      <td><span class="dot ${live?'on':'off'}"></span>${live?'tracking':'idle'}</td>
+      <td class="mono">${fmtShort(focusSec)}</td>
+      <td class="mono">—</td>
+      <td class="mono ${avgActivity!==null && avgActivity>60 ? 'pct-focus':''}">${avgActivity!==null ? avgActivity+'%' : '—'}</td>
+    `;
+    tr.addEventListener('click', () => openDetail(agent));
+    body.appendChild(tr);
+  });
+
+  if((agents||[]).filter(a=>a.role!=='admin').length === 0){
+    body.innerHTML = '<tr><td colspan="5" class="empty">No agent accounts yet. Add users in Supabase Auth, they will appear here.</td></tr>';
+  }
+}
+
+async function fetchAgentEntries(agentId){
+  const { start, end } = todayRangeISO();
+  const { data } = await sb.from('time_entries')
+    .select('id, user_id, start_time, end_time, task_id')
+    .eq('user_id', agentId).gte('start_time', start).lte('start_time', end);
+  return data || [];
+}
+
+async function openDetail(agent){
+  currentDetailAgent = agent;
+  $('teamCard').style.display = 'none';
+  $('detailPanel').style.display = 'block';
+  $('detailName').textContent = agent.full_name || agent.email;
+  await renderDetail(agent);
+}
+
+async function renderDetail(agent){
+  const entries = await fetchAgentEntries(agent.id);
+
+  const { dayStartMs } = todayRangeISO();
+  const dayMs = 24*3600*1000;
+  const track = $('detailTimeline');
+  track.innerHTML = '';
+  const tasks = [...new Set(entries.map(e=>e.task_id))].map(id=>({id}));
+  entries.forEach(e => {
+    const end = e.end_time ? new Date(e.end_time).getTime() : Date.now();
+    const startPct = Math.max(0, (new Date(e.start_time).getTime() - dayStartMs)/dayMs*100);
+    const endPct = Math.min(100, (end - dayStartMs)/dayMs*100);
+    const div = document.createElement('div');
+    div.className = 'segment';
+    div.style.left = startPct+'%';
+    div.style.width = Math.max(0.15, endPct-startPct)+'%';
+    div.style.background = colorFor(e.task_id, tasks);
+    track.appendChild(div);
+  });
+
+  const { start, end } = todayRangeISO();
+  const { data: shots } = await sb.from('screenshots')
+    .select('id, storage_path, taken_at, activity_pct_at_capture')
+    .eq('user_id', agent.id).gte('taken_at', start).lte('taken_at', end)
+    .order('taken_at', { ascending: false });
+
+  const grid = $('shotsGrid');
+  grid.innerHTML = '';
+  if(!shots || shots.length === 0){
+    grid.innerHTML = '<div class="empty">No screenshots yet today.</div>';
+    return;
+  }
+  for(const shot of shots){
+    const { data: signed } = await sb.storage.from('screenshots').createSignedUrl(shot.storage_path, 3600);
+    const div = document.createElement('div');
+    div.className = 'shot-card';
+    div.innerHTML = `
+      <img src="${signed ? signed.signedUrl : ''}" loading="lazy">
+      <div class="shot-meta">${new Date(shot.taken_at).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})} · ${shot.activity_pct_at_capture ?? '—'}%</div>
+    `;
+    grid.appendChild(div);
+  }
+}
+</script>
+</body>
+</html>
