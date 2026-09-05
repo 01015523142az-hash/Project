@@ -207,6 +207,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
             <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3 3v12h-10z"/><path d="M7 9h6M7 12h6M7 15h3.5"/></svg>
             <span>Campaigns</span>
           </button>
+          <button data-tab="recordings">
+            <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0011 0"/><path d="M10 15v2.5"/></svg>
+            <span>Recordings</span>
+          </button>
         </nav>
       </div>
 
@@ -394,6 +398,50 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       </div>
     </div>
   </section>
+
+  <!-- ============================================= RECORDINGS ========== -->
+  <section id="tab-recordings" class="hide">
+    <div class="panel">
+      <h2>Call recordings</h2>
+      <p class="hint">
+        Every answered call on a recording-enabled campaign, newest first. Playback links are
+        <strong>minted on demand</strong> — Telnyx signs them for ten minutes at a time, so the
+        URL stored against the call is dead within the hour and nothing here uses it. Pressing
+        play asks the carrier for a fresh one, which is why there is a short pause before audio
+        starts.
+        <br><br>
+        Recordings are a member of the public's own voice. Owner and admin can play any of them;
+        everyone else only their own calls, enforced in <span class="mono">dialer-recording</span>
+        rather than by hiding the button.
+      </p>
+      <div class="row">
+        <div class="field" style="min-width:200px"><label for="recAgent">Agent</label>
+          <select id="recAgent"><option value="">Everyone</option></select></div>
+        <div class="field"><label for="recSince">From</label>
+          <input type="date" id="recSince"></div>
+        <div class="field"><label for="recLimit">Show</label>
+          <input type="number" id="recLimit" value="50" min="1" max="200" style="width:90px"></div>
+        <button id="recRefresh">Refresh</button>
+        <span id="recMsg" style="font-size:13px;color:var(--text-2)"></span>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>When</th><th>Agent</th><th>To</th><th>From</th>
+            <th class="num">Talk</th><th>Outcome</th><th style="width:190px">Recording</th></tr></thead>
+          <tbody id="recRows"><tr><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <!-- One shared player rather than one per row: only one recording can
+           usefully be listened to at a time, and a table of 50 <audio>
+           elements each holding a signed URL is 50 pointless requests. -->
+      <div id="recPlayer" class="hide" style="margin-top:16px">
+        <div style="font-family:var(--mono);font-size:10px;text-transform:uppercase;
+                    letter-spacing:1px;color:var(--text-dim);margin-bottom:8px"
+             id="recNowPlaying"></div>
+        <audio id="recAudio" controls preload="none" style="width:100%"></audio>
+      </div>
+    </div>
+  </section>
     </main>
   </div>
 </div>
@@ -504,10 +552,133 @@ function applyReadOnly() {
 document.querySelectorAll('nav button').forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
-    ['numbers', 'lists', 'campaigns'].forEach((t) =>
+    ['numbers', 'lists', 'campaigns', 'recordings'].forEach((t) =>
       $('tab-' + t).classList.toggle('hide', t !== b.dataset.tab));
+    // Recordings are loaded on first open rather than at boot: it is the one
+    // tab most sessions never look at, and the query reads the CDR table.
+    if (b.dataset.tab === 'recordings' && !recordingsLoaded) loadRecordings();
   };
 });
+
+// ------------------------------------------------------------ recordings --
+// The stored dialer_attempts.recording_path is NOT used for playback. Telnyx
+// hands out recording links as presigned S3 urls with X-Amz-Expires=600, so
+// every one of them is a 403 within ten minutes of the call ending. Playback
+// goes through dialer-recording, which asks the carrier for a fresh url (and
+// checks that this person is allowed to hear that particular call).
+let recordingsLoaded = false;
+let recAgents = new Map();   // agent_id -> full_name, accumulated as rows load
+
+function mmss(total) {
+  const s = Math.max(0, Math.floor(Number(total) || 0));
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+
+async function loadRecordings() {
+  recordingsLoaded = true;
+  const tbody = $('recRows');
+  tbody.innerHTML = '<tr><td colspan="7">Loading…</td></tr>';
+  $('recMsg').textContent = '';
+
+  const limit = Math.min(200, Math.max(1, Number($('recLimit').value) || 50));
+  let q = sb.from('dialer_attempts')
+    .select('id, agent_id, from_number, to_number, talk_seconds, disposition, status, initiated_at')
+    // Either identifier means the carrier has audio for this call: rows from
+    // before v530 only have the (expired) path, newer ones have the id.
+    .or('recording_id.not.is.null,recording_path.not.is.null')
+    .order('initiated_at', { ascending: false })
+    .limit(limit);
+
+  const agent = $('recAgent').value;
+  if (agent) q = q.eq('agent_id', agent);
+  const since = $('recSince').value;
+  if (since) q = q.gte('initiated_at', new Date(since + 'T00:00:00').toISOString());
+
+  const { data, error } = await q;
+  if (error) {
+    tbody.innerHTML = `<tr><td colspan="7">Could not load recordings: ${esc(error.message)}</td></tr>`;
+    return;
+  }
+  const rows = data || [];
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="7">No recorded calls in this range.</td></tr>';
+    return;
+  }
+
+  // Names come from a second query rather than an embedded join: profiles has
+  // its own RLS, and a failed embed would take the whole recordings list with
+  // it instead of just leaving the column blank.
+  const ids = [...new Set(rows.map((r) => r.agent_id).filter(Boolean))];
+  if (ids.length) {
+    const { data: profs } = await sb.from('profiles').select('id, full_name').in('id', ids);
+    (profs || []).forEach((p) => recAgents.set(p.id, p.full_name || ''));
+  }
+  syncAgentFilter();
+
+  tbody.innerHTML = rows.map((r) => {
+    const when = new Date(r.initiated_at);
+    const name = recAgents.get(r.agent_id) || (r.agent_id ? '—' : 'System');
+    return `<tr>
+      <td style="white-space:nowrap">${esc(when.toLocaleString())}</td>
+      <td>${esc(name)}</td>
+      <td class="mono">${esc(r.to_number || '')}</td>
+      <td class="mono">${esc(r.from_number || '')}</td>
+      <td class="num mono">${mmss(r.talk_seconds)}</td>
+      <td>${r.disposition ? esc(r.disposition) : `<span style="color:var(--text-dim)">${esc(r.status || '')}</span>`}</td>
+      <td><button class="sm" data-play="${esc(r.id)}">Play</button></td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('button[data-play]').forEach((btn) => {
+    btn.onclick = () => playRecording(btn, btn.dataset.play);
+  });
+  $('recMsg').textContent = `${rows.length} recorded call${rows.length === 1 ? '' : 's'}.`;
+}
+
+function syncAgentFilter() {
+  const sel = $('recAgent');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">Everyone</option>' + [...recAgents.entries()]
+    .sort((a, b) => (a[1] || '').localeCompare(b[1] || ''))
+    .map(([id, name]) => `<option value="${esc(id)}">${esc(name || id)}</option>`).join('');
+  sel.value = keep;
+}
+
+async function playRecording(btn, attemptId) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  try {
+    const res = await callFn('dialer-recording', { attempt_id: attemptId });
+    if (!res?.ok || !res.url) {
+      $('recMsg').textContent = res?.error || res?.detail || 'No recording available for that call.';
+      return;
+    }
+    const row = btn.closest('tr');
+    $('recNowPlaying').textContent = row
+      ? `${row.cells[1].textContent} · ${row.cells[2].textContent} · ${row.cells[0].textContent}`
+      : '';
+    show($('recPlayer'), true);
+    const audio = $('recAudio');
+    audio.src = res.url;
+    audio.play().catch(() => { /* the controls are there; autoplay may be blocked */ });
+    $('recMsg').textContent = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+function show(el, on) { el.classList.toggle('hide', !on); }
+
+$('recRefresh').onclick = () => loadRecordings();
+// Default to the last 30 days so the first open is a small, fast query
+// rather than the whole CDR history.
+(function initRecFilters() {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  $('recSince').value = d.toISOString().slice(0, 10);
+})();
 
 // -------------------------------------------------------------- coverage --
 async function loadCoverage() {
