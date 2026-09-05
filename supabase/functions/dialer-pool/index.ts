@@ -81,12 +81,43 @@ Deno.serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
     const { data: profile } = await admin
       .from('profiles').select('role').eq('id', caller.id).maybeSingle();
-    if (!profile || (profile.role !== 'owner' && profile.role !== 'admin')) {
-      return json(req, { ok: false, error: 'Only owner/admin can manage the number pool.' }, 403);
+    if (!profile) return json(req, { ok: false, error: 'Only staff accounts can use the dialer.' }, 403);
+
+    // Three tiers (v529). The page hides buttons; THIS is the boundary.
+    //   isOwnerAdmin — everything, including ordering, which charges a live
+    //                  carrier account
+    //   canManage    — runs the floor: search, sync, activate/rest. Never buys.
+    //   canReview    — looks. Quality needs to see the pool and coverage
+    //                  without any ability to change either.
+    const isOwnerAdmin = profile.role === 'owner' || profile.role === 'admin';
+    let canManage = isOwnerAdmin;
+    let canReview = isOwnerAdmin;
+    if (!isOwnerAdmin) {
+      const { data: r } = await admin.from('roles')
+        .select('can_manage_dialer, can_review_calls').eq('name', profile.role).maybeSingle();
+      canManage = !!r?.can_manage_dialer;
+      canReview = canManage || !!r?.can_review_calls;
+    }
+    if (!canReview) {
+      return json(req, { ok: false, error: 'You do not have access to the dialer number pool.' }, 403);
     }
 
     const body = await req.json().catch(() => ({}));
     const action = String(body?.action || '');
+
+    // Read-only actions are open to reviewers; everything that changes state
+    // needs canManage; buying needs owner/admin. Enumerated rather than
+    // inferred, so adding an action later fails closed instead of open.
+    const READ_ONLY = new Set(['coverage_gaps', 'list_dids']);
+    if (!READ_ONLY.has(action) && !canManage) {
+      return json(req, { ok: false, error: 'Read-only access — you cannot change the number pool.' }, 403);
+    }
+    if (action === 'order_numbers' && !isOwnerAdmin) {
+      return json(req, {
+        ok: false,
+        error: 'Ordering numbers is owner/admin only — it charges the carrier account.',
+      }, 403);
+    }
     const nowIso = new Date().toISOString();
 
     const telnyxHeaders = {

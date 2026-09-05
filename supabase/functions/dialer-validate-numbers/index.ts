@@ -132,9 +132,21 @@ Deno.serve(async (req) => {
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
     const { data: profile } = await admin
       .from('profiles').select('role').eq('id', caller.id).maybeSingle();
-    // Admin-only: each lookup costs money.
-    if (!profile || (profile.role !== 'owner' && profile.role !== 'admin')) {
-      return json(req, { ok: false, error: 'Only owner/admin can run number validation.' }, 403);
+    if (!profile) return json(req, { ok: false, error: 'Only staff accounts can use the dialer.' }, 403);
+
+    // Owner/admin or can_manage_dialer (v529). Each lookup costs $0.0015, so
+    // this is not open to everyone -- but validation is what makes an
+    // imported list dialable at all, and a team leader who can load a list
+    // but not validate it has a list nobody can call. max_lookups caps the
+    // spend per invocation regardless of who runs it.
+    let allowed = profile.role === 'owner' || profile.role === 'admin';
+    if (!allowed) {
+      const { data: r } = await admin.from('roles')
+        .select('can_manage_dialer').eq('name', profile.role).maybeSingle();
+      allowed = !!r?.can_manage_dialer;
+    }
+    if (!allowed) {
+      return json(req, { ok: false, error: 'You do not have permission to run number validation.' }, 403);
     }
 
     if (!TELNYX_API_KEY) {

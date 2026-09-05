@@ -1797,13 +1797,24 @@
     </div>
     <!-- v526: Dialer -- opens the standalone agent dialer console at
          /dialer/ (see dialer/index.html). Deliberately a real page nav
-         (location.href in the click handler below), not a data-tab
-         in-app section: the dialer page picks up the portal's login via
-         sessionStorage, which only survives a same-tab navigation, not a
-         SPA section switch. Grantable per role like Finance/HR -- see
-         DASHBOARD_TAB_KEYS. -->
+         (window.open in the click handler below), not a data-tab in-app
+         section: the dialer page picks up the portal's login from
+         sessionStorage, which a SPA section switch cannot hand over.
+         v529: now opens in a NEW TAB so an agent mid-call does not lose the
+         portal by navigating away -- see the handler's comment for why
+         rel="noopener" must NOT be added. Grantable per role like
+         Finance/HR -- see DASHBOARD_TAB_KEYS. -->
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="dialer" title="Dialer"><svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg><span>Dialer</span></button>
+      <!-- v529: Dialer Admin — number pool, list import, campaigns, at
+           /dialer/admin.html. A SEPARATE tab key from 'dialer' on purpose:
+           the two are different jobs, not two views of one. Quality reviews
+           calls and must never land on a console with a Dial button; agents
+           run the console and have no business ordering numbers. Keeping
+           them as independent grants is what lets a role have one without
+           the other. Real access control is server-side (can_manage_dialer
+           / can_review_calls, v529) — this only gates nav visibility. -->
+      <button class="tab-btn" data-tab="dialer_admin" title="Dialer Admin"><svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h12M4 15h7"/><circle cx="15.5" cy="15" r="2.2"/></svg><span>Dialer Admin</span></button>
     </div>
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="leads" title="Leads"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="0.8" fill="currentColor"/></svg><span>Leads</span></button>
@@ -7545,7 +7556,31 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     // location.href keeps this a same-tab navigation, which is what lets
     // dialer/index.html pick up the portal's session (sessionStorage
     // doesn't cross tabs, so a new-tab open would never see it).
-    if(btn.dataset.tab === 'dialer'){ location.href = '/dialer/'; return; }
+    // v529: both dialer pages open in a NEW TAB, so an agent on a call does
+    // not lose the portal (and a live WebRTC session) by navigating away.
+    //
+    // CRITICAL, and the reason this is a helper rather than a plain link:
+    // the portal stores its Supabase session in sessionStorage, not
+    // localStorage (see the createClient call above, and dialer/index.html's
+    // matching config). sessionStorage is PER TAB — a tab opened cold starts
+    // empty. Browsers do clone it into a tab opened from this page, but ONLY
+    // when the new context keeps its opener relationship: adding
+    // rel="noopener" (or target="_blank" on a bare <a>) severs that and the
+    // dialer lands signed-out. So noopener is deliberately NOT set here.
+    //
+    // Consequence to know: opening /dialer/ from a bookmark, or pasting the
+    // URL into a fresh tab, still shows "not signed in" — that was already
+    // true before this change, and is a property of the sessionStorage
+    // choice rather than of opening in a new tab.
+    if(btn.dataset.tab === 'dialer' || btn.dataset.tab === 'dialer_admin'){
+      const url = btn.dataset.tab === 'dialer' ? '/dialer/' : '/dialer/admin.html';
+      const w = window.open(url, '_blank');
+      // Popup blockers should not strand someone with a dead button. A click
+      // handler is a user gesture so this is normally allowed, but fall back
+      // to same-tab nav (the old behaviour) rather than failing silently.
+      if(!w) location.href = url;
+      return;
+    }
     activateTab(btn.dataset.tab);
   });
 });
@@ -15647,6 +15682,15 @@ const DASHBOARD_TAB_KEYS = [
   // on the dialer page itself (the agent's own Supabase session) and in
   // dialer-call-control's server-side gates.
   { key: 'dialer', label: 'Dialer' },
+  // v529: Dialer Admin — number pool, list import, campaign management at
+  // /dialer/admin.html. Separate from 'dialer' because the two are different
+  // jobs: a Quality reviewer needs this and must never get a console with a
+  // Dial button; an agent needs the console and has no business ordering
+  // numbers on a live carrier account. Also defaults OFF everywhere. Nav
+  // visibility only — the page checks can_manage_dialer / can_review_calls
+  // (v529) against the viewer's own session, and dialer-pool re-checks
+  // server-side, keeping number ORDERING owner/admin regardless of this key.
+  { key: 'dialer_admin', label: 'Dialer Admin' },
   // v366: display label renamed Client Submissions -> Campaigns (Data Form
   // moved back here from Data Science, Campaign subtab renamed Campaign
   // Management) -- the internal key stays 'client_submissions' unchanged,

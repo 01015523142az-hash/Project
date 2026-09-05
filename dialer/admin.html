@@ -288,6 +288,34 @@ function say(el, text, kind) {
 
 // ------------------------------------------------------------------ boot --
 let campaigns = [];
+let isOwnerAdmin = false;   // may order numbers (spends money)
+let canManage = false;      // may change campaigns, lists, DID status
+let canReview = false;      // may look, and nothing else
+
+// Read-only viewers see the same screens with every write control removed
+// rather than a stripped-down page: the point of giving Quality access is
+// that they see what the floor sees. Ordering is hidden even from managers,
+// because it charges a live carrier account.
+function applyReadOnly() {
+  if (!canManage) {
+    ['searchBtn', 'orderBtn', 'syncBtn', 'impBtn', 'cCreate', 'searchNpa',
+     'searchLimit', 'impCampaign', 'impName', 'impFile', 'impCsv',
+     'impScrubbed', 'impScrubDate', 'cName', 'cMode', 'cStart', 'cEnd']
+      .forEach((id) => { const el = $(id); if (el) el.disabled = true; });
+    document.querySelectorAll('#tab-lists .panel:first-child, #tab-campaigns .panel:first-child')
+      .forEach((el) => el.classList.add('hide'));
+    const note = document.createElement('div');
+    note.className = 'msg warn';
+    note.textContent = 'Read-only access. You can review the pool, lists and campaigns, '
+      + 'but not change them or order numbers.';
+    document.querySelector('main').prepend(note);
+  } else if (!isOwnerAdmin) {
+    // Managers run the floor but do not buy. Search stays usable so they can
+    // tell an owner exactly which numbers to order.
+    const ob = $('orderBtn');
+    if (ob) { ob.disabled = true; ob.title = 'Ordering numbers is owner/admin only.'; }
+  }
+}
 (async function boot() {
   const { data: { session } } = await sb.auth.getSession();
   if (!session) {
@@ -296,11 +324,30 @@ let campaigns = [];
   }
   const { data: p } = await sb.from('profiles')
     .select('full_name, role').eq('id', session.user.id).maybeSingle();
-  if (!p || (p.role !== 'owner' && p.role !== 'admin')) {
-    say($('gate'), 'Dialer admin is owner/admin only.', 'err');
+  if (!p) { say($('gate'), 'No staff profile found for this account.', 'err'); return; }
+
+  // Three tiers, not two (v529). Owner/admin get everything including
+  // number ordering, which charges a live carrier account. can_manage_dialer
+  // runs the floor — campaigns, lists, validation, activating and resting
+  // numbers — but never buys. can_review_calls is read-only: Quality needs
+  // to see the pool and the lists without any ability to change them.
+  //
+  // Every one of these is re-checked server-side in dialer-pool and
+  // dialer-validate-numbers. Hiding a button is a courtesy to the user, not
+  // a security boundary.
+  const { data: roleRow } = await sb.from('roles')
+    .select('can_manage_dialer, can_review_calls').eq('name', p.role).maybeSingle();
+  isOwnerAdmin = p.role === 'owner' || p.role === 'admin';
+  canManage = isOwnerAdmin || !!roleRow?.can_manage_dialer;
+  canReview = canManage || !!roleRow?.can_review_calls;
+
+  if (!canReview) {
+    say($('gate'), 'You do not have access to the dialer admin screens.', 'err');
     return;
   }
-  $('who').textContent = `${p.full_name || ''} · ${p.role}`;
+  $('who').textContent = `${p.full_name || ''} · ${p.role}`
+    + (canManage ? '' : ' · read-only');
+  applyReadOnly();
   $('impScrubDate').value = new Date().toISOString().slice(0, 10);
 
   await loadCampaigns();
@@ -361,9 +408,13 @@ $('searchBtn').onclick = async () => {
       <td>${esc(n.rate_center || '—')}</td>
       <td class="num">${n.monthly_cost != null ? '$' + n.monthly_cost : '—'}</td>
     </tr>`).join('');
+  // Ticking a box must not re-enable ordering for someone who may not order.
+  // applyReadOnly() disabled it once at boot; this is the path that would
+  // silently undo that.
   $('searchRows').querySelectorAll('.pick').forEach((c) => {
     c.onchange = () => {
-      $('orderBtn').disabled = !$('searchRows').querySelectorAll('.pick:checked').length;
+      $('orderBtn').disabled = !isOwnerAdmin
+        || !$('searchRows').querySelectorAll('.pick:checked').length;
     };
   });
   $('orderBtn').disabled = true;
@@ -402,8 +453,8 @@ async function loadPool() {
         <td class="num">${used}</td>
         <td class="num">${d.daily_cap ?? 80}</td>
         <td>${esc(d.reputation_status || 'unknown')}</td>
-        <td><button class="sm" data-did="${esc(d.id)}" data-next="${next}">
-          ${next === 'active' ? 'Activate' : 'Rest'}</button></td>
+        <td>${canManage ? `<button class="sm" data-did="${esc(d.id)}" data-next="${next}">
+          ${next === 'active' ? 'Activate' : 'Rest'}</button>` : ''}</td>
       </tr>`;
     }).join('')
     : '<tr><td colspan="8">No numbers in the pool yet.</td></tr>';
@@ -452,8 +503,8 @@ async function loadCampaigns() {
         <td class="mono">${esc(c.calling_window_start)}–${esc(c.calling_window_end)}</td>
         <td><span class="tag ${c.status === 'active' ? 't-active' : 't-resting'}">${esc(c.status)}</span></td>
         <td class="num">${counts[c.id].toLocaleString()}</td>
-        <td><button class="sm" data-camp="${esc(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">
-          ${c.status === 'active' ? 'Pause' : 'Activate'}</button></td>
+        <td>${canManage ? `<button class="sm" data-camp="${esc(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">
+          ${c.status === 'active' ? 'Pause' : 'Activate'}</button>` : ''}</td>
       </tr>`).join('')
     : '<tr><td colspan="6">No campaigns yet.</td></tr>';
 
@@ -501,7 +552,7 @@ async function loadLists() {
         <td class="num">${(l.loaded_rows ?? 0).toLocaleString()}</td>
         <td class="num ${l.unvalidated ? 'gap' : ''}">${l.unvalidated.toLocaleString()}</td>
         <td>${l.readymode_scrubbed_at ? esc(l.readymode_scrubbed_at.slice(0, 10)) : '—'}</td>
-        <td>${l.unvalidated ? `<button class="sm" data-val="${esc(l.id)}">Validate</button>` : ''}</td>
+        <td>${l.unvalidated && canManage ? `<button class="sm" data-val="${esc(l.id)}">Validate</button>` : ''}</td>
       </tr>`).join('')
     : '<tr><td colspan="7">No lists yet.</td></tr>';
 
