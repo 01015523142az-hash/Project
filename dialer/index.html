@@ -169,6 +169,14 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, storage: window.sessionStorage, flowType: 'implicit' }
 });
+
+// TEMPORARY (Telnyx support debugging, see TELNYX-SUPPORT-TICKET-DRAFT.md):
+// forces verbose console logging from the WebRTC SDK itself, including its
+// own Session UUID (distinct from the local call.id/callId we already log)
+// -- Telnyx support asked for that UUID specifically since our local id
+// isn't something they can trace against their SIP edge. Remove once this
+// is resolved.
+window.__TELNYX_DEBUG__ = true;
 const $ = (id) => document.getElementById(id);
 
 let me = null;              // profiles row
@@ -274,7 +282,7 @@ async function initSoftphone() {
     sipState('err', 'Telnyx SDK failed to load'); return;
   }
 
-  rtc = new window.TelnyxWebRTC.TelnyxRTC({ login_token: res.token });
+  rtc = new window.TelnyxWebRTC.TelnyxRTC({ login_token: res.token, debug: window.__TELNYX_DEBUG__ === true });
   rtc.enableMicrophone();
 
   rtc.on('telnyx.ready', () => sipState('on', 'Ready'));
@@ -435,6 +443,19 @@ $('dialBtn').onclick = async () => {
   sipState('busy', 'Dialling…');
   show($('hangupBtn'), true);
   show($('dialBtn'), false);
+
+  // TEMPORARY (Telnyx support debugging): dump every identifier the SDK's
+  // call object exposes -- Telnyx support says our local call.id isn't a
+  // real Session UUID they can trace, so log everything to find the field
+  // that actually is. Remove once this is resolved.
+  if (window.__TELNYX_DEBUG__) {
+    console.log('[telnyx-debug] activeCall object:', activeCall);
+    console.log('[telnyx-debug] activeCall keys:', Object.keys(activeCall || {}));
+    console.log('[telnyx-debug] telnyxSessionId candidates:', {
+      id: activeCall.id, callId: activeCall.callId, telnyxSessionId: activeCall.telnyxSessionId,
+      sessionId: activeCall.sessionId, callSessionId: activeCall.callSessionId,
+    });
+  }
 
   // Report the SDK's call id so dialer-telnyx-webhook can correlate events
   // to this CDR row. If this never lands (tab crash), the webhook falls back
