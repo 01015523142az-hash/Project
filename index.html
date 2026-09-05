@@ -1795,6 +1795,16 @@
                   </div>
         </div>
     </div>
+    <!-- v526: Dialer -- opens the standalone agent dialer console at
+         /dialer/ (see dialer/index.html). Deliberately a real page nav
+         (location.href in the click handler below), not a data-tab
+         in-app section: the dialer page picks up the portal's login via
+         sessionStorage, which only survives a same-tab navigation, not a
+         SPA section switch. Grantable per role like Finance/HR -- see
+         DASHBOARD_TAB_KEYS. -->
+    <div class="side-nav-group">
+      <button class="tab-btn" data-tab="dialer" title="Dialer"><svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg><span>Dialer</span></button>
+    </div>
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="leads" title="Leads"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="0.8" fill="currentColor"/></svg><span>Leads</span></button>
       <div class="tab-nav side-subnav" id="leadsSubNav">
@@ -7530,7 +7540,14 @@ document.addEventListener('keydown', (e) => {
 
 // ---------- tab switching ----------
 document.querySelectorAll('.tab-btn').forEach(btn => {
-  btn.addEventListener('click', () => activateTab(btn.dataset.tab));
+  btn.addEventListener('click', () => {
+    // v526: Dialer is a real separate page, not an in-app section --
+    // location.href keeps this a same-tab navigation, which is what lets
+    // dialer/index.html pick up the portal's session (sessionStorage
+    // doesn't cross tabs, so a new-tab open would never see it).
+    if(btn.dataset.tab === 'dialer'){ location.href = '/dialer/'; return; }
+    activateTab(btn.dataset.tab);
+  });
 });
 
 // ---------- timezone-aware day/month boundaries ----------
@@ -15623,6 +15640,13 @@ const DASHBOARD_TAB_KEYS = [
   // access within Leads, same as um_sections does for User Management.
   { key: 'leads', label: 'Leads' },
   { key: 'call_activity', label: 'Activity' }, // view-only — GHL call log via webhook; see loadCallActivity()
+  // v526: Dialer — opens the standalone agent dialer console at /dialer/.
+  // Grantable per role like Finance/HR/Data Science; defaults OFF for
+  // every role until an Owner explicitly checks it. No editable:true —
+  // this permission only gates nav visibility, real access control lives
+  // on the dialer page itself (the agent's own Supabase session) and in
+  // dialer-call-control's server-side gates.
+  { key: 'dialer', label: 'Dialer' },
   // v366: display label renamed Client Submissions -> Campaigns (Data Form
   // moved back here from Data Science, Campaign subtab renamed Campaign
   // Management) -- the internal key stays 'client_submissions' unchanged,
