@@ -205,8 +205,13 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       <p class="hint">
         Imported contacts are <strong>not dialable until validated</strong> — the
         calling-hours gate needs each number's own time zone, which only Number Lookup
-        can resolve. Validation also drops disconnected numbers and ranks mobiles first.
-        Roughly $0.0015 per number.
+        can resolve. Validation also drops disconnected numbers before you spend a dial
+        on them, and ranks mobiles ahead of landlines.
+        <br><br>
+        <strong>Validate in batches, not whole lists.</strong> At $0.0015 a number, a
+        100,000-contact import costs $150 to validate up front — mostly on numbers that
+        will not be dialled for a year. Validating 500 at a time costs 75¢ and keeps
+        agents supplied; top it up as the Unvalidated count falls.
       </p>
       <div class="scroll">
         <table>
@@ -263,7 +268,14 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 
 const SUPABASE_URL = 'https://kqfoniinytvuddxiwvkc.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxZm9uaWlueXR2dWRkeGl3dmtjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwMDczNTAsImV4cCI6MjA5ODU4MzM1MH0.GSuxsxKYp3XQ_ZsWesTXofudobYxBVWcz77Thbp8uII';
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// MUST match dialer/index.html's client config, and for the same reason: the
+// staff portal stores its Supabase session in sessionStorage, NOT the
+// supabase-js default of localStorage. A default client here looks in the
+// wrong place, finds nothing, and reports "Not signed in" to someone who is
+// very much signed in one tab over.
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: true, storage: window.sessionStorage, flowType: 'implicit' }
+});
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -561,20 +573,43 @@ async function loadLists() {
   });
 }
 
-// Loops until the list is fully validated. The function caps each call, so a
-// large list needs several passes; doing that here rather than making someone
-// click repeatedly.
+// Validates a BOUNDED BATCH from the front of the queue, not the whole list.
+//
+// This used to loop until the list was clear, which meant a 100k-contact
+// import cost ~$150 up front to look up numbers that would not be dialled
+// for a year, if ever. At ~3,000 dials a month you only ever need a few
+// thousand contacts validated ahead of the agents -- roughly $4.50 -- and
+// the rest can wait until they are actually near the front.
+//
+// Same accuracy, same disconnected-number detection, same time-zone source;
+// only the timing of the spend changes. Top it up when Unvalidated gets low.
+const VALIDATE_BATCH = 500;
+
 async function validateList(listId, btn) {
+  const est = (VALIDATE_BATCH * 0.0015).toFixed(2);
+  if (!confirm(`Validate the next ${VALIDATE_BATCH} numbers in this list?\n\n`
+    + `Costs about $${est}. Only validated contacts are dialable, so top this `
+    + `up as agents work through the list rather than validating everything now.`)) return;
+
   btn.disabled = true;
-  let total = 0;
-  for (let pass = 0; pass < 40; pass++) {
+  say($('valMsg'), 'Validating…', 'ok');
+
+  // Two passes of the function's own 300 cap covers one batch.
+  let total = 0, remaining = 0;
+  for (let pass = 0; pass < Math.ceil(VALIDATE_BATCH / 300); pass++) {
     const r = await callFn('dialer-validate-numbers', { list_id: listId, max_lookups: 300 });
     if (!r?.ok) { say($('valMsg'), r?.error || 'Validation failed', 'err'); btn.disabled = false; return; }
     total += r.checked || 0;
-    say($('valMsg'), `Validated ${total}… ${r.remaining} remaining`, 'ok');
+    remaining = r.remaining ?? 0;
     if (!r.remaining || !r.checked) break;
   }
-  say($('valMsg'), `Done — ${total} numbers validated (~$${(total * 0.0015).toFixed(2)}).`, 'ok');
+
+  btn.disabled = false;
+  say($('valMsg'),
+    `Validated ${total} (~$${(total * 0.0015).toFixed(2)}). `
+    + (remaining ? `${remaining.toLocaleString()} still unvalidated — validate more when agents get close.`
+                 : 'This list is fully validated.'),
+    'ok');
   loadLists();
 }
 
