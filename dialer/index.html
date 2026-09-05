@@ -28,145 +28,319 @@
 <!-- Exposes window.TelnyxWebRTC; the client is TelnyxWebRTC.TelnyxRTC. -->
 <script src="https://cdn.jsdelivr.net/npm/@telnyx/webrtc@2.21.1/lib/bundle.js"></script>
 
+<script>
+  // Applied before anything renders so a reload never flashes the wrong
+  // theme. Reads the SAME localStorage key the staff portal writes, so the
+  // choice made there carries over here without a second toggle.
+  (function(){
+    try{
+      var saved = localStorage.getItem('dashboardTheme');
+      if(saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    }catch(e){}
+  })();
+</script>
+
 <style>
+/* Theme, typography and shell are lifted verbatim from dashboard/index.html
+   so the dialer reads as the same product as the staff portal rather than a
+   bolted-on tool. Variable NAMES match the portal's exactly — anything the
+   portal restyles by changing a variable value gets picked up here too. The
+   theme choice is shared through the same localStorage key ('dashboardTheme'),
+   so flipping to light in the portal flips this page as well. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Roboto:wght@400;500;700;900&display=swap');
+
 :root{
-  --bg:#f4f6f6; --panel:#fff; --line:#dbe3e2; --ink:#12201f; --ink2:#5a6a69;
-  --accent:#0c6b6b; --good:#2c6e52; --warn:#8a6410; --crit:#a2352c; --crit-bg:#f9e6e3;
-  --radius:6px;
+  --bg:#10131A; --card:#171B23; --card-hover:#1D222C; --inset:#0C0F14;
+  --border:#262D39; --border-light:#323A48;
+  --text:#F2EDE6; --text-2:#A79E8E; --text-dim:#726B5C; --num:#F2EDE6;
+  --focus:#FD6262; --focus-dim:#4A2020; --away:#F5A623; --away-dim:#4A3818;
+  --idle:#2A313C; --danger:#E5484D; --danger-dim:#3A1518;
+  --good:#3DD68C; --good-dim:#173A2B;
+  --gold:#C9A66B; --gold-soft:#E4C88F; --gold-dim:#3A3020;
+  --mono:'IBM Plex Mono', monospace;
+  --sans:'Roboto', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 }
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-button{font:inherit;cursor:pointer;border-radius:var(--radius);border:1px solid var(--line);
-  background:#fff;padding:8px 14px}
-button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-button.danger{background:var(--crit);border-color:var(--crit);color:#fff;font-weight:600}
-select,input,textarea{font:inherit;padding:7px 9px;border:1px solid var(--line);
-  border-radius:var(--radius);background:#fff;color:var(--ink)}
+:root[data-theme="light"]{
+  --bg:#F6F3EE; --card:#FFFFFF; --card-hover:#F3EEE6; --inset:#EFEAE0;
+  --border:#E7E0D2; --border-light:#D8CDB8;
+  --text:#241E14; --text-2:#6E6455; --text-dim:#9C9280; --num:#241E14;
+  --focus:#FD6262; --focus-dim:#FDE3E3; --away:#D9720A; --away-dim:#FBEBD2;
+  --idle:#E2E5EA; --danger:#C3272C; --danger-dim:#F8D7D7;
+  --good:#1A9A5C; --good-dim:#DCF5E8;
+  --gold:#9C7A3C; --gold-soft:#B8935A; --gold-dim:#F3E9D2;
+}
 
-header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
-  padding:10px 18px;background:var(--panel);border-bottom:1px solid var(--line)}
-header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.01em}
-header .spacer{flex:1}
-.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
-  padding:4px 10px;border-radius:99px;border:1px solid var(--line);background:#fff}
-.dot{width:8px;height:8px;border-radius:99px;background:#b9c4c3}
-.dot.on{background:var(--good)} .dot.busy{background:var(--warn)} .dot.err{background:var(--crit)}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;font-size:14px}
 
-main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:16px;
-  align-items:start;max-width:1200px;margin:0 auto}
-@media(max-width:860px){main{grid-template-columns:1fr}}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
-.panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);
-  margin:0 0 12px;font-weight:700}
+/* ---------- shell ---------- */
+#app{max-width:1360px;margin:0 auto;padding:24px 20px 60px}
+.app-header{display:flex;justify-content:space-between;align-items:center;gap:16px;
+  flex-wrap:wrap;margin-bottom:22px}
+.app-title{font-size:19px;font-weight:800;letter-spacing:-.01em;
+  background:linear-gradient(90deg,var(--focus),var(--gold-soft),var(--gold),var(--gold-soft),var(--focus));
+  background-size:300% 100%;-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;color:transparent}
+.app-sub{font-family:var(--mono);font-size:10px;color:var(--text-dim);
+  text-transform:uppercase;letter-spacing:1.5px;margin-top:3px}
+.header-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.who{font-family:var(--mono);font-size:11px;color:var(--text-2);
+  text-transform:uppercase;letter-spacing:.5px}
+.theme-toggle-btn{background:transparent;border:1px solid var(--border-light);color:var(--text-2);
+  border-radius:999px;padding:8px 12px;font-size:15px;line-height:1;cursor:pointer}
+.theme-toggle-btn:hover{color:var(--text);background:var(--card-hover)}
 
-.contact-name{font-size:22px;font-weight:700;letter-spacing:-.02em;margin:0 0 2px}
-.contact-num{font-size:17px;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--accent);
-  font-weight:600;margin:0 0 14px}
-.kv{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:13px}
-.kv dt{color:var(--ink2)} .kv dd{margin:0}
+.app-body{display:flex;align-items:flex-start;gap:28px}
+.main-content{flex:1 1 0;min-width:0}
+
+/* ---------- left navigation (portal's .side-main-nav pattern) ---------- */
+.side-main-nav{flex:0 0 214px;width:214px;display:flex;flex-direction:column;gap:3px;
+  position:sticky;top:20px;max-height:calc(100vh - 40px);overflow-y:auto;overflow-x:hidden;
+  padding-bottom:20px;padding-right:2px}
+.side-main-nav::-webkit-scrollbar{width:6px}
+.side-main-nav::-webkit-scrollbar-thumb{background:var(--border-light);border-radius:6px}
+.side-nav-group{display:flex;flex-direction:column;flex-shrink:0}
+.side-nav-label{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;
+  letter-spacing:1.2px;color:var(--text-dim);padding:12px 12px 6px}
+.tab-btn{display:flex;align-items:center;gap:9px;width:100%;justify-content:flex-start;
+  background:transparent;border:none;color:var(--text-dim);font-family:var(--mono);font-size:12px;
+  text-transform:uppercase;letter-spacing:1px;padding:10px 12px;cursor:pointer;border-radius:8px;
+  white-space:nowrap;transition:color .15s ease,background-color .15s ease;text-decoration:none}
+.tab-btn:hover:not(.active){color:var(--text-2);background:var(--card-hover)}
+.tab-btn.active{color:var(--text);background:var(--card-hover);box-shadow:inset 3px 0 0 var(--focus)}
+.tab-icon{width:15px;height:15px;flex-shrink:0;opacity:.8}
+.tab-btn.active .tab-icon{opacity:1}
+.side-nav-group-bottom{padding-top:10px;margin-top:12px;border-top:1px solid var(--border-light)}
+
+/* ---------- cards ---------- */
+.panel{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:22px}
+.panel + .panel{margin-top:16px}
+.panel h2{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-dim);margin:0 0 14px;font-weight:600}
+
+/* ---------- controls ---------- */
+button{border:none;border-radius:999px;padding:9px 17px;font-weight:600;font-size:13px;
+  cursor:pointer;font-family:var(--sans);background:var(--inset);color:var(--text);
+  border:1px solid var(--border-light)}
+button:hover:not(:disabled){background:var(--card-hover)}
+button:disabled{opacity:.42;cursor:not-allowed}
+button.primary{background:var(--focus);border-color:var(--focus);color:#2B0A0A;
+  box-shadow:0 8px 22px -8px rgba(253,98,98,.45)}
+button.primary:hover:not(:disabled){box-shadow:0 10px 26px -6px rgba(253,98,98,.55);background:var(--focus)}
+button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+button.danger:hover:not(:disabled){background:var(--danger)}
+select,input,textarea{background:var(--inset);border:1px solid var(--border-light);color:var(--text);
+  padding:9px 12px;border-radius:8px;font-size:13.5px;font-family:var(--sans)}
+select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
+
+.pill{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);font-size:10.5px;
+  font-weight:600;text-transform:uppercase;letter-spacing:.6px;padding:6px 12px;border-radius:999px;
+  border:1px solid var(--border-light);background:var(--card);color:var(--text-2)}
+.dot{width:7px;height:7px;border-radius:99px;background:var(--idle);flex-shrink:0}
+.dot.on{background:var(--good)} .dot.busy{background:var(--away)} .dot.err{background:var(--danger)}
+
+/* ---------- contact ---------- */
+.contact-name{font-size:24px;font-weight:700;letter-spacing:-.02em;margin:0 0 3px;color:var(--text)}
+.contact-num{font-size:18px;font-family:var(--mono);color:var(--focus);font-weight:600;margin:0 0 16px}
+.kv{display:grid;grid-template-columns:132px 1fr;gap:9px 14px;font-size:13px}
+.kv dt{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.8px;
+  color:var(--text-dim);align-self:center}
+.kv dd{margin:0;color:var(--text)}
 
 .callbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-  margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
-.timer{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:20px;font-weight:600;
-  min-width:66px;font-variant-numeric:tabular-nums}
+  margin-top:18px;padding-top:16px;border-top:1px solid var(--border)}
+.timer{font-family:var(--mono);font-size:21px;font-weight:600;min-width:70px;
+  font-variant-numeric:tabular-nums;color:var(--num)}
+.spacer{flex:1}
 
-.msg{padding:10px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:12px}
-.msg.err{background:var(--crit-bg);color:var(--crit);border:1px solid #eab5ad}
-.msg.info{background:#e4efee;color:var(--accent);border:1px solid #b9d6d3}
+/* ---------- messages ---------- */
+.msg{padding:11px 14px;border-radius:10px;font-size:13px;margin-bottom:14px;
+  border:1px solid transparent}
+.msg.err{background:var(--danger-dim);color:var(--danger);border-color:var(--danger)}
+.msg.info{background:var(--focus-dim);color:var(--focus);border-color:var(--focus)}
 .hide{display:none!important}
 
-.disp-list{display:flex;flex-direction:column;gap:6px}
-.disp-list button{text-align:left;display:flex;justify-content:space-between;align-items:center;gap:8px}
-.disp-list .tag{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)}
-.stat{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;
-  border-bottom:1px solid var(--line)}
+/* ---------- dispositions / stats ---------- */
+.disp-list{display:flex;flex-direction:column;gap:7px}
+.disp-list button{text-align:left;display:flex;justify-content:space-between;align-items:center;
+  gap:10px;border-radius:10px;background:var(--inset)}
+.disp-list button:hover{background:var(--card-hover);border-color:var(--focus)}
+.disp-list .tag{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;
+  letter-spacing:.6px;color:var(--text-dim)}
+.stat{display:flex;justify-content:space-between;align-items:center;font-size:13px;
+  padding:9px 0;border-bottom:1px solid var(--border)}
 .stat:last-child{border-bottom:none}
-.stat b{font-variant-numeric:tabular-nums}
-.muted{color:var(--ink2);font-size:13px}
+.stat span{font-family:var(--mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:.8px;color:var(--text-dim)}
+.stat b{font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums;color:var(--num)}
+.muted{color:var(--text-2);font-size:13px;line-height:1.6}
+
+/* ---------- views (switched by the left nav) ---------- */
+.view{display:none}
+.view.active{display:block}
+.console-grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:16px;align-items:start}
+@media(max-width:1080px){.console-grid{grid-template-columns:1fr}}
+
+@media (max-width:980px){
+  #app{padding:18px 14px 60px}
+  .app-body{flex-direction:column;gap:14px}
+  .side-main-nav{position:relative;top:0;width:100%;flex:none;max-height:none;overflow:visible;
+    flex-direction:row;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--border);padding-bottom:10px}
+  .side-nav-group{flex-direction:row;flex-wrap:wrap}
+  .side-nav-label{display:none}
+  .tab-btn{width:auto}
+  .side-nav-group-bottom{border-top:none;margin-top:0;padding-top:0}
+}
 </style>
 </head>
 <body>
 
-<header>
-  <h1>Dialer</h1>
-  <span class="pill"><span class="dot" id="sipDot"></span><span id="sipText">Connecting…</span></span>
-  <select id="campaignSel"><option value="">Loading campaigns…</option></select>
-  <div class="spacer"></div>
-  <input id="manualNum" type="tel" inputmode="tel" placeholder="Manual dial — 10 digits"
-         style="width:190px" autocomplete="off">
-  <button id="manualBtn">Dial</button>
-  <span class="muted" id="agentName"></span>
-  <button id="pauseBtn">Pause</button>
-</header>
+<div id="app">
+  <header class="app-header">
+    <div>
+      <div class="app-title">PropTech AI</div>
+      <div class="app-sub">Agent Dialer</div>
+    </div>
+    <div class="header-right">
+      <span class="pill"><span class="dot" id="sipDot"></span><span id="sipText">Connecting…</span></span>
+      <span class="who" id="agentName"></span>
+      <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle light/dark theme">🌙</button>
+    </div>
+  </header>
 
-<main>
-  <section>
-    <div id="banner" class="msg info hide"></div>
-
-    <div class="panel" id="contactPanel">
-      <h2>Current contact</h2>
-      <div id="contactEmpty" class="muted">No contact loaded. Pick a campaign to begin.</div>
-
-      <div id="contactBody" class="hide">
-        <p class="contact-name" id="cName">—</p>
-        <p class="contact-num" id="cNumber">—</p>
-        <dl class="kv">
-          <dt>Local time</dt><dd id="cLocal">—</dd>
-          <dt>Line type</dt><dd id="cLine">—</dd>
-          <dt>Attempts</dt><dd id="cAttempts">—</dd>
-          <dt>Last outcome</dt><dd id="cLast">—</dd>
-          <dt>Property</dt><dd id="cProperty">—</dd>
-        </dl>
-
-        <!-- Power mode only. Auto-advance must always be visibly cancellable:
-             an agent who needs a moment after a hard call should never have
-             the next number dialled out from under them. -->
-        <div id="wrapBar" class="msg info hide"
-             style="display:flex;align-items:center;gap:12px;margin-top:14px">
-          <span>Next call in <b id="wrapCount">5</b>s</span>
-          <button id="wrapNowBtn">Dial now</button>
-          <button id="wrapCancelBtn">Stop auto-dial</button>
-        </div>
-
-        <div class="callbar">
-          <button class="primary" id="dialBtn">Dial</button>
-          <button class="danger hide" id="hangupBtn">Hang up</button>
-          <button id="muteBtn" disabled>Mute</button>
-          <span class="timer" id="timer">00:00</span>
-          <div class="spacer"></div>
-          <button id="skipBtn">Skip</button>
-        </div>
+  <div class="app-body">
+    <!-- Left navigation. Same .side-main-nav/.tab-btn shape the staff portal
+         uses, so the two surfaces navigate identically. The view buttons
+         carry data-view; the bottom group is plain links off this page. -->
+    <nav class="side-main-nav">
+      <div class="side-nav-group">
+        <div class="side-nav-label">Dialer</div>
+        <button class="tab-btn active" data-view="console">
+          <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg>
+          <span>Console</span>
+        </button>
+        <button class="tab-btn" data-view="session">
+          <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V9M10 16V4M16 16v-6"/></svg>
+          <span>Session</span>
+        </button>
       </div>
-    </div>
 
-    <div class="panel hide" id="dispPanel" style="margin-top:16px">
-      <h2>Disposition</h2>
-      <div class="disp-list" id="dispList"></div>
-      <div id="callbackWrap" class="hide" style="margin-top:10px">
-        <label class="muted" for="callbackAt">Callback at</label><br>
-        <input type="datetime-local" id="callbackAt" style="margin-top:4px">
+      <div class="side-nav-group side-nav-group-bottom">
+        <div class="side-nav-label">Go to</div>
+        <a class="tab-btn" href="/dialer/admin.html">
+          <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.8l5.5 2.3v4.4c0 3.7-2.3 6-5.5 6.9-3.2-.9-5.5-3.2-5.5-6.9V5.1z"/></svg>
+          <span>Dialer Admin</span>
+        </a>
+        <a class="tab-btn" href="/">
+          <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 9.5L10 4l6.5 5.5"/><path d="M5.5 8.5V16h9V8.5"/></svg>
+          <span>Staff Portal</span>
+        </a>
       </div>
-      <textarea id="dispNote" rows="2" placeholder="Note (optional)"
-        style="width:100%;margin-top:10px;resize:vertical"></textarea>
-    </div>
-  </section>
+    </nav>
 
-  <aside>
-    <div class="panel">
-      <h2>This session</h2>
-      <div class="stat"><span>Dials</span><b id="sDials">0</b></div>
-      <div class="stat"><span>Connects</span><b id="sConnects">0</b></div>
-      <div class="stat"><span>Leads</span><b id="sLeads">0</b></div>
-      <div class="stat"><span>Talk time</span><b id="sTalk">00:00</b></div>
-    </div>
-    <div class="panel" style="margin-top:16px">
-      <h2>Script</h2>
-      <div id="scriptBox" class="muted">Select a campaign.</div>
-    </div>
-  </aside>
-</main>
+    <main class="main-content">
+      <div id="banner" class="msg info hide"></div>
+
+      <!-- ============================================== CONSOLE ========== -->
+      <section class="view active" id="view-console">
+        <div class="console-grid">
+          <div>
+            <div class="panel" id="contactPanel">
+              <h2>Current contact</h2>
+              <div id="contactEmpty" class="muted">No contact loaded. Pick a campaign to begin.</div>
+
+              <div id="contactBody" class="hide">
+                <p class="contact-name" id="cName">—</p>
+                <p class="contact-num" id="cNumber">—</p>
+                <dl class="kv">
+                  <dt>Local time</dt><dd id="cLocal">—</dd>
+                  <dt>Line type</dt><dd id="cLine">—</dd>
+                  <dt>Attempts</dt><dd id="cAttempts">—</dd>
+                  <dt>Last outcome</dt><dd id="cLast">—</dd>
+                  <dt>Property</dt><dd id="cProperty">—</dd>
+                </dl>
+
+                <!-- Power mode only. Auto-advance must always be visibly cancellable:
+                     an agent who needs a moment after a hard call should never have
+                     the next number dialled out from under them. -->
+                <div id="wrapBar" class="msg info hide"
+                     style="display:flex;align-items:center;gap:12px;margin-top:14px">
+                  <span>Next call in <b id="wrapCount">5</b>s</span>
+                  <button id="wrapNowBtn">Dial now</button>
+                  <button id="wrapCancelBtn">Stop auto-dial</button>
+                </div>
+
+                <div class="callbar">
+                  <button class="primary" id="dialBtn">Dial</button>
+                  <button class="danger hide" id="hangupBtn">Hang up</button>
+                  <button id="muteBtn" disabled>Mute</button>
+                  <span class="timer" id="timer">00:00</span>
+                  <div class="spacer"></div>
+                  <button id="skipBtn">Skip</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel hide" id="dispPanel">
+              <h2>Disposition</h2>
+              <div class="disp-list" id="dispList"></div>
+              <div id="callbackWrap" class="hide" style="margin-top:12px">
+                <label class="muted" for="callbackAt">Callback at</label><br>
+                <input type="datetime-local" id="callbackAt" style="margin-top:6px">
+              </div>
+              <textarea id="dispNote" rows="2" placeholder="Note (optional)"
+                style="width:100%;margin-top:12px;resize:vertical"></textarea>
+            </div>
+          </div>
+
+          <!-- Right rail: the two things an agent needs mid-call without
+               navigating away — what to say, and who they're calling from. -->
+          <div>
+            <div class="panel">
+              <h2>Queue</h2>
+              <label class="muted" for="campaignSel" style="display:block;margin-bottom:6px">Campaign</label>
+              <select id="campaignSel" style="width:100%"><option value="">Loading campaigns…</option></select>
+              <div class="callbar" style="margin-top:14px;padding-top:14px">
+                <button id="pauseBtn" style="width:100%">Pause</button>
+              </div>
+            </div>
+
+            <div class="panel">
+              <h2>Manual dial</h2>
+              <input id="manualNum" type="tel" inputmode="tel" placeholder="10 digits"
+                     style="width:100%" autocomplete="off">
+              <button id="manualBtn" style="width:100%;margin-top:10px">Dial number</button>
+            </div>
+
+            <div class="panel">
+              <h2>Script</h2>
+              <div id="scriptBox" class="muted">Select a campaign.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================================== SESSION ========== -->
+      <section class="view" id="view-session">
+        <div class="panel">
+          <h2>This session</h2>
+          <div class="stat"><span>Dials</span><b id="sDials">0</b></div>
+          <div class="stat"><span>Connects</span><b id="sConnects">0</b></div>
+          <div class="stat"><span>Leads</span><b id="sLeads">0</b></div>
+          <div class="stat"><span>Talk time</span><b id="sTalk">00:00</b></div>
+        </div>
+        <div class="panel">
+          <h2>About these numbers</h2>
+          <p class="muted">
+            Counts cover this browser session only — they reset when you reload or sign out.
+            The durable record is <span style="font-family:var(--mono)">dialer_attempts</span>,
+            which is written from the carrier's own call events rather than from this page.
+          </p>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -712,6 +886,42 @@ $('wrapNowBtn').onclick = () => { stopWrap(); if (!activeCall) $('dialBtn').clic
 $('wrapCancelBtn').onclick = () => stopWrap('cancelled');
 
 loadDispositions();
+</script>
+
+<script>
+'use strict';
+// Shell-only behaviour, kept in its own block so it stays clearly separate
+// from the dialing logic above: left-nav view switching and the theme
+// toggle. Neither touches call state.
+
+// View switching. Anchor items in the nav are real links off this page and
+// deliberately have no data-view, so they fall through to normal navigation.
+document.querySelectorAll('.side-main-nav .tab-btn[data-view]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.side-main-nav .tab-btn[data-view]')
+      .forEach((b) => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('.view')
+      .forEach((v) => v.classList.toggle('active', v.id === 'view-' + btn.dataset.view));
+  });
+});
+
+// Same key and same semantics as the staff portal's toggle, so the two
+// surfaces stay in step: dark is the default, light is the stored opt-in.
+function currentTheme(){
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+function applyThemeIcon(){
+  const btn = document.getElementById('themeToggleBtn');
+  if (btn) btn.textContent = currentTheme() === 'light' ? '☀️' : '🌙';
+}
+document.getElementById('themeToggleBtn').addEventListener('click', () => {
+  const next = currentTheme() === 'light' ? 'dark' : 'light';
+  if (next === 'light') document.documentElement.setAttribute('data-theme', 'light');
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('dashboardTheme', next); } catch (e) {}
+  applyThemeIcon();
+});
+applyThemeIcon();
 </script>
 </body>
 </html>

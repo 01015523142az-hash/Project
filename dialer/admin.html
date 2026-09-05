@@ -16,82 +16,215 @@
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+<script>
+  // Applied before anything renders so a reload never flashes the wrong
+  // theme. Reads the SAME localStorage key the staff portal writes, so the
+  // choice made there carries over here without a second toggle.
+  (function(){
+    try{
+      var saved = localStorage.getItem('dashboardTheme');
+      if(saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    }catch(e){}
+  })();
+</script>
+
 <style>
+/* Theme, typography and shell are lifted verbatim from dashboard/index.html
+   so this reads as the same product as the staff portal. Variable NAMES match
+   the portal's exactly, and the theme choice is shared through the same
+   localStorage key ('dashboardTheme'). Kept byte-identical to
+   dialer/index.html's own block so the two dialer screens never drift. */
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Roboto:wght@400;500;700;900&display=swap');
+
 :root{
-  --bg:#f4f6f6; --panel:#fff; --line:#dbe3e2; --ink:#12201f; --ink2:#5a6a69;
-  --accent:#0c6b6b; --good:#2c6e52; --warn:#8a6410; --crit:#a2352c;
-  --crit-bg:#f9e6e3; --warn-bg:#faf1dc; --radius:6px;
+  --bg:#10131A; --card:#171B23; --card-hover:#1D222C; --inset:#0C0F14;
+  --border:#262D39; --border-light:#323A48;
+  --text:#F2EDE6; --text-2:#A79E8E; --text-dim:#726B5C; --num:#F2EDE6;
+  --focus:#FD6262; --focus-dim:#4A2020; --away:#F5A623; --away-dim:#4A3818;
+  --idle:#2A313C; --danger:#E5484D; --danger-dim:#3A1518;
+  --good:#3DD68C; --good-dim:#173A2B;
+  --gold:#C9A66B; --gold-soft:#E4C88F; --gold-dim:#3A3020;
+  --mono:'IBM Plex Mono', monospace;
+  --sans:'Roboto', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
 }
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);
-  font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-button{font:inherit;cursor:pointer;border-radius:var(--radius);border:1px solid var(--line);
-  background:#fff;padding:7px 13px}
-button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
-button.sm{padding:4px 9px;font-size:12px}
-input,select,textarea{font:inherit;padding:7px 9px;border:1px solid var(--line);
-  border-radius:var(--radius);background:#fff;color:var(--ink)}
-textarea{width:100%;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+:root[data-theme="light"]{
+  --bg:#F6F3EE; --card:#FFFFFF; --card-hover:#F3EEE6; --inset:#EFEAE0;
+  --border:#E7E0D2; --border-light:#D8CDB8;
+  --text:#241E14; --text-2:#6E6455; --text-dim:#9C9280; --num:#241E14;
+  --focus:#FD6262; --focus-dim:#FDE3E3; --away:#D9720A; --away-dim:#FBEBD2;
+  --idle:#E2E5EA; --danger:#C3272C; --danger-dim:#F8D7D7;
+  --good:#1A9A5C; --good-dim:#DCF5E8;
+  --gold:#9C7A3C; --gold-soft:#B8935A; --gold-dim:#F3E9D2;
+}
 
-header{display:flex;align-items:center;gap:16px;padding:11px 20px;
-  background:var(--panel);border-bottom:1px solid var(--line)}
-header h1{font-size:15px;margin:0;font-weight:700}
-nav{display:flex;gap:4px}
-nav button{border:none;background:none;padding:7px 12px;border-radius:var(--radius);color:var(--ink2)}
-nav button.on{background:var(--accent);color:#fff;font-weight:600}
-header .spacer{flex:1}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;font-size:14px}
 
-main{max-width:1080px;margin:0 auto;padding:18px}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
-  padding:18px;margin-bottom:18px}
-.panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);
-  margin:0 0 4px;font-weight:700}
-.panel p.hint{margin:0 0 14px;color:var(--ink2);font-size:13px;max-width:70ch}
+/* ---------- shell ---------- */
+#app{max-width:1360px;margin:0 auto;padding:24px 20px 60px}
+.app-header{display:flex;justify-content:space-between;align-items:center;gap:16px;
+  flex-wrap:wrap;margin-bottom:22px}
+.app-title{font-size:19px;font-weight:800;letter-spacing:-.01em;
+  background:linear-gradient(90deg,var(--focus),var(--gold-soft),var(--gold),var(--gold-soft),var(--focus));
+  background-size:300% 100%;-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;color:transparent}
+.app-sub{font-family:var(--mono);font-size:10px;color:var(--text-dim);
+  text-transform:uppercase;letter-spacing:1.5px;margin-top:3px}
+.header-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.who{font-family:var(--mono);font-size:11px;color:var(--text-2);
+  text-transform:uppercase;letter-spacing:.5px}
+.theme-toggle-btn{background:transparent;border:1px solid var(--border-light);color:var(--text-2);
+  border-radius:999px;padding:8px 12px;font-size:15px;line-height:1;cursor:pointer}
+.theme-toggle-btn:hover{color:var(--text);background:var(--card-hover)}
 
+.app-body{display:flex;align-items:flex-start;gap:28px}
+.main-content{flex:1 1 0;min-width:0}
+
+/* ---------- left navigation (portal's .side-main-nav pattern) ---------- */
+.side-main-nav{flex:0 0 214px;width:214px;display:flex;flex-direction:column;gap:3px;
+  position:sticky;top:20px;max-height:calc(100vh - 40px);overflow-y:auto;overflow-x:hidden;
+  padding-bottom:20px;padding-right:2px}
+.side-main-nav::-webkit-scrollbar{width:6px}
+.side-main-nav::-webkit-scrollbar-thumb{background:var(--border-light);border-radius:6px}
+.side-nav-group{display:flex;flex-direction:column;flex-shrink:0}
+.side-nav-label{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;
+  letter-spacing:1.2px;color:var(--text-dim);padding:12px 12px 6px}
+.tab-btn,nav button{display:flex;align-items:center;gap:9px;width:100%;justify-content:flex-start;
+  background:transparent;border:none;color:var(--text-dim);font-family:var(--mono);font-size:12px;
+  text-transform:uppercase;letter-spacing:1px;padding:10px 12px;cursor:pointer;border-radius:8px;
+  white-space:nowrap;transition:color .15s ease,background-color .15s ease;text-decoration:none}
+.tab-btn:hover:not(.active),nav button:hover:not(.on){color:var(--text-2);background:var(--card-hover)}
+/* .on is the class the tab-switching JS already toggles — kept as-is. */
+nav button.on{color:var(--text);background:var(--card-hover);box-shadow:inset 3px 0 0 var(--focus)}
+.tab-icon{width:15px;height:15px;flex-shrink:0;opacity:.8}
+nav button.on .tab-icon{opacity:1}
+.side-nav-group-bottom{padding-top:10px;margin-top:12px;border-top:1px solid var(--border-light)}
+
+/* ---------- cards ---------- */
+.panel{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:22px;margin-bottom:16px}
+.panel h2{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-dim);margin:0 0 6px;font-weight:600}
+.panel p.hint{margin:0 0 16px;color:var(--text-2);font-size:13px;line-height:1.6;max-width:74ch}
+
+/* ---------- controls ---------- */
+button{border:1px solid var(--border-light);border-radius:999px;padding:9px 17px;font-weight:600;
+  font-size:13px;cursor:pointer;font-family:var(--sans);background:var(--inset);color:var(--text)}
+button:hover:not(:disabled){background:var(--card-hover)}
+button:disabled{opacity:.42;cursor:not-allowed}
+button.primary{background:var(--focus);border-color:var(--focus);color:#2B0A0A;
+  box-shadow:0 8px 22px -8px rgba(253,98,98,.45)}
+button.primary:hover:not(:disabled){box-shadow:0 10px 26px -6px rgba(253,98,98,.55);background:var(--focus)}
+button.sm{padding:5px 12px;font-size:11.5px}
+input,select,textarea{background:var(--inset);border:1px solid var(--border-light);color:var(--text);
+  padding:9px 12px;border-radius:8px;font-size:13.5px;font-family:var(--sans)}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--focus)}
+textarea{width:100%;resize:vertical;font-family:var(--mono);font-size:12px;line-height:1.6}
+input[type=checkbox]{width:16px;height:16px;accent-color:var(--focus);padding:0}
+
+/* ---------- tables ---------- */
 table{border-collapse:collapse;width:100%;font-size:13px}
-th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
-th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2);
-  background:#f7f9f9;white-space:nowrap}
+th{text-align:left;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-dim);padding:10px 12px;border-bottom:1px solid var(--border);
+  background:var(--inset);white-space:nowrap;position:sticky;top:0;z-index:1}
+td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
+tbody tr:nth-child(even){background:rgba(127,140,160,0.05)}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
-.mono{font-family:ui-monospace,Menlo,Consolas,monospace}
-.scroll{overflow:auto;max-height:420px;border:1px solid var(--line);border-radius:var(--radius)}
+.mono{font-family:var(--mono)}
+.scroll{overflow:auto;max-height:440px;border:1px solid var(--border);border-radius:10px}
 
-.tag{display:inline-block;font-size:10.5px;font-weight:700;text-transform:uppercase;
-  letter-spacing:.05em;padding:2px 7px;border-radius:99px;border:1px solid currentColor}
-.t-active{color:var(--good)} .t-resting{color:var(--warn)}
-.t-quarantined{color:var(--crit)} .t-retired{color:var(--ink2)}
-.gap{color:var(--crit);font-weight:700}
+.tag{display:inline-block;font-family:var(--mono);font-size:9.5px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.6px;padding:3px 9px;border-radius:999px;
+  border:1px solid currentColor}
+.t-active{color:var(--good)} .t-resting{color:var(--away)}
+.t-quarantined{color:var(--danger)} .t-retired{color:var(--text-dim)}
+.gap{color:var(--danger);font-weight:700}
 
-.row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px}
-.field{display:flex;flex-direction:column;gap:4px}
-.field label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2);font-weight:600}
+.row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-dim);font-weight:600}
 
-.msg{padding:10px 12px;border-radius:var(--radius);font-size:13px;margin:12px 0}
-.msg.err{background:var(--crit-bg);color:var(--crit);border:1px solid #eab5ad}
-.msg.ok{background:#e4efee;color:var(--accent);border:1px solid #b9d6d3}
-.msg.warn{background:var(--warn-bg);color:var(--warn);border:1px solid #e6d4a6}
+/* ---------- messages ---------- */
+.msg{padding:11px 14px;border-radius:10px;font-size:13px;margin:14px 0;
+  border:1px solid transparent;line-height:1.6}
+.msg.err{background:var(--danger-dim);color:var(--danger);border-color:var(--danger)}
+.msg.ok{background:var(--focus-dim);color:var(--focus);border-color:var(--focus)}
+.msg.warn{background:var(--gold-dim);color:var(--gold);border-color:var(--gold)}
 .hide{display:none!important}
-.stat{display:inline-block;margin-right:22px}
-.stat b{display:block;font-size:21px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
-.stat span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)}
+
+.stat{display:inline-block;margin-right:26px}
+.stat b{display:block;font-family:var(--mono);font-size:23px;font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em;color:var(--num)}
+.stat span{font-family:var(--mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:.8px;color:var(--text-dim)}
+
+@media (max-width:980px){
+  #app{padding:18px 14px 60px}
+  .app-body{flex-direction:column;gap:14px}
+  .side-main-nav{position:relative;top:0;width:100%;flex:none;max-height:none;overflow:visible;
+    flex-direction:row;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--border);padding-bottom:10px}
+  .side-nav-group{flex-direction:row;flex-wrap:wrap}
+  .side-nav-label{display:none}
+  .tab-btn,nav button{width:auto}
+  .side-nav-group-bottom{border-top:none;margin-top:0;padding-top:0}
+}
 </style>
 </head>
 <body>
 
-<header>
-  <h1>Dialer Admin</h1>
-  <nav>
-    <button data-tab="numbers" class="on">Numbers</button>
-    <button data-tab="lists">Lists</button>
-    <button data-tab="campaigns">Campaigns</button>
-  </nav>
-  <div class="spacer"></div>
-  <span id="who" style="color:var(--ink2);font-size:13px"></span>
-</header>
+<div id="app">
+  <header class="app-header">
+    <div>
+      <div class="app-title">PropTech AI</div>
+      <div class="app-sub">Dialer Admin</div>
+    </div>
+    <div class="header-right">
+      <span class="who" id="who"></span>
+      <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle light/dark theme">🌙</button>
+    </div>
+  </header>
 
-<main>
-  <div id="gate" class="msg err hide"></div>
+  <div class="app-body">
+    <!-- Left navigation. The <nav> holds ONLY the three section buttons,
+         because the tab-switching code below selects them with
+         querySelectorAll('nav button') and reads data-tab off each one —
+         anything else in here would be treated as a tab and break it. The
+         cross-links below are anchors in a plain div for that reason. -->
+    <div class="side-main-nav">
+      <div class="side-nav-group">
+        <div class="side-nav-label">Administration</div>
+        <nav>
+          <button data-tab="numbers" class="on">
+            <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg>
+            <span>Numbers</span>
+          </button>
+          <button data-tab="lists">
+            <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h12M4 10h12M4 14.5h8"/></svg>
+            <span>Lists</span>
+          </button>
+          <button data-tab="campaigns">
+            <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3 3v12h-10z"/><path d="M7 9h6M7 12h6M7 15h3.5"/></svg>
+            <span>Campaigns</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="side-nav-group side-nav-group-bottom">
+        <div class="side-nav-label">Go to</div>
+        <a class="tab-btn" href="/dialer/">
+          <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6.5"/><path d="M10 6.5v3.5l2.5 1.5"/></svg>
+          <span>Agent Dialer</span>
+        </a>
+        <a class="tab-btn" href="/">
+          <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 9.5L10 4l6.5 5.5"/><path d="M5.5 8.5V16h9V8.5"/></svg>
+          <span>Staff Portal</span>
+        </a>
+      </div>
+    </div>
+
+    <main class="main-content">
+      <div id="gate" class="msg err hide"></div>
 
   <!-- ================================================ NUMBERS ========== -->
   <section id="tab-numbers">
@@ -261,7 +394,9 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       </div>
     </div>
   </section>
-</main>
+    </main>
+  </div>
+</div>
 
 <script>
 'use strict';
@@ -718,6 +853,28 @@ $('impBtn').onclick = async () => {
   $('impCsv').value = ''; $('impName').value = ''; $('impScrubbed').checked = false;
   loadLists();
 };
+</script>
+
+<script>
+'use strict';
+// Shell-only behaviour, kept separate from the admin logic above. Same key
+// and same semantics as the staff portal's toggle, so the surfaces stay in
+// step: dark is the default, light is the stored opt-in.
+function currentTheme(){
+  return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+function applyThemeIcon(){
+  const btn = document.getElementById('themeToggleBtn');
+  if (btn) btn.textContent = currentTheme() === 'light' ? '☀️' : '🌙';
+}
+document.getElementById('themeToggleBtn').addEventListener('click', () => {
+  const next = currentTheme() === 'light' ? 'dark' : 'light';
+  if (next === 'light') document.documentElement.setAttribute('data-theme', 'light');
+  else document.documentElement.removeAttribute('data-theme');
+  try { localStorage.setItem('dashboardTheme', next); } catch (e) {}
+  applyThemeIcon();
+});
+applyThemeIcon();
 </script>
 </body>
 </html>
