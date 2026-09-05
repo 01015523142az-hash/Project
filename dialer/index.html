@@ -162,7 +162,13 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:16p
 const SUPABASE_URL = 'https://kqfoniinytvuddxiwvkc.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxZm9uaWlueXR2dWRkeGl3dmtjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwMDczNTAsImV4cCI6MjA5ODU4MzM1MH0.GSuxsxKYp3XQ_ZsWesTXofudobYxBVWcz77Thbp8uII';
 
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Must match the staff portal's client config exactly (dashboard.html's
+// createClient call) -- the portal stores its session in sessionStorage,
+// not the supabase-js default of localStorage, so this page has to look
+// in the same place or it will never find an already-signed-in session.
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: { persistSession: true, storage: window.sessionStorage, flowType: 'implicit' }
+});
 const $ = (id) => document.getElementById(id);
 
 let me = null;              // profiles row
