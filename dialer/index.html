@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dialer — PropTech AI</title>
+
+<!--
+  Agent dialer console — Phase 1.1.
+
+  DELIBERATELY A SEPARATE PAGE, NOT PART OF dashboard.html. That file is
+  2.3MB / 37k lines; this screen has to stay responsive for a whole shift
+  with a live audio session attached. It lives under dashboard/ rather than
+  its own directory so it shares an ORIGIN with the staff portal — which
+  means it shares the Supabase session too, and the agent does not have to
+  sign in twice.
+
+  THE AGENT'S BROWSER PLACES THE CALL. At one line per agent the agent must
+  be on the line before the contact's phone rings — that is what makes the
+  abandonment rate structurally zero. dialer-call-control does not dial; it
+  runs the five gates (internal DNC, list scrub, calling hours, number
+  validity, DID availability), reserves a caller ID and opens the CDR row.
+  Server-side origination and bridging is predictive-dialer machinery and is
+  deliberately absent. See supabase/v523/v524 headers.
+-->
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Exposes window.TelnyxWebRTC; the client is TelnyxWebRTC.TelnyxRTC. -->
+<script src="https://cdn.jsdelivr.net/npm/@telnyx/webrtc@2.21.1/lib/bundle.js"></script>
+
+<style>
+:root{
+  --bg:#f4f6f6; --panel:#fff; --line:#dbe3e2; --ink:#12201f; --ink2:#5a6a69;
+  --accent:#0c6b6b; --good:#2c6e52; --warn:#8a6410; --crit:#a2352c; --crit-bg:#f9e6e3;
+  --radius:6px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button{font:inherit;cursor:pointer;border-radius:var(--radius);border:1px solid var(--line);
+  background:#fff;padding:8px 14px}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.danger{background:var(--crit);border-color:var(--crit);color:#fff;font-weight:600}
+select,input,textarea{font:inherit;padding:7px 9px;border:1px solid var(--line);
+  border-radius:var(--radius);background:#fff;color:var(--ink)}
+
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  padding:10px 18px;background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.01em}
+header .spacer{flex:1}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;
+  padding:4px 10px;border-radius:99px;border:1px solid var(--line);background:#fff}
+.dot{width:8px;height:8px;border-radius:99px;background:#b9c4c3}
+.dot.on{background:var(--good)} .dot.busy{background:var(--warn)} .dot.err{background:var(--crit)}
+
+main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:16px;
+  align-items:start;max-width:1200px;margin:0 auto}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+.panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);
+  margin:0 0 12px;font-weight:700}
+
+.contact-name{font-size:22px;font-weight:700;letter-spacing:-.02em;margin:0 0 2px}
+.contact-num{font-size:17px;font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--accent);
+  font-weight:600;margin:0 0 14px}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:6px 12px;font-size:13px}
+.kv dt{color:var(--ink2)} .kv dd{margin:0}
+
+.callbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.timer{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:20px;font-weight:600;
+  min-width:66px;font-variant-numeric:tabular-nums}
+
+.msg{padding:10px 12px;border-radius:var(--radius);font-size:13px;margin-bottom:12px}
+.msg.err{background:var(--crit-bg);color:var(--crit);border:1px solid #eab5ad}
+.msg.info{background:#e4efee;color:var(--accent);border:1px solid #b9d6d3}
+.hide{display:none!important}
+
+.disp-list{display:flex;flex-direction:column;gap:6px}
+.disp-list button{text-align:left;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.disp-list .tag{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)}
+.stat{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;
+  border-bottom:1px solid var(--line)}
+.stat:last-child{border-bottom:none}
+.stat b{font-variant-numeric:tabular-nums}
+.muted{color:var(--ink2);font-size:13px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Dialer</h1>
+  <span class="pill"><span class="dot" id="sipDot"></span><span id="sipText">Connecting…</span></span>
+  <select id="campaignSel"><option value="">Loading campaigns…</option></select>
+  <div class="spacer"></div>
+  <span class="muted" id="agentName"></span>
+  <button id="pauseBtn">Pause</button>
+</header>
+
+<main>
+  <section>
+    <div id="banner" class="msg info hide"></div>
+
+    <div class="panel" id="contactPanel">
+      <h2>Current contact</h2>
+      <div id="contactEmpty" class="muted">No contact loaded. Pick a campaign to begin.</div>
+
+      <div id="contactBody" class="hide">
+        <p class="contact-name" id="cName">—</p>
+        <p class="contact-num" id="cNumber">—</p>
+        <dl class="kv">
+          <dt>Local time</dt><dd id="cLocal">—</dd>
+          <dt>Line type</dt><dd id="cLine">—</dd>
+          <dt>Attempts</dt><dd id="cAttempts">—</dd>
+          <dt>Last outcome</dt><dd id="cLast">—</dd>
+          <dt>Property</dt><dd id="cProperty">—</dd>
+        </dl>
+
+        <div class="callbar">
+          <button class="primary" id="dialBtn">Dial</button>
+          <button class="danger hide" id="hangupBtn">Hang up</button>
+          <button id="muteBtn" disabled>Mute</button>
+          <span class="timer" id="timer">00:00</span>
+          <div class="spacer"></div>
+          <button id="skipBtn">Skip</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel hide" id="dispPanel" style="margin-top:16px">
+      <h2>Disposition</h2>
+      <div class="disp-list" id="dispList"></div>
+      <div id="callbackWrap" class="hide" style="margin-top:10px">
+        <label class="muted" for="callbackAt">Callback at</label><br>
+        <input type="datetime-local" id="callbackAt" style="margin-top:4px">
+      </div>
+      <textarea id="dispNote" rows="2" placeholder="Note (optional)"
+        style="width:100%;margin-top:10px;resize:vertical"></textarea>
+    </div>
+  </section>
+
+  <aside>
+    <div class="panel">
+      <h2>This session</h2>
+      <div class="stat"><span>Dials</span><b id="sDials">0</b></div>
+      <div class="stat"><span>Connects</span><b id="sConnects">0</b></div>
+      <div class="stat"><span>Leads</span><b id="sLeads">0</b></div>
+      <div class="stat"><span>Talk time</span><b id="sTalk">00:00</b></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <h2>Script</h2>
+      <div id="scriptBox" class="muted">Select a campaign.</div>
+    </div>
+  </aside>
+</main>
+
+<script>
+'use strict';
+
+// Same project constants dashboard.html uses.
+const SUPABASE_URL = 'https://kqfoniinytvuddxiwvkc.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxZm9uaWlueXR2dWRkeGl3dmtjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwMDczNTAsImV4cCI6MjA5ODU4MzM1MH0.GSuxsxKYp3XQ_ZsWesTXofudobYxBVWcz77Thbp8uII';
+
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = (id) => document.getElementById(id);
+
+let me = null;              // profiles row
+let sessionId = null;       // dialer_agent_sessions.id
+let heartbeatTimer = null;
+let campaigns = [];
+let campaign = null;
+let contact = null;         // dialer_contacts row currently loaded
+let attemptId = null;       // dialer_attempts.id for the live call
+let rtc = null;             // TelnyxRTC client
+let activeCall = null;
+let callStartedAt = null;
+let timerTick = null;
+let paused = false;
+const stats = { dials: 0, connects: 0, leads: 0, talkSeconds: 0 };
+
+function show(el, on) { el.classList.toggle('hide', !on); }
+function banner(text, kind) {
+  const b = $('banner');
+  b.textContent = text;
+  b.className = 'msg ' + (kind || 'info');
+  show(b, Boolean(text));
+}
+function mmss(totalSeconds) {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+async function callFn(name, body) {
+  const { data: { session } } = await sb.auth.getSession();
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${session?.access_token || SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body || {}),
+  });
+  return res.json();
+}
+
+// ---------------------------------------------------------------- boot ----
+(async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) {
+    banner('You are not signed in. Open the staff portal, sign in there, then reload this page.', 'err');
+    return;
+  }
+
+  const { data: profile } = await sb.from('profiles')
+    .select('id, full_name, role').eq('id', session.user.id).maybeSingle();
+  if (!profile) { banner('No staff profile found for this account.', 'err'); return; }
+  me = profile;
+  $('agentName').textContent = profile.full_name || '';
+
+  await startSession();
+  await loadCampaigns();
+  await initSoftphone();
+
+  // Close the session cleanly on tab close. A session left open with a stale
+  // heartbeat is a crashed tab, not a logout — the same distinction the
+  // extension's heartbeat handling already makes.
+  window.addEventListener('beforeunload', () => {
+    if (!sessionId) return;
+    const url = `${SUPABASE_URL}/rest/v1/dialer_agent_sessions?id=eq.${sessionId}`;
+    const blob = new Blob([JSON.stringify({ status: 'offline', ended_at: new Date().toISOString() })],
+      { type: 'application/json' });
+    navigator.sendBeacon?.(url, blob);
+  });
+})();
+
+// ------------------------------------------------------------- session ----
+async function startSession() {
+  const { data, error } = await sb.from('dialer_agent_sessions')
+    .insert({ agent_id: me.id, status: 'ready' }).select('id').single();
+  if (error) { banner('Could not start a dialer session: ' + error.message, 'err'); return; }
+  sessionId = data.id;
+  heartbeatTimer = setInterval(() => {
+    sb.from('dialer_agent_sessions')
+      .update({ last_heartbeat_at: new Date().toISOString() }).eq('id', sessionId).then(() => {});
+  }, 30000);
+}
+
+function setSessionStatus(status, pauseReason) {
+  if (!sessionId) return;
+  sb.from('dialer_agent_sessions')
+    .update({ status, pause_reason: pauseReason || null }).eq('id', sessionId).then(() => {});
+}
+
+$('pauseBtn').onclick = () => {
+  paused = !paused;
+  $('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
+  setSessionStatus(paused ? 'paused' : 'ready', paused ? 'manual' : null);
+  $('dialBtn').disabled = paused || !contact || Boolean(activeCall);
+};
+
+// ------------------------------------------------------------ softphone ---
+async function initSoftphone() {
+  const res = await callFn('dialer-telnyx-token', {});
+  if (!res?.ok) { sipState('err', res?.error || 'Token request failed'); return; }
+  if (!res.token) { sipState('err', 'Telnyx not configured yet'); return; }
+
+  if (!window.TelnyxWebRTC || !window.TelnyxWebRTC.TelnyxRTC) {
+    sipState('err', 'Telnyx SDK failed to load'); return;
+  }
+
+  rtc = new window.TelnyxWebRTC.TelnyxRTC({ login_token: res.token });
+  rtc.enableMicrophone();
+
+  rtc.on('telnyx.ready', () => sipState('on', 'Ready'));
+  rtc.on('telnyx.error', (e) => sipState('err', (e && e.error) ? String(e.error) : 'SIP error'));
+  rtc.on('telnyx.socket.close', () => sipState('err', 'Disconnected'));
+  rtc.on('telnyx.notification', onTelnyxNotification);
+
+  rtc.connect();
+}
+
+function sipState(kind, text) {
+  $('sipDot').className = 'dot ' + (kind === 'on' ? 'on' : kind === 'busy' ? 'busy' : kind === 'err' ? 'err' : '');
+  $('sipText').textContent = text;
+}
+
+function onTelnyxNotification(n) {
+  if (n.type !== 'callUpdate' || !n.call) return;
+  const call = n.call;
+  const state = call.state;
+
+  if (state === 'active') {
+    if (!callStartedAt) {
+      callStartedAt = Date.now();
+      stats.connects++; $('sConnects').textContent = stats.connects;
+      startTimer();
+    }
+    sipState('busy', 'On call');
+    $('muteBtn').disabled = false;
+  }
+
+  if (state === 'hangup' || state === 'destroy') {
+    endCallUi();
+  }
+}
+
+// ------------------------------------------------------------- campaigns --
+async function loadCampaigns() {
+  const { data } = await sb.from('dialer_campaigns')
+    .select('id, name, script, dial_mode, status').eq('status', 'active').order('name');
+  campaigns = data || [];
+  const sel = $('campaignSel');
+  sel.innerHTML = '<option value="">Select a campaign…</option>' +
+    campaigns.map((c) => `<option value="${c.id}">${c.name}</option>`).join('');
+  sel.onchange = async () => {
+    campaign = campaigns.find((c) => c.id === sel.value) || null;
+    $('scriptBox').textContent = campaign?.script || 'No script set for this campaign.';
+    if (sessionId && campaign) {
+      sb.from('dialer_agent_sessions').update({ campaign_id: campaign.id }).eq('id', sessionId).then(() => {});
+    }
+    await loadNextContact();
+  };
+}
+
+// ----------------------------------------------------------- the queue ----
+// next_attempt_at plus the partial index from v524 IS the queue — a contact
+// is due when it is new (never attempted) or its next_attempt_at has passed.
+async function loadNextContact() {
+  contact = null; attemptId = null;
+  show($('dispPanel'), false);
+  if (!campaign) { show($('contactBody'), false); show($('contactEmpty'), true); return; }
+
+  const nowIso = new Date().toISOString();
+  const { data, error } = await sb.from('dialer_contacts')
+    .select('id, phone_e164, contact_name, timezone, state, phone_line_type, phone_valid, attempt_count, last_outcome, property_id, next_attempt_at, status')
+    .eq('campaign_id', campaign.id)
+    .in('status', ['new', 'queued'])
+    .or(`next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`)
+    .order('next_attempt_at', { ascending: true, nullsFirst: true })
+    .limit(1);
+
+  if (error) { banner('Queue query failed: ' + error.message, 'err'); return; }
+  if (!data || !data.length) {
+    show($('contactBody'), false);
+    show($('contactEmpty'), true);
+    $('contactEmpty').textContent = 'Nothing due in this campaign right now.';
+    return;
+  }
+
+  contact = data[0];
+  renderContact();
+}
+
+function renderContact() {
+  show($('contactEmpty'), false);
+  show($('contactBody'), true);
+  banner('', null);
+
+  $('cName').textContent = contact.contact_name || 'Unknown contact';
+  $('cNumber').textContent = contact.phone_e164;
+  $('cLine').textContent = contact.phone_line_type || 'not validated';
+  $('cAttempts').textContent = contact.attempt_count ?? 0;
+  $('cLast').textContent = contact.last_outcome || '—';
+  $('cProperty').textContent = contact.property_id ? 'loading…' : '—';
+
+  // Calling hours are enforced server-side by dialer-call-control; this is
+  // just so the agent can see why a dial might be refused.
+  try {
+    $('cLocal').textContent = contact.timezone
+      ? new Intl.DateTimeFormat('en-US', { timeZone: contact.timezone, hour: '2-digit', minute: '2-digit' })
+          .format(new Date()) + ' (' + contact.timezone + ')'
+      : 'unknown';
+  } catch { $('cLocal').textContent = contact.timezone || 'unknown'; }
+
+  $('dialBtn').disabled = paused || Boolean(activeCall);
+  if (contact.property_id) loadProperty(contact.property_id);
+}
+
+async function loadProperty(propertyId) {
+  const { data } = await sb.from('properties')
+    .select('address, city, state, zip').eq('id', propertyId).maybeSingle();
+  $('cProperty').textContent = data
+    ? [data.address, data.city, data.state, data.zip].filter(Boolean).join(', ')
+    : '—';
+}
+
+$('skipBtn').onclick = async () => {
+  if (!contact) return;
+  await sb.from('dialer_contacts')
+    .update({ next_attempt_at: new Date(Date.now() + 3600 * 1000).toISOString(), status: 'queued' })
+    .eq('id', contact.id);
+  await loadNextContact();
+};
+
+// ------------------------------------------------------------- dialling ---
+$('dialBtn').onclick = async () => {
+  if (!contact || activeCall) return;
+  $('dialBtn').disabled = true;
+  banner('Checking…', 'info');
+
+  // Every gate lives server-side. A refusal is a normal outcome, not an
+  // error — show the reason and move on.
+  const auth = await callFn('dialer-call-control', { action: 'authorize_dial', contact_id: contact.id });
+  if (!auth?.ok) { banner(auth?.error || 'Authorisation failed.', 'err'); $('dialBtn').disabled = false; return; }
+  if (!auth.allowed) {
+    banner(auth.detail || 'This contact cannot be dialled.', 'err');
+    setTimeout(loadNextContact, 1500);
+    return;
+  }
+
+  attemptId = auth.attempt_id;
+  banner('', null);
+
+  try {
+    activeCall = rtc.newCall({
+      destinationNumber: auth.to_number,
+      callerNumber: auth.from_number,
+      audio: true,
+      video: false,
+    });
+  } catch (e) {
+    banner('Could not place the call: ' + (e?.message || e), 'err');
+    $('dialBtn').disabled = false;
+    return;
+  }
+
+  stats.dials++; $('sDials').textContent = stats.dials;
+  setSessionStatus('on_call');
+  sipState('busy', 'Dialling…');
+  show($('hangupBtn'), true);
+  show($('dialBtn'), false);
+
+  // Report the SDK's call id so dialer-telnyx-webhook can correlate events
+  // to this CDR row. If this never lands (tab crash), the webhook falls back
+  // to matching on number within a recent window.
+  const callId = activeCall.id || activeCall.callId || null;
+  if (callId) callFn('dialer-call-control', { action: 'attach_call_id', attempt_id: attemptId, provider_call_id: callId });
+};
+
+$('hangupBtn').onclick = () => { if (activeCall) activeCall.hangup(); };
+
+$('muteBtn').onclick = () => {
+  if (!activeCall) return;
+  const muted = $('muteBtn').dataset.muted === '1';
+  if (muted) { activeCall.unmuteAudio(); $('muteBtn').textContent = 'Mute'; $('muteBtn').dataset.muted = '0'; }
+  else { activeCall.muteAudio(); $('muteBtn').textContent = 'Unmute'; $('muteBtn').dataset.muted = '1'; }
+};
+
+function startTimer() {
+  clearInterval(timerTick);
+  timerTick = setInterval(() => {
+    $('timer').textContent = mmss((Date.now() - callStartedAt) / 1000);
+  }, 500);
+}
+
+function endCallUi() {
+  clearInterval(timerTick);
+  if (callStartedAt) {
+    stats.talkSeconds += Math.floor((Date.now() - callStartedAt) / 1000);
+    $('sTalk').textContent = mmss(stats.talkSeconds);
+  }
+  callStartedAt = null;
+  activeCall = null;
+  show($('hangupBtn'), false);
+  show($('dialBtn'), true);
+  $('dialBtn').disabled = true;   // must disposition before the next dial
+  $('muteBtn').disabled = true;
+  $('muteBtn').textContent = 'Mute'; $('muteBtn').dataset.muted = '0';
+  sipState('on', 'Ready');
+  setSessionStatus('wrap_up');
+  showDispositions();
+}
+
+// --------------------------------------------------------- dispositions ---
+let dispositions = [];
+async function loadDispositions() {
+  const { data } = await sb.from('dialer_dispositions')
+    .select('code, label, category, schedules_callback')
+    .eq('is_active', true).order('sort_order');
+  dispositions = data || [];
+}
+
+function showDispositions() {
+  const list = $('dispList');
+  list.innerHTML = dispositions.map((d) =>
+    `<button data-code="${d.code}" data-cb="${d.schedules_callback ? 1 : 0}">
+       <span>${d.label}</span><span class="tag">${d.category}</span></button>`).join('');
+  list.querySelectorAll('button').forEach((btn) => {
+    btn.onclick = () => {
+      if (btn.dataset.cb === '1') {
+        show($('callbackWrap'), true);
+        if (!$('callbackAt').value) { banner('Pick a callback time, then click again.', 'info'); return; }
+      }
+      applyDisposition(btn.dataset.code);
+    };
+  });
+  show($('dispPanel'), true);
+  $('timer').textContent = '00:00';
+}
+
+async function applyDisposition(code) {
+  const cbInput = $('callbackAt').value;
+  const res = await callFn('dialer-call-control', {
+    action: 'disposition',
+    attempt_id: attemptId,
+    code,
+    callback_at: cbInput ? new Date(cbInput).toISOString() : null,
+    note: $('dispNote').value || null,
+  });
+  if (!res?.ok) { banner(res?.error || 'Could not save the disposition.', 'err'); return; }
+
+  const d = dispositions.find((x) => x.code === code);
+  if (d && d.category === 'converted') { stats.leads++; $('sLeads').textContent = stats.leads; }
+
+  $('dispNote').value = ''; $('callbackAt').value = '';
+  show($('callbackWrap'), false);
+  show($('dispPanel'), false);
+  setSessionStatus(paused ? 'paused' : 'ready');
+  await loadNextContact();
+}
+
+loadDispositions();
+</script>
+</body>
+</html>
