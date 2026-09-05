@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dialer Admin — PropTech AI</title>
+
+<!--
+  Dialer administration: number pool, lists, campaigns.
+
+  Everything here was previously done by running SQL by hand, which is not a
+  system anyone else can operate. Owner/admin only — the number-ordering
+  actions spend real money on a live carrier account, and dialer-pool
+  enforces that server-side rather than trusting this page to hide buttons.
+-->
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<style>
+:root{
+  --bg:#f4f6f6; --panel:#fff; --line:#dbe3e2; --ink:#12201f; --ink2:#5a6a69;
+  --accent:#0c6b6b; --good:#2c6e52; --warn:#8a6410; --crit:#a2352c;
+  --crit-bg:#f9e6e3; --warn-bg:#faf1dc; --radius:6px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+button{font:inherit;cursor:pointer;border-radius:var(--radius);border:1px solid var(--line);
+  background:#fff;padding:7px 13px}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
+button.sm{padding:4px 9px;font-size:12px}
+input,select,textarea{font:inherit;padding:7px 9px;border:1px solid var(--line);
+  border-radius:var(--radius);background:#fff;color:var(--ink)}
+textarea{width:100%;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+
+header{display:flex;align-items:center;gap:16px;padding:11px 20px;
+  background:var(--panel);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:700}
+nav{display:flex;gap:4px}
+nav button{border:none;background:none;padding:7px 12px;border-radius:var(--radius);color:var(--ink2)}
+nav button.on{background:var(--accent);color:#fff;font-weight:600}
+header .spacer{flex:1}
+
+main{max-width:1080px;margin:0 auto;padding:18px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:18px;margin-bottom:18px}
+.panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);
+  margin:0 0 4px;font-weight:700}
+.panel p.hint{margin:0 0 14px;color:var(--ink2);font-size:13px;max-width:70ch}
+
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2);
+  background:#f7f9f9;white-space:nowrap}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+.mono{font-family:ui-monospace,Menlo,Consolas,monospace}
+.scroll{overflow:auto;max-height:420px;border:1px solid var(--line);border-radius:var(--radius)}
+
+.tag{display:inline-block;font-size:10.5px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.05em;padding:2px 7px;border-radius:99px;border:1px solid currentColor}
+.t-active{color:var(--good)} .t-resting{color:var(--warn)}
+.t-quarantined{color:var(--crit)} .t-retired{color:var(--ink2)}
+.gap{color:var(--crit);font-weight:700}
+
+.row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2);font-weight:600}
+
+.msg{padding:10px 12px;border-radius:var(--radius);font-size:13px;margin:12px 0}
+.msg.err{background:var(--crit-bg);color:var(--crit);border:1px solid #eab5ad}
+.msg.ok{background:#e4efee;color:var(--accent);border:1px solid #b9d6d3}
+.msg.warn{background:var(--warn-bg);color:var(--warn);border:1px solid #e6d4a6}
+.hide{display:none!important}
+.stat{display:inline-block;margin-right:22px}
+.stat b{display:block;font-size:21px;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.stat span{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Dialer Admin</h1>
+  <nav>
+    <button data-tab="numbers" class="on">Numbers</button>
+    <button data-tab="lists">Lists</button>
+    <button data-tab="campaigns">Campaigns</button>
+  </nav>
+  <div class="spacer"></div>
+  <span id="who" style="color:var(--ink2);font-size:13px"></span>
+</header>
+
+<main>
+  <div id="gate" class="msg err hide"></div>
+
+  <!-- ================================================ NUMBERS ========== -->
+  <section id="tab-numbers">
+    <div class="panel">
+      <h2>Coverage</h2>
+      <p class="hint">
+        Where your dialable queue actually is, against the area codes you own numbers in.
+        A contact with no local caller ID gets dialled from an out-of-area number, which
+        is one of the strongest "don't answer" signals there is — so the biggest gaps are
+        the numbers worth buying first.
+      </p>
+      <div id="covSummary" style="margin-bottom:12px"></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Area code</th><th class="num">Queued contacts</th>
+            <th class="num">DIDs owned</th><th></th></tr></thead>
+          <tbody id="covRows"><tr><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Buy numbers</h2>
+      <p class="hint">
+        New numbers are added as <strong>resting</strong>, not active. A fresh DID has no
+        reputation history, and dropping one straight into rotation at full volume is how
+        numbers get flagged early. Activate them below once you are ready to warm them in.
+      </p>
+      <div class="row">
+        <div class="field"><label for="searchNpa">Area code</label>
+          <input id="searchNpa" maxlength="3" style="width:90px" placeholder="312"></div>
+        <div class="field"><label for="searchLimit">Show</label>
+          <input id="searchLimit" type="number" value="10" min="1" max="50" style="width:80px"></div>
+        <button id="searchBtn" class="primary">Search</button>
+        <button id="orderBtn" disabled>Order selected</button>
+      </div>
+      <div id="searchMsg"></div>
+      <div class="scroll hide" id="searchWrap">
+        <table>
+          <thead><tr><th style="width:34px"></th><th>Number</th><th>State</th>
+            <th>Rate centre</th><th class="num">Monthly</th></tr></thead>
+          <tbody id="searchRows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Pool</h2>
+      <p class="hint">
+        <strong>Sync</strong> reconciles this against what Telnyx says you own. Numbers
+        released in the Telnyx portal but still marked active here would hand agents a
+        caller ID the carrier rejects at dial time.
+      </p>
+      <div class="row">
+        <button id="syncBtn">Sync from Telnyx</button>
+        <span id="poolMsg" style="color:var(--ink2);font-size:13px"></span>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Number</th><th>NPA</th><th>State</th><th>Status</th>
+            <th class="num">Today</th><th class="num">Cap</th><th>Reputation</th><th></th></tr></thead>
+          <tbody id="poolRows"><tr><td colspan="8">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================== LISTS ========== -->
+  <section id="tab-lists" class="hide">
+    <div class="panel">
+      <h2>Import a list</h2>
+      <p class="hint">
+        Paste a CSV that has already been scrubbed in ReadyMode. Automated imports arrive
+        by email through <span class="mono">dialer-list-import</span>; this is the manual
+        path for a one-off file.
+      </p>
+      <div class="row">
+        <div class="field" style="min-width:220px"><label for="impCampaign">Campaign</label>
+          <select id="impCampaign"></select></div>
+        <div class="field" style="min-width:220px"><label for="impName">List name</label>
+          <input id="impName" placeholder="e.g. DealMachine TX — Feb"></div>
+        <div class="field"><label for="impFile">Or upload</label>
+          <input id="impFile" type="file" accept=".csv,text/csv"></div>
+      </div>
+      <textarea id="impCsv" rows="7" placeholder="phone,first_name,last_name&#10;5551234567,Jane,Doe"></textarea>
+
+      <!-- v524 blocks a list reaching 'ready' without a scrub timestamp. This
+           is that constraint surfaced as a deliberate human attestation rather
+           than something a form quietly fills in. -->
+      <div class="msg warn" style="margin-top:14px">
+        <label style="display:flex;gap:9px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="impScrubbed" style="margin-top:3px">
+          <span>I confirm this list was scrubbed against DNC in ReadyMode. Contacts cannot
+          be dialled without this — the database rejects an unscrubbed list, and saying so
+          when it is not true is the one thing that check exists to prevent.</span>
+        </label>
+        <div class="row" style="margin:10px 0 0">
+          <div class="field"><label for="impScrubDate">Scrubbed on</label>
+            <input type="date" id="impScrubDate"></div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <button id="impBtn" class="primary">Import</button>
+        <span id="impMsg" style="font-size:13px"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Lists</h2>
+      <p class="hint">
+        Imported contacts are <strong>not dialable until validated</strong> — the
+        calling-hours gate needs each number's own time zone, which only Number Lookup
+        can resolve. Validation also drops disconnected numbers and ranks mobiles first.
+        Roughly $0.0015 per number.
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>List</th><th>Campaign</th><th>Status</th><th class="num">Loaded</th>
+            <th class="num">Unvalidated</th><th>Scrubbed</th><th></th></tr></thead>
+          <tbody id="listRows"><tr><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div id="valMsg" style="margin-top:10px;font-size:13px"></div>
+    </div>
+  </section>
+
+  <!-- ============================================== CAMPAIGNS ========== -->
+  <section id="tab-campaigns" class="hide">
+    <div class="panel">
+      <h2>New campaign</h2>
+      <p class="hint">
+        Dial mode is preview or power only. There is deliberately no predictive option:
+        one line per agent is what keeps the abandonment rate structurally zero, and
+        changing that needs a pacing governor that does not exist in this system.
+      </p>
+      <div class="row">
+        <div class="field" style="min-width:240px"><label for="cName">Name</label>
+          <input id="cName" placeholder="Warm callbacks — March"></div>
+        <div class="field"><label for="cMode">Dial mode</label>
+          <select id="cMode"><option value="preview">Preview</option><option value="power">Power</option></select></div>
+        <div class="field"><label for="cStart">Window opens</label>
+          <input type="time" id="cStart" value="09:00"></div>
+        <div class="field"><label for="cEnd">Window closes</label>
+          <input type="time" id="cEnd" value="19:00"></div>
+        <button id="cCreate" class="primary">Create</button>
+      </div>
+      <p class="hint" style="margin:0">
+        The window is in each contact's own local time, not yours.
+      </p>
+      <div id="cMsg"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Campaigns</h2>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Name</th><th>Mode</th><th>Window</th><th>Status</th>
+            <th class="num">Queued</th><th></th></tr></thead>
+          <tbody id="campRows"><tr><td colspan="6">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+'use strict';
+
+const SUPABASE_URL = 'https://kqfoniinytvuddxiwvkc.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxZm9uaWlueXR2dWRkeGl3dmtjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMwMDczNTAsImV4cCI6MjA5ODU4MzM1MH0.GSuxsxKYp3XQ_ZsWesTXofudobYxBVWcz77Thbp8uII';
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function callFn(name, body) {
+  const { data: { session } } = await sb.auth.getSession();
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session?.access_token || SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body || {}),
+  });
+  return res.json();
+}
+function say(el, text, kind) {
+  el.className = 'msg ' + (kind || 'ok');
+  el.textContent = text;
+  el.classList.toggle('hide', !text);
+}
+
+// ------------------------------------------------------------------ boot --
+let campaigns = [];
+(async function boot() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) {
+    say($('gate'), 'Not signed in. Sign in to the staff portal on this domain, then reload.', 'err');
+    return;
+  }
+  const { data: p } = await sb.from('profiles')
+    .select('full_name, role').eq('id', session.user.id).maybeSingle();
+  if (!p || (p.role !== 'owner' && p.role !== 'admin')) {
+    say($('gate'), 'Dialer admin is owner/admin only.', 'err');
+    return;
+  }
+  $('who').textContent = `${p.full_name || ''} · ${p.role}`;
+  $('impScrubDate').value = new Date().toISOString().slice(0, 10);
+
+  await loadCampaigns();
+  loadCoverage(); loadPool(); loadLists();
+})();
+
+document.querySelectorAll('nav button').forEach((b) => {
+  b.onclick = () => {
+    document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
+    ['numbers', 'lists', 'campaigns'].forEach((t) =>
+      $('tab-' + t).classList.toggle('hide', t !== b.dataset.tab));
+  };
+});
+
+// -------------------------------------------------------------- coverage --
+async function loadCoverage() {
+  const r = await callFn('dialer-pool', { action: 'coverage_gaps' });
+  if (!r?.ok) { $('covRows').innerHTML = `<tr><td colspan="4">${esc(r?.error || 'Failed')}</td></tr>`; return; }
+  const s = r.summary || {};
+  $('covSummary').innerHTML =
+    `<div class="stat"><b>${s.area_codes ?? 0}</b><span>Area codes in queue</span></div>` +
+    `<div class="stat"><b>${s.covered ?? 0}</b><span>Covered</span></div>` +
+    `<div class="stat"><b class="${s.uncovered ? 'gap' : ''}">${s.uncovered ?? 0}</b><span>No local DID</span></div>` +
+    `<div class="stat"><b class="${s.contacts_without_local_did ? 'gap' : ''}">${(s.contacts_without_local_did ?? 0).toLocaleString()}</b><span>Contacts affected</span></div>`;
+
+  $('covRows').innerHTML = (r.rows || []).length
+    ? r.rows.map((x) => `<tr>
+        <td class="mono">${esc(x.area_code)}</td>
+        <td class="num">${Number(x.contacts).toLocaleString()}</td>
+        <td class="num ${Number(x.active_dids) === 0 ? 'gap' : ''}">${x.active_dids}</td>
+        <td><button class="sm" data-npa="${esc(x.area_code)}">Find numbers</button></td>
+      </tr>`).join('')
+    : '<tr><td colspan="4">No dialable contacts queued yet.</td></tr>';
+
+  $('covRows').querySelectorAll('button[data-npa]').forEach((b) => {
+    b.onclick = () => { $('searchNpa').value = b.dataset.npa; $('searchBtn').click(); };
+  });
+}
+
+// ---------------------------------------------------------------- search --
+$('searchBtn').onclick = async () => {
+  const npa = $('searchNpa').value.replace(/\D/g, '');
+  if (npa.length !== 3) { say($('searchMsg'), 'Enter a 3-digit area code.', 'err'); return; }
+  say($('searchMsg'), 'Searching…', 'ok');
+  const r = await callFn('dialer-pool', {
+    action: 'search_numbers', area_code: npa, limit: Number($('searchLimit').value) || 10,
+  });
+  if (!r?.ok) { say($('searchMsg'), r?.error || 'Search failed', 'err'); return; }
+  if (!r.numbers?.length) { say($('searchMsg'), `No numbers available in ${npa}.`, 'warn'); return; }
+
+  say($('searchMsg'), '', null);
+  $('searchWrap').classList.remove('hide');
+  $('searchRows').innerHTML = r.numbers.map((n) => `<tr>
+      <td><input type="checkbox" class="pick" value="${esc(n.phone_number)}"
+                 data-state="${esc(n.state || '')}"></td>
+      <td class="mono">${esc(n.phone_number)}</td>
+      <td>${esc(n.state || '—')}</td>
+      <td>${esc(n.rate_center || '—')}</td>
+      <td class="num">${n.monthly_cost != null ? '$' + n.monthly_cost : '—'}</td>
+    </tr>`).join('');
+  $('searchRows').querySelectorAll('.pick').forEach((c) => {
+    c.onchange = () => {
+      $('orderBtn').disabled = !$('searchRows').querySelectorAll('.pick:checked').length;
+    };
+  });
+  $('orderBtn').disabled = true;
+};
+
+$('orderBtn').onclick = async () => {
+  const picked = [...$('searchRows').querySelectorAll('.pick:checked')];
+  if (!picked.length) return;
+  const nums = picked.map((c) => c.value);
+  if (!confirm(`Buy ${nums.length} number(s)? This charges your Telnyx account.\n\n${nums.join('\n')}`)) return;
+
+  $('orderBtn').disabled = true;
+  say($('searchMsg'), 'Ordering…', 'ok');
+  const r = await callFn('dialer-pool', {
+    action: 'order_numbers', phone_numbers: nums, state: picked[0].dataset.state || null,
+  });
+  if (!r?.ok) { say($('searchMsg'), r?.error || 'Order failed', 'err'); return; }
+  say($('searchMsg'), `Ordered ${r.ordered}. Added as resting — activate them below when ready to warm them in.`, 'ok');
+  loadPool(); loadCoverage();
+};
+
+// ------------------------------------------------------------------ pool --
+async function loadPool() {
+  const r = await callFn('dialer-pool', { action: 'list_dids' });
+  if (!r?.ok) { $('poolRows').innerHTML = `<tr><td colspan="8">${esc(r?.error || 'Failed')}</td></tr>`; return; }
+  const today = new Date().toISOString().slice(0, 10);
+  $('poolRows').innerHTML = (r.dids || []).length
+    ? r.dids.map((d) => {
+      const used = d.dials_today_date === today ? (d.dials_today ?? 0) : 0;
+      const next = d.status === 'active' ? 'resting' : 'active';
+      return `<tr>
+        <td class="mono">${esc(d.phone_e164)}</td>
+        <td class="mono">${esc(d.area_code || '—')}</td>
+        <td>${esc(d.state || '—')}</td>
+        <td><span class="tag t-${esc(d.status)}">${esc(d.status)}</span></td>
+        <td class="num">${used}</td>
+        <td class="num">${d.daily_cap ?? 80}</td>
+        <td>${esc(d.reputation_status || 'unknown')}</td>
+        <td><button class="sm" data-did="${esc(d.id)}" data-next="${next}">
+          ${next === 'active' ? 'Activate' : 'Rest'}</button></td>
+      </tr>`;
+    }).join('')
+    : '<tr><td colspan="8">No numbers in the pool yet.</td></tr>';
+
+  $('poolRows').querySelectorAll('button[data-did]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      await callFn('dialer-pool', { action: 'set_did_status', did_id: b.dataset.did, status: b.dataset.next });
+      loadPool(); loadCoverage();
+    };
+  });
+}
+
+$('syncBtn').onclick = async () => {
+  $('syncBtn').disabled = true;
+  $('poolMsg').textContent = 'Syncing…';
+  const r = await callFn('dialer-pool', { action: 'sync_dids' });
+  $('syncBtn').disabled = false;
+  $('poolMsg').textContent = r?.ok
+    ? `${r.telnyx_numbers} at Telnyx · ${r.retired_orphans} retired as no longer owned`
+    : (r?.error || 'Sync failed');
+  loadPool();
+};
+
+// ------------------------------------------------------------- campaigns --
+async function loadCampaigns() {
+  const { data } = await sb.from('dialer_campaigns')
+    .select('id, name, dial_mode, status, calling_window_start, calling_window_end')
+    .neq('status', 'archived').order('name');
+  campaigns = data || [];
+  $('impCampaign').innerHTML = campaigns.map((c) =>
+    `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
+    || '<option value="">No campaigns yet</option>';
+
+  const counts = {};
+  for (const c of campaigns) {
+    const { count } = await sb.from('dialer_contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('campaign_id', c.id).in('status', ['new', 'queued']);
+    counts[c.id] = count ?? 0;
+  }
+  $('campRows').innerHTML = campaigns.length
+    ? campaigns.map((c) => `<tr>
+        <td>${esc(c.name)}</td>
+        <td>${esc(c.dial_mode)}</td>
+        <td class="mono">${esc(c.calling_window_start)}–${esc(c.calling_window_end)}</td>
+        <td><span class="tag ${c.status === 'active' ? 't-active' : 't-resting'}">${esc(c.status)}</span></td>
+        <td class="num">${counts[c.id].toLocaleString()}</td>
+        <td><button class="sm" data-camp="${esc(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">
+          ${c.status === 'active' ? 'Pause' : 'Activate'}</button></td>
+      </tr>`).join('')
+    : '<tr><td colspan="6">No campaigns yet.</td></tr>';
+
+  $('campRows').querySelectorAll('button[data-camp]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      await sb.from('dialer_campaigns').update({ status: b.dataset.to }).eq('id', b.dataset.camp);
+      loadCampaigns();
+    };
+  });
+}
+
+$('cCreate').onclick = async () => {
+  const name = $('cName').value.trim();
+  if (!name) { say($('cMsg'), 'Give the campaign a name.', 'err'); return; }
+  const { error } = await sb.from('dialer_campaigns').insert({
+    name, dial_mode: $('cMode').value, status: 'active',
+    calling_window_start: $('cStart').value, calling_window_end: $('cEnd').value,
+  });
+  if (error) { say($('cMsg'), error.message, 'err'); return; }
+  say($('cMsg'), 'Created.', 'ok');
+  $('cName').value = '';
+  loadCampaigns();
+};
+
+// ----------------------------------------------------------------- lists --
+async function loadLists() {
+  const { data } = await sb.from('dialer_lists')
+    .select('id, name, campaign_id, status, loaded_rows, readymode_scrubbed_at')
+    .order('created_at', { ascending: false }).limit(50);
+
+  const rows = [];
+  for (const l of (data || [])) {
+    const { count } = await sb.from('dialer_contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('list_id', l.id).is('phone_validated_at', null).in('status', ['new', 'queued']);
+    rows.push({ ...l, unvalidated: count ?? 0 });
+  }
+
+  $('listRows').innerHTML = rows.length
+    ? rows.map((l) => `<tr>
+        <td>${esc(l.name)}</td>
+        <td>${esc(campaigns.find((c) => c.id === l.campaign_id)?.name || '—')}</td>
+        <td><span class="tag ${l.status === 'ready' ? 't-active' : 't-resting'}">${esc(l.status)}</span></td>
+        <td class="num">${(l.loaded_rows ?? 0).toLocaleString()}</td>
+        <td class="num ${l.unvalidated ? 'gap' : ''}">${l.unvalidated.toLocaleString()}</td>
+        <td>${l.readymode_scrubbed_at ? esc(l.readymode_scrubbed_at.slice(0, 10)) : '—'}</td>
+        <td>${l.unvalidated ? `<button class="sm" data-val="${esc(l.id)}">Validate</button>` : ''}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="7">No lists yet.</td></tr>';
+
+  $('listRows').querySelectorAll('button[data-val]').forEach((b) => {
+    b.onclick = () => validateList(b.dataset.val, b);
+  });
+}
+
+// Loops until the list is fully validated. The function caps each call, so a
+// large list needs several passes; doing that here rather than making someone
+// click repeatedly.
+async function validateList(listId, btn) {
+  btn.disabled = true;
+  let total = 0;
+  for (let pass = 0; pass < 40; pass++) {
+    const r = await callFn('dialer-validate-numbers', { list_id: listId, max_lookups: 300 });
+    if (!r?.ok) { say($('valMsg'), r?.error || 'Validation failed', 'err'); btn.disabled = false; return; }
+    total += r.checked || 0;
+    say($('valMsg'), `Validated ${total}… ${r.remaining} remaining`, 'ok');
+    if (!r.remaining || !r.checked) break;
+  }
+  say($('valMsg'), `Done — ${total} numbers validated (~$${(total * 0.0015).toFixed(2)}).`, 'ok');
+  loadLists();
+}
+
+// ---- manual CSV import ---------------------------------------------------
+function parseCsv(text) {
+  const rows = []; let row = []; let field = ''; let q = false;
+  const s = String(text).replace(/^﻿/, '');
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) {
+      if (c === '"') { if (s[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((v) => v.trim() !== ''));
+}
+const nrm = (h) => String(h).toLowerCase().replace(/[^a-z0-9]/g, '');
+const PHONE_ALIASES = ['phone', 'phonenumber', 'phone1', 'primaryphone', 'mobile', 'cell',
+                       'cellphone', 'telephone', 'ownerphone', 'contactphone'];
+function pick(headers, aliases) {
+  const h = headers.map(nrm);
+  for (const a of aliases) { const i = h.indexOf(a); if (i >= 0) return i; }
+  return -1;
+}
+function toE164(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d[0] === '1') return '+' + d;
+  return null;
+}
+
+$('impFile').onchange = async (e) => {
+  const f = e.target.files?.[0];
+  if (f) $('impCsv').value = await f.text();
+};
+
+$('impBtn').onclick = async () => {
+  const campaignId = $('impCampaign').value;
+  const name = $('impName').value.trim();
+  const csv = $('impCsv').value.trim();
+  if (!campaignId) { say($('impMsg'), 'Pick a campaign.', 'err'); return; }
+  if (!name) { say($('impMsg'), 'Give the list a name.', 'err'); return; }
+  if (!csv) { say($('impMsg'), 'Paste or upload a CSV.', 'err'); return; }
+  if (!$('impScrubbed').checked || !$('impScrubDate').value) {
+    say($('impMsg'), 'Confirm the DNC scrub and its date — an unscrubbed list cannot be dialled.', 'err');
+    return;
+  }
+
+  const rows = parseCsv(csv);
+  if (rows.length < 2) { say($('impMsg'), 'CSV has no data rows.', 'err'); return; }
+  const headers = rows[0];
+  const iPhone = pick(headers, PHONE_ALIASES);
+  if (iPhone < 0) { say($('impMsg'), `No phone column. Headers: ${headers.join(', ')}`, 'err'); return; }
+  const iFirst = pick(headers, ['firstname', 'first', 'ownerfirstname']);
+  const iLast = pick(headers, ['lastname', 'last', 'ownerlastname']);
+  const iName = pick(headers, ['name', 'fullname', 'ownername', 'contactname']);
+
+  $('impBtn').disabled = true;
+  say($('impMsg'), 'Importing…', 'ok');
+
+  const scrubbedAt = new Date($('impScrubDate').value + 'T12:00:00Z').toISOString();
+  const { data: list, error: lErr } = await sb.from('dialer_lists').insert({
+    campaign_id: campaignId, name, source_type: 'csv_upload', status: 'loading',
+    readymode_scrubbed_at: scrubbedAt,
+    readymode_scrub_note: 'Manual import — scrub attested by admin in dialer admin screen',
+    total_rows: rows.length - 1,
+  }).select('id').single();
+  if (lErr) { say($('impMsg'), lErr.message, 'err'); $('impBtn').disabled = false; return; }
+
+  const seen = new Set(); const contacts = []; let bad = 0;
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const phone = toE164(row[iPhone]);
+    if (!phone || seen.has(phone)) { bad++; continue; }
+    seen.add(phone);
+    const nm = iName >= 0 && row[iName] ? String(row[iName]).trim()
+      : [iFirst >= 0 ? row[iFirst] : '', iLast >= 0 ? row[iLast] : ''].filter(Boolean).join(' ').trim();
+    const src = {}; headers.forEach((h, i) => { if (h) src[h] = row[i] ?? ''; });
+    contacts.push({
+      list_id: list.id, campaign_id: campaignId, phone_e164: phone,
+      contact_name: nm || null, status: 'new', source_row: src,
+    });
+  }
+
+  // Batched: a single insert of thousands of rows will not survive, and any
+  // Supabase call over ~1000 rows silently truncates without explicit paging.
+  let done = 0;
+  for (let i = 0; i < contacts.length; i += 500) {
+    const { error } = await sb.from('dialer_contacts')
+      .upsert(contacts.slice(i, i + 500), { onConflict: 'list_id,phone_e164', ignoreDuplicates: true });
+    if (error) { say($('impMsg'), `Stopped after ${done}: ${error.message}`, 'err'); $('impBtn').disabled = false; return; }
+    done += Math.min(500, contacts.length - i);
+    say($('impMsg'), `Imported ${done} of ${contacts.length}…`, 'ok');
+  }
+
+  await sb.from('dialer_lists').update({
+    status: 'ready', loaded_rows: done, skipped_rows: bad,
+  }).eq('id', list.id);
+
+  $('impBtn').disabled = false;
+  say($('impMsg'), `Imported ${done} contacts (${bad} skipped). Now run Validate below — they are not dialable until then.`, 'ok');
+  $('impCsv').value = ''; $('impName').value = ''; $('impScrubbed').checked = false;
+  loadLists();
+};
+</script>
+</body>
+</html>

@@ -94,6 +94,9 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:16p
   <span class="pill"><span class="dot" id="sipDot"></span><span id="sipText">Connecting…</span></span>
   <select id="campaignSel"><option value="">Loading campaigns…</option></select>
   <div class="spacer"></div>
+  <input id="manualNum" type="tel" inputmode="tel" placeholder="Manual dial — 10 digits"
+         style="width:190px" autocomplete="off">
+  <button id="manualBtn">Dial</button>
   <span class="muted" id="agentName"></span>
   <button id="pauseBtn">Pause</button>
 </header>
@@ -116,6 +119,16 @@ main{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;padding:16p
           <dt>Last outcome</dt><dd id="cLast">—</dd>
           <dt>Property</dt><dd id="cProperty">—</dd>
         </dl>
+
+        <!-- Power mode only. Auto-advance must always be visibly cancellable:
+             an agent who needs a moment after a hard call should never have
+             the next number dialled out from under them. -->
+        <div id="wrapBar" class="msg info hide"
+             style="display:flex;align-items:center;gap:12px;margin-top:14px">
+          <span>Next call in <b id="wrapCount">5</b>s</span>
+          <button id="wrapNowBtn">Dial now</button>
+          <button id="wrapCancelBtn">Stop auto-dial</button>
+        </div>
 
         <div class="callbar">
           <button class="primary" id="dialBtn">Dial</button>
@@ -337,6 +350,10 @@ async function loadCampaigns() {
 }
 
 // ----------------------------------------------------------- the queue ----
+const QUEUE_COLS = 'id, phone_e164, contact_name, timezone, state, phone_line_type, ' +
+                   'phone_valid, attempt_count, last_outcome, property_id, next_attempt_at, ' +
+                   'status, phone_rank';
+
 // next_attempt_at plus the partial index from v524 IS the queue — a contact
 // is due when it is new (never attempted) or its next_attempt_at has passed.
 async function loadNextContact() {
@@ -345,13 +362,37 @@ async function loadNextContact() {
   if (!campaign) { show($('contactBody'), false); show($('contactEmpty'), true); return; }
 
   const nowIso = new Date().toISOString();
-  const { data, error } = await sb.from('dialer_contacts')
-    .select('id, phone_e164, contact_name, timezone, state, phone_line_type, phone_valid, attempt_count, last_outcome, property_id, next_attempt_at, status')
+
+  // TWO PASSES, because a due callback and a never-attempted contact are not
+  // interchangeable. A callback is a time-specific commitment made to a real
+  // person on a previous call; a fresh contact is not. Ordering both together
+  // by next_attempt_at with nullsFirst put EVERY never-attempted contact
+  // ahead of EVERY scheduled callback — so callbacks were only ever served
+  // once a campaign ran dry. On a list of thousands that is never.
+  //
+  // Pass 1 — callbacks that are due, oldest promise first.
+  let { data, error } = await sb.from('dialer_contacts')
+    .select(QUEUE_COLS)
     .eq('campaign_id', campaign.id)
     .in('status', ['new', 'queued'])
-    .or(`next_attempt_at.is.null,next_attempt_at.lte.${nowIso}`)
-    .order('next_attempt_at', { ascending: true, nullsFirst: true })
+    .not('next_attempt_at', 'is', null)
+    .lte('next_attempt_at', nowIso)
+    .order('next_attempt_at', { ascending: true })
     .limit(1);
+
+  // Pass 2 — never-attempted contacts, mobiles first. phone_rank is written
+  // by pre-dial validation (mobile 0, landline 1, VOIP 2, unknown 3); this
+  // query is where that ranking actually pays out in answer rate.
+  if (!error && (!data || !data.length)) {
+    ({ data, error } = await sb.from('dialer_contacts')
+      .select(QUEUE_COLS)
+      .eq('campaign_id', campaign.id)
+      .in('status', ['new', 'queued'])
+      .is('next_attempt_at', null)
+      .order('phone_rank', { ascending: true })
+      .order('created_at', { ascending: true })
+      .limit(1));
+  }
 
   if (error) { banner('Queue query failed: ' + error.message, 'err'); return; }
   if (!data || !data.length) {
@@ -457,12 +498,87 @@ $('dialBtn').onclick = async () => {
     });
   }
 
-  // Report the SDK's call id so dialer-telnyx-webhook can correlate events
-  // to this CDR row. If this never lands (tab crash), the webhook falls back
-  // to matching on number within a recent window.
-  const callId = activeCall.id || activeCall.callId || null;
-  if (callId) callFn('dialer-call-control', { action: 'attach_call_id', attempt_id: attemptId, provider_call_id: callId });
+  // DO NOT write activeCall.id into provider_call_id.
+  //
+  // That is the WebRTC SDK's own client-side UUID, not Telnyx's
+  // call_control_id (a long opaque `v3:...` string). Confirmed from live
+  // data: every dialer_attempts row was carrying a plain UUID. Storing it
+  // was worse than storing nothing — the webhook could never match on it,
+  // AND a non-null value disabled the fallback matcher, which only
+  // considers rows where provider_call_id is null. So correlation failed
+  // twice over.
+  //
+  // Correlation is now left entirely to dialer-telnyx-webhook, which
+  // matches on to_number within a short window and backfills the real
+  // Telnyx id. Kept as a console breadcrumb only.
+  console.debug('[dialer] SDK call id (NOT the Telnyx call_control_id):', activeCall.id);
 };
+
+// --------------------------------------------------------- manual dial ----
+// Dials a number that is in no queue. The server still enforces internal
+// DNC, calling hours (resolved by an inline number lookup, since there is no
+// contact row to read a time zone from) and DID caps — only the list-scrub
+// gate is skipped, and the CDR records is_manual so that exception is
+// auditable. See dialer-call-control's manual_dial action.
+async function manualDial() {
+  if (activeCall) return;
+  const raw = $('manualNum').value.trim();
+  if (!raw) return;
+
+  // The server does NOT check calling hours for a manual dial — there is no
+  // contact row to resolve a time zone from, and the decision was taken to
+  // let the agent judge it. 8am-9pm local is a hard legal limit, so that
+  // judgment has to be made deliberately rather than by clicking a button
+  // that looks like every other dial button. The CDR records the call with
+  // hours_checked=false either way.
+  if (!confirm(
+    `Manual dial ${raw}\n\n` +
+    `Calling hours are NOT checked for manual dials. You are confirming it ` +
+    `is between 8am and 9pm where this person is, not where you are.\n\n` +
+    `This call is logged as an agent-initiated exception.`
+  )) return;
+
+  // Auto-advance must not fire while the agent is on a manual call.
+  stopWrap();
+  $('manualBtn').disabled = true;
+  banner('Checking…', 'info');
+
+  const auth = await callFn('dialer-call-control', {
+    action: 'manual_dial', to: raw, campaign_id: campaign?.id ?? null,
+  });
+  $('manualBtn').disabled = false;
+
+  if (!auth?.ok) { banner(auth?.error || 'Manual dial failed.', 'err'); return; }
+  if (!auth.allowed) { banner(auth.detail || 'That number cannot be dialled.', 'err'); return; }
+
+  attemptId = auth.attempt_id;
+  banner('', null);
+
+  try {
+    activeCall = rtc.newCall({
+      destinationNumber: auth.to_number,
+      callerNumber: auth.from_number,
+      audio: true, video: false,
+    });
+  } catch (e) {
+    banner('Could not place the call: ' + (e?.message || e), 'err');
+    return;
+  }
+
+  stats.dials++; $('sDials').textContent = stats.dials;
+  setSessionStatus('on_call');
+  sipState('busy', 'Manual call…');
+  show($('hangupBtn'), true);
+  show($('dialBtn'), false);
+  $('manualNum').value = '';
+
+  // A manual call has no contact row, so endCallUi's disposition panel would
+  // write against a null contact. Dispositions still apply to the attempt
+  // itself — the handler tolerates contact_id null.
+}
+
+$('manualBtn').onclick = manualDial;
+$('manualNum').addEventListener('keydown', (e) => { if (e.key === 'Enter') manualDial(); });
 
 $('hangupBtn').onclick = () => { if (activeCall) activeCall.hangup(); };
 
@@ -544,7 +660,56 @@ async function applyDisposition(code) {
   show($('dispPanel'), false);
   setSessionStatus(paused ? 'paused' : 'ready');
   await loadNextContact();
+
+  // POWER MODE. The campaign's dial_mode decides; v524 constrains it to
+  // preview|power and deliberately has no predictive value, so "auto-advance
+  // after wrap-up" is the whole of it — still one line per agent, still the
+  // agent on the call before the phone rings, still zero structural
+  // abandonment. It just removes the click.
+  if (campaign?.dial_mode === 'power' && contact && !paused) startWrapCountdown();
 }
+
+// ------------------------------------------------------------ power mode --
+let wrapTimer = null;
+let wrapRemaining = 0;
+const WRAP_SECONDS = 5;
+
+function stopWrap(reason) {
+  clearInterval(wrapTimer);
+  wrapTimer = null;
+  show($('wrapBar'), false);
+  if (reason === 'cancelled') {
+    // A deliberate stop pauses the session rather than silently reverting to
+    // preview — otherwise the agent has no signal about why numbers stopped
+    // arriving, and the timesheet would still read 'ready'.
+    paused = true;
+    $('pauseBtn').textContent = 'Resume';
+    setSessionStatus('paused', 'auto_dial_stopped');
+    $('dialBtn').disabled = true;
+    banner('Auto-dial stopped. Press Resume when you are ready.', 'info');
+  }
+}
+
+function startWrapCountdown() {
+  stopWrap();
+  wrapRemaining = WRAP_SECONDS;
+  $('wrapCount').textContent = String(wrapRemaining);
+  show($('wrapBar'), true);
+  wrapTimer = setInterval(() => {
+    wrapRemaining--;
+    $('wrapCount').textContent = String(Math.max(0, wrapRemaining));
+    if (wrapRemaining <= 0) {
+      stopWrap();
+      // Re-check rather than trust the state captured when the timer began:
+      // five seconds is long enough for the agent to have paused, or for a
+      // manual dial to have started.
+      if (!paused && contact && !activeCall) $('dialBtn').click();
+    }
+  }, 1000);
+}
+
+$('wrapNowBtn').onclick = () => { stopWrap(); if (!activeCall) $('dialBtn').click(); };
+$('wrapCancelBtn').onclick = () => stopWrap('cancelled');
 
 loadDispositions();
 </script>
