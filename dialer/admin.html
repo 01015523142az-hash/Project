@@ -1526,5 +1526,47 @@ document.getElementById('themeToggleBtn').addEventListener('click', () => {
 });
 applyThemeIcon();
 </script>
+<script>
+  // "New version available" banner -- identical mechanism to the staff
+  // portal's, so a push to this page prompts anyone holding it open, and both
+  // surfaces behave the same way. There is no build step here (these files
+  // are pushed straight to the host), so rather than a hand-bumped version
+  // number it asks the host for THIS SAME URL's own ETag/Last-Modified and
+  // compares it to what this tab saw on load. A plain redeploy changes that
+  // header by itself on every static host worth the name.
+  // Caveat, same as the portal's: if the host sends neither header this
+  // silently never fires -- no false positives, it just cannot detect
+  // updates. Behind a CDN, detection lags by that cache's TTL.
+  (function(){
+    var CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 min
+    var baseline = null;
+    var shown = false;
+    function showUpdateBanner(){
+      if(shown) return;
+      shown = true;
+      var el = document.createElement('div');
+      el.id = 'newVersionBanner';
+      el.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:99999; background:var(--card,#171B23); color:var(--text,#E8EAED); border:1px solid var(--focus,#FD6262); border-radius:10px; padding:10px 12px 10px 16px; display:flex; align-items:center; gap:12px; font-family:var(--sans,system-ui,sans-serif); font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+      el.innerHTML = '<span>A new version is available.</span><button type="button" style="background:var(--focus,#FD6262); color:#fff; border:none; border-radius:6px; padding:6px 14px; font-weight:600; cursor:pointer; font-size:13px; font-family:inherit;">Refresh</button>';
+      el.querySelector('button').addEventListener('click', function(){ location.reload(); });
+      document.body.appendChild(el);
+    }
+    function currentPageMarker(){
+      return fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+        .then(function(r){ return r.ok ? (r.headers.get('etag') || r.headers.get('last-modified')) : null; })
+        .catch(function(){ return null; });
+    }
+    function checkVersion(){
+      currentPageMarker().then(function(marker){
+        if(!marker) return;
+        if(baseline === null){ baseline = marker; return; }
+        if(marker !== baseline) showUpdateBanner();
+      });
+    }
+    setInterval(checkVersion, CHECK_INTERVAL_MS);
+    document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'visible') checkVersion(); });
+    checkVersion();
+  })();
+</script>
 </body>
 </html>

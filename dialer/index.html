@@ -981,5 +981,74 @@ document.getElementById('themeToggleBtn').addEventListener('click', () => {
 });
 applyThemeIcon();
 </script>
+<script>
+  // "New version available" banner -- same mechanism as the staff portal's,
+  // so a push to this page prompts anyone holding it open. No build step
+  // here, so rather than a hand-bumped version number it asks the host for
+  // THIS SAME URL's own ETag/Last-Modified and compares it to what this tab
+  // saw on load; a plain redeploy changes that header by itself.
+  //
+  // ONE DELIBERATE DIFFERENCE FROM THE PORTAL: refreshing this page tears
+  // down the WebRTC session, which on a live call means hanging up on a
+  // member of the public mid-sentence. So while a call is up, Refresh is
+  // disabled and says so; it re-enables by itself the moment the call ends.
+  // The agent still gets told an update is waiting -- they just cannot drop
+  // a conversation by reflex-clicking it.
+  (function(){
+    var CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 min
+    var baseline = null;
+    var shown = false;
+    function onCall(){
+      // activeCall is the module-level handle the dial paths set; guarded in
+      // case this runs before that script has defined it.
+      try { return typeof activeCall !== 'undefined' && !!activeCall; }
+      catch(e){ return false; }
+    }
+    function showUpdateBanner(){
+      if(shown) return;
+      shown = true;
+      var el = document.createElement('div');
+      el.id = 'newVersionBanner';
+      el.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:99999; background:var(--card,#171B23); color:var(--text,#E8EAED); border:1px solid var(--focus,#FD6262); border-radius:10px; padding:10px 12px 10px 16px; display:flex; align-items:center; gap:12px; font-family:var(--sans,system-ui,sans-serif); font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.4);';
+      var label = document.createElement('span');
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = 'Refresh';
+      btn.style.cssText = 'background:var(--focus,#FD6262); color:#fff; border:none; border-radius:6px; padding:6px 14px; font-weight:600; cursor:pointer; font-size:13px; font-family:inherit;';
+      btn.addEventListener('click', function(){ if(!onCall()) location.reload(); });
+      el.appendChild(label); el.appendChild(btn);
+      document.body.appendChild(el);
+
+      // Re-evaluated once a second rather than only at click time, so the
+      // button visibly becomes available when the agent hangs up instead of
+      // looking broken until they try it.
+      (function sync(){
+        var busy = onCall();
+        label.textContent = busy
+          ? 'A new version is available — finish your current call first.'
+          : 'A new version is available.';
+        btn.disabled = busy;
+        btn.style.opacity = busy ? '0.45' : '1';
+        btn.style.cursor = busy ? 'not-allowed' : 'pointer';
+        setTimeout(sync, 1000);
+      })();
+    }
+    function currentPageMarker(){
+      return fetch(location.href, { method: 'HEAD', cache: 'no-store' })
+        .then(function(r){ return r.ok ? (r.headers.get('etag') || r.headers.get('last-modified')) : null; })
+        .catch(function(){ return null; });
+    }
+    function checkVersion(){
+      currentPageMarker().then(function(marker){
+        if(!marker) return;
+        if(baseline === null){ baseline = marker; return; }
+        if(marker !== baseline) showUpdateBanner();
+      });
+    }
+    setInterval(checkVersion, CHECK_INTERVAL_MS);
+    document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'visible') checkVersion(); });
+    checkVersion();
+  })();
+</script>
 </body>
 </html>
