@@ -26,6 +26,8 @@
 //                     DNC / invalid)
 //
 // THE GATES, in order. Any one of them refuses the dial:
+//   0. queue assignment    — the agent must be assigned to this campaign
+//                            (v537), and under any per-agent cap on it
 //   1. internal DNC        — dialer_dnc (v523), the master list for BOTH
 //                            dialers while ReadyMode runs in parallel
 //   2. list scrub          — the contact's list must be ReadyMode-scrubbed;
@@ -171,7 +173,11 @@ Deno.serve(async (req) => {
 
       const { data: contact } = await admin
         .from('dialer_contacts')
-        .select('id, campaign_id, list_id, phone_e164, timezone, status, phone_valid, attempt_count, property_id')
+        // `state` is read by the same-state DID fallback below. It was missing
+        // from this select while that fallback was live, so the middle step of
+        // the chain could never fire -- every non-exact match fell straight
+        // through to "any healthy number".
+        .select('id, campaign_id, list_id, phone_e164, timezone, status, phone_valid, attempt_count, property_id, state')
         .eq('id', contactId)
         .maybeSingle();
       if (!contact) return json(req, { ok: false, error: 'Contact not found' }, 404);
@@ -184,6 +190,52 @@ Deno.serve(async (req) => {
       if (!campaign) return json(req, { ok: false, error: 'Campaign not found' }, 404);
       if (campaign.status !== 'active') {
         return refuse(req, 'campaign_inactive', `Campaign is ${campaign.status}.`);
+      }
+
+      // ---- gate 0: is this agent assigned to this queue, and under cap? --
+      // RLS (v537) already stops an agent READING a queue they are not on.
+      // This is the same rule on the write path: authorize_dial runs as the
+      // service role, so without an explicit check here a crafted request
+      // could open a CDR row and burn a DID slot against a queue the agent
+      // has no business working. v538 repeats it as a trigger on the insert
+      // itself, so it survives an edit to this file; this copy exists to
+      // turn it into a sentence the agent can read instead of a 500.
+      const { data: assignment } = await admin
+        .from('dialer_campaign_agents')
+        .select('is_active, max_calls_per_day, max_contacts')
+        .eq('campaign_id', contact.campaign_id)
+        .eq('agent_id', caller.id)
+        .maybeSingle();
+
+      const privileged = profile.role === 'owner' || profile.role === 'admin';
+      if (!privileged && !assignment?.is_active) {
+        return refuse(req, 'not_assigned',
+          'You are not assigned to this queue. An admin assigns queues.');
+      }
+
+      if (assignment?.max_calls_per_day || assignment?.max_contacts) {
+        // Counted from the CDR rather than a running total on the assignment
+        // row: a counter would drift the first time a write failed, and this
+        // is the number a compliance review would recompute anyway.
+        const { data: usage } = await admin
+          .rpc('dialer_queue_usage', { p_agent: caller.id, p_campaign: contact.campaign_id });
+        const u = Array.isArray(usage) ? usage[0] : usage;
+
+        if (assignment.max_calls_per_day && (u?.calls_today ?? 0) >= assignment.max_calls_per_day) {
+          return refuse(req, 'agent_daily_cap',
+            `You have reached your daily limit of ${assignment.max_calls_per_day} calls on this queue.`);
+        }
+        // Only bites on a contact this agent has not touched before, or the
+        // cap would strand them mid-conversation on a callback.
+        if (assignment.max_contacts && (u?.contacts_taken ?? 0) >= assignment.max_contacts) {
+          const { count: seen } = await admin
+            .from('dialer_attempts').select('id', { count: 'exact', head: true })
+            .eq('agent_id', caller.id).eq('contact_id', contact.id);
+          if ((seen ?? 0) === 0) {
+            return refuse(req, 'agent_contact_cap',
+              `You have reached your limit of ${assignment.max_contacts} contacts on this queue.`);
+          }
+        }
       }
 
       // ---- gate 1: internal do-not-call ---------------------------------
@@ -256,7 +308,7 @@ Deno.serve(async (req) => {
       const wantedAreaCode = areaCodeOf(contact.phone_e164);
 
       let didQuery = admin.from('dialer_dids')
-        .select('id, phone_e164, area_code, daily_cap, dials_today, dials_today_date')
+        .select('id, phone_e164, area_code, state, daily_cap, dials_today, dials_today_date')
         .eq('status', 'active');
       if (campaign.caller_id_strategy === 'fixed' && campaign.fixed_did_id) {
         didQuery = didQuery.eq('id', campaign.fixed_did_id);
@@ -272,10 +324,16 @@ Deno.serve(async (req) => {
           'No caller ID is available — the pool is exhausted, resting, or at its daily cap.');
       }
 
+      // Nationwide fallback chain: exact area code, then same state, then any
+      // healthy number. A sparse pool spread across the country makes the
+      // middle step matter -- calling a 206 from a 425 reads local, from a
+      // 305 it does not. contact.state is written by pre-dial validation.
       let chosen = usable[0];
-      if (campaign.caller_id_strategy !== 'fixed' && wantedAreaCode) {
-        const localMatch = usable.find((d: any) => d.area_code === wantedAreaCode);
-        if (localMatch) chosen = localMatch;
+      if (campaign.caller_id_strategy !== 'fixed') {
+        const exact = wantedAreaCode ? usable.find((d: any) => d.area_code === wantedAreaCode) : null;
+        const sameState = (contact as any).state
+          ? usable.find((d: any) => d.state && d.state === (contact as any).state) : null;
+        chosen = exact ?? sameState ?? usable[0];
       }
 
       // ---- open the CDR row ---------------------------------------------
@@ -346,6 +404,9 @@ Deno.serve(async (req) => {
     //                  dialer_attempts.is_manual (v527) records the
     //                  exception so a compliance review can find every call
     //                  that went out without a list scrub behind it.
+    //   assignment     NOT CHECKED. Manual dial is the explicit human
+    //                  exception; v538's trigger exempts it for the same
+    //                  reason, and is_manual keeps it auditable.
     //   DID + caps     ENFORCED, same as any dial.
     if (action === 'manual_dial') {
       const raw = body?.to ? String(body.to) : '';
