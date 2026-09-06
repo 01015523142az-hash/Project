@@ -372,6 +372,25 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       </div>
       <textarea id="impCsv" rows="7" placeholder="phone,first_name,last_name&#10;5551234567,Jane,Doe"></textarea>
 
+      <!-- Column mapping. Appears as soon as a file is loaded, because the
+           only moment anyone can say which column is which is while looking
+           at the file. Guesses by header name first, so a tidy export needs
+           no touching; anything it cannot place is left for a person. -->
+      <div id="impMapWrap" class="hide" style="margin-top:16px">
+        <div class="row" style="margin-bottom:10px">
+          <span class="fb-label" id="impMapSummary"></span>
+          <button id="impMapReset" class="sm">Re-guess</button>
+          <button id="impMapClear" class="sm">Clear all</button>
+        </div>
+        <div class="scroll" style="max-height:420px">
+          <table>
+            <thead><tr><th style="width:230px">Dialer field</th><th style="width:250px">Column in your file</th>
+              <th>First row</th></tr></thead>
+            <tbody id="impMapRows"></tbody>
+          </table>
+        </div>
+      </div>
+
       <!-- v524 blocks a list reaching 'ready' without a scrub timestamp. This
            is that constraint surfaced as a deliberate human attestation rather
            than something a form quietly fills in. -->
@@ -1430,9 +1449,129 @@ function toE164(raw) {
   return null;
 }
 
+// ---- column mapping -------------------------------------------------------
+// Mapping happens here, at import, because this is the only moment anyone is
+// looking at the file and can say which column is which. Before this, imports
+// guessed a phone column by alias and dumped everything else into source_row
+// under whatever the file called it -- fine as provenance, useless to a
+// screen, because one file's "Owner" is the next one's "owner_name".
+let fieldDefs = [];        // dialer_field_defs, ordered
+let csvHeaders = [];       // headers of the loaded file
+let csvFirstRow = [];      // its first data row, shown as a sample
+let mapping = {};          // field key -> header index, or -1 for unmapped
+
+// Extra spellings worth recognising beyond an exact normalised match. Keeps
+// the common exports (DealMachine, ReadyMode, skip-trace vendors) hands-off.
+const FIELD_ALIASES = {
+  first_name: ['firstname', 'first', 'ownerfirstname', 'owner1firstname', 'fname'],
+  last_name:  ['lastname', 'last', 'ownerlastname', 'owner1lastname', 'lname', 'surname'],
+  phone:      PHONE_ALIASES,
+  address:    ['address', 'propertyaddress', 'streetaddress', 'address1', 'mailingaddress', 'siteaddress'],
+  city:       ['city', 'propertycity', 'mailingcity'],
+  state:      ['state', 'propertystate', 'mailingstate', 'st'],
+  zip:        ['zip', 'zipcode', 'postalcode', 'propertyzip', 'mailingzip'],
+  email:      ['email', 'emailaddress', 'email1', 'owneremail'],
+  county:     ['county', 'propertycounty'],
+};
+for (let i = 2; i <= 10; i++) {
+  FIELD_ALIASES['phone_' + i] = ['phone' + i, 'ph' + i, 'phone' + i + 'number', 'mobile' + i];
+}
+
+async function loadFieldDefs() {
+  const { data } = await sb.from('dialer_field_defs')
+    .select('key, label, group_name, is_required, column_name, sort_order')
+    .eq('is_active', true).order('sort_order');
+  fieldDefs = data || [];
+}
+
+function guessMapping() {
+  const norm = csvHeaders.map(nrm);
+  mapping = {};
+  fieldDefs.forEach((f) => {
+    let idx = norm.indexOf(nrm(f.key));
+    if (idx < 0) idx = norm.indexOf(nrm(f.label));
+    if (idx < 0) {
+      for (const a of (FIELD_ALIASES[f.key] || [])) {
+        idx = norm.indexOf(nrm(a));
+        if (idx >= 0) break;
+      }
+    }
+    mapping[f.key] = idx;
+  });
+}
+
+function renderMapping() {
+  if (!csvHeaders.length || !fieldDefs.length) { show($('impMapWrap'), false); return; }
+  show($('impMapWrap'), true);
+
+  const opts = (sel) => '<option value="-1">-- not in this file --</option>'
+    + csvHeaders.map((h, i) =>
+        '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>'
+        + esc(h || ('(column ' + (i + 1) + ')')) + '</option>').join('');
+
+  const groups = [...new Set(fieldDefs.map((f) => f.group_name))];
+  $('impMapRows').innerHTML = groups.map((g) => {
+    const rows = fieldDefs.filter((f) => f.group_name === g).map((f) => {
+      const sel = mapping[f.key] ?? -1;
+      const sample = sel >= 0 ? (csvFirstRow[sel] ?? '') : '';
+      const star = f.is_required
+        ? ' <span style="color:var(--focus);font-weight:700">*</span>' : '';
+      return '<tr>'
+        + '<td>' + esc(f.label) + star + '</td>'
+        + '<td><select data-map="' + esc(f.key) + '" style="width:100%">' + opts(sel) + '</select></td>'
+        + '<td style="color:var(--text-2)">' + esc(String(sample).slice(0, 60)) + '</td>'
+        + '</tr>';
+    }).join('');
+    return '<tr><td colspan="3" style="background:var(--inset);font-family:var(--mono);'
+      + 'font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim)">'
+      + esc(g) + '</td></tr>' + rows;
+  }).join('');
+
+  $('impMapRows').querySelectorAll('select[data-map]').forEach((selEl) => {
+    selEl.onchange = () => {
+      mapping[selEl.dataset.map] = Number(selEl.value);
+      renderMapping();
+    };
+  });
+  syncMapSummary();
+}
+
+function missingRequired() {
+  return fieldDefs.filter((f) => f.is_required && (mapping[f.key] ?? -1) < 0);
+}
+
+function syncMapSummary() {
+  const mapped = fieldDefs.filter((f) => (mapping[f.key] ?? -1) >= 0).length;
+  const missing = missingRequired();
+  $('impMapSummary').textContent = missing.length
+    ? mapped + ' of ' + fieldDefs.length + ' mapped - still needed: '
+      + missing.map((f) => f.label).join(', ')
+    : mapped + ' of ' + fieldDefs.length + ' mapped - all required fields set';
+  $('impMapSummary').style.color = missing.length ? 'var(--away)' : 'var(--good)';
+}
+
+async function loadCsvIntoMapper(text) {
+  $('impCsv').value = text;
+  const rows = parseCsv(text);
+  if (rows.length < 2) { show($('impMapWrap'), false); return; }
+  csvHeaders = rows[0];
+  csvFirstRow = rows[1] || [];
+  if (!fieldDefs.length) await loadFieldDefs();
+  guessMapping();
+  renderMapping();
+}
+
 $('impFile').onchange = async (e) => {
   const f = e.target.files?.[0];
-  if (f) $('impCsv').value = await f.text();
+  if (f) await loadCsvIntoMapper(await f.text());
+};
+// Pasting straight into the box should behave the same as uploading.
+$('impCsv').onchange = () => loadCsvIntoMapper($('impCsv').value);
+$('impCsv').onblur = () => { if (!csvHeaders.length) loadCsvIntoMapper($('impCsv').value); };
+$('impMapReset').onclick = () => { guessMapping(); renderMapping(); };
+$('impMapClear').onclick = () => {
+  fieldDefs.forEach((f) => { mapping[f.key] = -1; });
+  renderMapping();
 };
 
 $('impBtn').onclick = async () => {
@@ -1443,43 +1582,70 @@ $('impBtn').onclick = async () => {
   if (!name) { say($('impMsg'), 'Give the list a name.', 'err'); return; }
   if (!csv) { say($('impMsg'), 'Paste or upload a CSV.', 'err'); return; }
   if (!$('impScrubbed').checked || !$('impScrubDate').value) {
-    say($('impMsg'), 'Confirm the DNC scrub and its date — an unscrubbed list cannot be dialled.', 'err');
+    say($('impMsg'), 'Confirm the DNC scrub and its date - an unscrubbed list cannot be dialled.', 'err');
     return;
   }
 
   const rows = parseCsv(csv);
   if (rows.length < 2) { say($('impMsg'), 'CSV has no data rows.', 'err'); return; }
-  const headers = rows[0];
-  const iPhone = pick(headers, PHONE_ALIASES);
-  if (iPhone < 0) { say($('impMsg'), `No phone column. Headers: ${headers.join(', ')}`, 'err'); return; }
-  const iFirst = pick(headers, ['firstname', 'first', 'ownerfirstname']);
-  const iLast = pick(headers, ['lastname', 'last', 'ownerlastname']);
-  const iName = pick(headers, ['name', 'fullname', 'ownername', 'contactname']);
+  // Re-read the file in case it was edited after the mapper was built.
+  csvHeaders = rows[0]; csvFirstRow = rows[1] || [];
+  if (!fieldDefs.length) { await loadFieldDefs(); guessMapping(); renderMapping(); }
+
+  const missing = missingRequired();
+  if (missing.length) {
+    say($('impMsg'), 'Map these first: ' + missing.map((f) => f.label).join(', ') + '.', 'err');
+    show($('impMapWrap'), true);
+    return;
+  }
+
+  const at = (row, key) => {
+    const i = mapping[key] ?? -1;
+    if (i < 0) return '';
+    return String(row[i] ?? '').trim();
+  };
 
   $('impBtn').disabled = true;
-  say($('impMsg'), 'Importing…', 'ok');
+  say($('impMsg'), 'Importing...', 'ok');
 
   const scrubbedAt = new Date($('impScrubDate').value + 'T12:00:00Z').toISOString();
   const { data: list, error: lErr } = await sb.from('dialer_lists').insert({
     campaign_id: campaignId, name, source_type: 'csv_upload', status: 'loading',
     readymode_scrubbed_at: scrubbedAt,
-    readymode_scrub_note: 'Manual import — scrub attested by admin in dialer admin screen',
+    readymode_scrub_note: 'Manual import - scrub attested by admin in dialer admin screen',
     total_rows: rows.length - 1,
   }).select('id').single();
   if (lErr) { say($('impMsg'), lErr.message, 'err'); $('impBtn').disabled = false; return; }
 
+  // Optional fields go to contact_fields under their canonical key, so the
+  // profile screen reads one shape whatever the file called the column.
+  const optional = fieldDefs.filter((f) => !f.is_required && !f.column_name);
   const seen = new Set(); const contacts = []; let bad = 0;
+
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
-    const phone = toE164(row[iPhone]);
+    const phone = toE164(at(row, 'phone'));
     if (!phone || seen.has(phone)) { bad++; continue; }
     seen.add(phone);
-    const nm = iName >= 0 && row[iName] ? String(row[iName]).trim()
-      : [iFirst >= 0 ? row[iFirst] : '', iLast >= 0 ? row[iLast] : ''].filter(Boolean).join(' ').trim();
-    const src = {}; headers.forEach((h, i) => { if (h) src[h] = row[i] ?? ''; });
+
+    const first = at(row, 'first_name'), last = at(row, 'last_name');
+    const extra = {};
+    optional.forEach((f) => { const v = at(row, f.key); if (v) extra[f.key] = v; });
+
+    // source_row stays the untouched original: mapping is lossy, and this is
+    // the only record of what the file actually contained.
+    const src = {}; csvHeaders.forEach((h, i) => { if (h) src[h] = row[i] ?? ''; });
+
     contacts.push({
       list_id: list.id, campaign_id: campaignId, phone_e164: phone,
-      contact_name: nm || null, status: 'new', source_row: src,
+      first_name: first || null, last_name: last || null,
+      contact_name: [first, last].filter(Boolean).join(' ') || null,
+      address: at(row, 'address') || null,
+      city: at(row, 'city') || null,
+      state: at(row, 'state') || null,
+      zip: at(row, 'zip') || null,
+      email: at(row, 'email') || null,
+      status: 'new', source_row: src, contact_fields: extra,
     });
   }
 
@@ -1489,9 +1655,9 @@ $('impBtn').onclick = async () => {
   for (let i = 0; i < contacts.length; i += 500) {
     const { error } = await sb.from('dialer_contacts')
       .upsert(contacts.slice(i, i + 500), { onConflict: 'list_id,phone_e164', ignoreDuplicates: true });
-    if (error) { say($('impMsg'), `Stopped after ${done}: ${error.message}`, 'err'); $('impBtn').disabled = false; return; }
+    if (error) { say($('impMsg'), 'Stopped after ' + done + ': ' + error.message, 'err'); $('impBtn').disabled = false; return; }
     done += Math.min(500, contacts.length - i);
-    say($('impMsg'), `Imported ${done} of ${contacts.length}…`, 'ok');
+    say($('impMsg'), 'Imported ' + done + ' of ' + contacts.length + '...', 'ok');
   }
 
   await sb.from('dialer_lists').update({
@@ -1499,10 +1665,13 @@ $('impBtn').onclick = async () => {
   }).eq('id', list.id);
 
   $('impBtn').disabled = false;
-  say($('impMsg'), `Imported ${done} contacts (${bad} skipped). Now run Validate below — they are not dialable until then.`, 'ok');
+  say($('impMsg'), 'Imported ' + done + ' contacts (' + bad + ' skipped - no usable phone, or a '
+    + 'duplicate of a row already in this list). Now run Validate below - they are not dialable until then.', 'ok');
   $('impCsv').value = ''; $('impName').value = ''; $('impScrubbed').checked = false;
+  csvHeaders = []; csvFirstRow = []; show($('impMapWrap'), false);
   loadLists();
 };
+
 </script>
 
 <script>
