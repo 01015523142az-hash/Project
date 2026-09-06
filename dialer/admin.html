@@ -153,6 +153,30 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .msg.warn{background:var(--gold-dim);color:var(--gold);border-color:var(--gold)}
 .hide{display:none!important}
 
+/* ---------- call log filter bar ---------- */
+/* One dense wrapping row of controls, the same shape as the report bar the
+   floor already reads in ReadyMode, so the two do not need learning twice. */
+.filterbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  padding:14px 0 4px;border-top:1px solid var(--border)}
+.filterbar:first-child{border-top:none;padding-top:0}
+.filterbar select,.filterbar input[type=date]{padding:7px 10px;font-size:12.5px;
+  max-width:190px}
+.fb-label{font-family:var(--mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:1px;color:var(--text-dim)}
+.fb-check{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);
+  font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-2);cursor:pointer}
+.fb-check input{width:15px;height:15px;accent-color:var(--focus)}
+.result-count{font-family:var(--mono);font-size:11px;color:var(--text);background:var(--inset);
+  border:1px solid var(--border-light);border-radius:999px;padding:6px 13px;white-space:nowrap}
+
+/* Disposition summary. Colour carries the same meaning as the numbers do:
+   suppression and bad numbers read as a cost, conversions as a win, and the
+   rest stay neutral so the eye goes to the two that matter. */
+.disp-table tr.d-dnc td,.disp-table tr.d-invalid td{background:var(--danger-dim)}
+.disp-table tr.d-converted td{background:var(--good-dim)}
+.disp-table tr.d-callback td,.disp-table tr.d-contacted td{background:var(--focus-dim)}
+.disp-table td:first-child{font-weight:600}
+
 .stat{display:inline-block;margin-right:26px}
 .stat b{display:block;font-family:var(--mono);font-size:23px;font-variant-numeric:tabular-nums;
   letter-spacing:-.02em;color:var(--num)}
@@ -207,9 +231,13 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
             <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3 3v12h-10z"/><path d="M7 9h6M7 12h6M7 15h3.5"/></svg>
             <span>Campaigns</span>
           </button>
-          <button data-tab="recordings">
+          <button data-tab="calllog">
             <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0011 0"/><path d="M10 15v2.5"/></svg>
-            <span>Recordings</span>
+            <span>Call log</span>
+          </button>
+          <button data-tab="research">
+            <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13.2 13.2L17 17"/></svg>
+            <span>Research</span>
           </button>
         </nav>
       </div>
@@ -399,46 +427,164 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     </div>
   </section>
 
-  <!-- ============================================= RECORDINGS ========== -->
-  <section id="tab-recordings" class="hide">
+  <!-- =============================================== CALL LOG ========== -->
+  <section id="tab-calllog" class="hide">
     <div class="panel">
-      <h2>Call recordings</h2>
-      <p class="hint">
-        Every answered call on a recording-enabled campaign, newest first. Playback links are
-        <strong>minted on demand</strong> — Telnyx signs them for ten minutes at a time, so the
-        URL stored against the call is dead within the hour and nothing here uses it. Pressing
-        play asks the carrier for a fresh one, which is why there is a short pause before audio
-        starts.
-        <br><br>
-        Recordings are a member of the public's own voice. Owner and admin can play any of them;
-        everyone else only their own calls, enforced in <span class="mono">dialer-recording</span>
-        rather than by hiding the button.
-      </p>
-      <div class="row">
-        <div class="field" style="min-width:200px"><label for="recAgent">Agent</label>
-          <select id="recAgent"><option value="">Everyone</option></select></div>
-        <div class="field"><label for="recSince">From</label>
-          <input type="date" id="recSince"></div>
-        <div class="field"><label for="recLimit">Show</label>
-          <input type="number" id="recLimit" value="50" min="1" max="200" style="width:90px"></div>
-        <button id="recRefresh">Refresh</button>
-        <span id="recMsg" style="font-size:13px;color:var(--text-2)"></span>
+      <div class="filterbar">
+        <span class="result-count" id="recCount">—</span>
+        <span class="fb-label">Time range</span>
+        <input type="date" id="recFrom">
+        <span class="fb-label">to</span>
+        <input type="date" id="recTo">
+        <select id="recAgent"><option value="">All users</option></select>
+        <select id="recCampaign"><option value="">All campaigns</option></select>
+        <select id="recList"><option value="">All files</option></select>
+        <select id="recSource">
+          <option value="">All Sources</option>
+          <option value="campaign">Campaign</option>
+          <option value="manual">Manual</option>
+          <option value="outbound">Outbound</option>
+          <option value="inbound">Inbound</option>
+        </select>
+        <select id="recDuration">
+          <option value="">All durations</option>
+          <option value="none">No talk time</option>
+          <option value="1-30">1–30s</option>
+          <option value="31-60">31–60s</option>
+          <option value="61-180">61–180s</option>
+          <option value="180+">Over 3 min</option>
+        </select>
+        <select id="recStatus">
+          <option value="">All types</option>
+          <option value="completed">Completed</option>
+          <option value="answered">Answered</option>
+          <option value="no_answer">No answer</option>
+          <option value="busy">Busy</option>
+          <option value="failed">Failed</option>
+          <option value="canceled">Canceled</option>
+        </select>
+        <select id="recDisp"><option value="">All dispositions</option></select>
+        <button id="recExport" class="primary">Export</button>
+      </div>
+      <div class="filterbar" style="border-top:none;padding-top:0">
+        <label class="fb-check"><input type="checkbox" id="recSummary"> Summary view</label>
+        <label class="fb-check"><input type="checkbox" id="recRecorded"> Recorded calls only</label>
+        <button id="recRefresh" class="sm">Refresh</button>
+        <span id="recMsg" style="font-size:12.5px;color:var(--text-2)"></span>
+      </div>
+    </div>
+
+    <!-- ---------------- summary view ---------------- -->
+    <div class="panel hide" id="recSummaryPanel">
+      <h2>Disposition summary</h2>
+      <div style="margin:14px 0 20px">
+        <span class="stat"><b id="sumTotal">0</b><span>Total calls</span></span>
+        <span class="stat"><b id="sumTime">0</b><span>Total call time</span></span>
+        <span class="stat"><b id="sumAvg">0</b><span>Average call time</span></span>
       </div>
       <div class="scroll">
+        <table class="disp-table">
+          <thead><tr><th>Disposition</th><th class="num"># of Calls</th><th class="num">% of Total</th></tr></thead>
+          <tbody id="sumRows"><tr><td colspan="3">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <p class="hint" style="margin:14px 0 0">
+        Percentages are of the filtered total above, not of all time — the summary always
+        describes exactly the calls the log is showing.
+      </p>
+    </div>
+
+    <!-- ---------------- detail view ---------------- -->
+    <div class="panel" id="recListPanel">
+      <h2>Calls</h2>
+      <p class="hint">
+        Playback links are <strong>minted on demand</strong>. Telnyx signs them for ten minutes
+        at a time, so the URL stored against a call is dead within the hour and nothing here
+        uses it — pressing play asks the carrier for a fresh one, which is why there is a short
+        pause before audio starts.
+      </p>
+      <div class="scroll">
         <table>
-          <thead><tr><th>When</th><th>Agent</th><th>To</th><th>From</th>
-            <th class="num">Talk</th><th>Outcome</th><th style="width:190px">Recording</th></tr></thead>
+          <thead><tr><th>User</th><th>Start</th><th>Result</th><th style="width:96px">Recording</th>
+            <th class="num">Length</th><th>Contact</th><th>Campaign / file</th></tr></thead>
           <tbody id="recRows"><tr><td colspan="7">Loading…</td></tr></tbody>
         </table>
       </div>
       <!-- One shared player rather than one per row: only one recording can
-           usefully be listened to at a time, and a table of 50 <audio>
-           elements each holding a signed URL is 50 pointless requests. -->
+           usefully be listened to at a time, and a table of 200 <audio>
+           elements each holding a signed URL is 200 pointless requests. -->
       <div id="recPlayer" class="hide" style="margin-top:16px">
         <div style="font-family:var(--mono);font-size:10px;text-transform:uppercase;
                     letter-spacing:1px;color:var(--text-dim);margin-bottom:8px"
              id="recNowPlaying"></div>
         <audio id="recAudio" controls preload="none" style="width:100%"></audio>
+      </div>
+    </div>
+  </section>
+
+  <!-- =============================================== RESEARCH ========== -->
+  <section id="tab-research" class="hide">
+    <div class="panel">
+      <h2>Research a number</h2>
+      <p class="hint">
+        Everything this system holds about one phone number: which lists it arrived on, whether
+        it is on the internal DNC, and every call ever placed to it. Any format works —
+        <span class="mono">(815) 822-5358</span>, <span class="mono">8158225358</span> and
+        <span class="mono">+18158225358</span> all resolve to the same number.
+      </p>
+      <div class="row">
+        <div class="field" style="min-width:260px"><label for="resNum">Phone number</label>
+          <input id="resNum" placeholder="(815) 822-5358" autocomplete="off"></div>
+        <button id="resGo" class="primary">Submit</button>
+        <span id="resMsg" style="font-size:13px;color:var(--text-2)"></span>
+      </div>
+    </div>
+
+    <div id="resResults" class="hide">
+      <div class="panel">
+        <h2>Lead status for <span class="mono" id="resNumEcho"></span></h2>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Contact</th><th>File</th><th>Campaign</th><th>Entry date</th>
+              <th class="num">Calls</th><th>Status</th><th>Last outcome</th><th>Next attempt</th></tr></thead>
+            <tbody id="resContacts"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Internal DNC entries</h2>
+        <p class="hint" style="margin-bottom:12px">
+          Append-only by design — suppression is evidence, so nothing is ever deleted to
+          un-suppress. Any row here means the number is blocked for every campaign.
+        </p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Added</th><th>Source</th><th>Reason</th><th>Added by</th>
+              <th>Synced to ReadyMode</th></tr></thead>
+            <tbody id="resDnc"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Connection logs</h2>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Start</th><th class="num">Length</th><th>User</th><th>Source</th>
+              <th>Result</th><th style="width:150px">Recording</th></tr></thead>
+            <tbody id="resCalls"></tbody>
+          </table>
+        </div>
+        <!-- Its own player rather than the call log's: that one lives inside
+             #tab-calllog, which is display:none while this tab is showing, so
+             sharing it would play audio into a hidden element. -->
+        <div id="resPlayer" class="hide" style="margin-top:16px">
+          <div style="font-family:var(--mono);font-size:10px;text-transform:uppercase;
+                      letter-spacing:1px;color:var(--text-dim);margin-bottom:8px"
+               id="resNowPlaying"></div>
+          <audio id="resAudio" controls preload="none" style="width:100%"></audio>
+        </div>
       </div>
     </div>
   </section>
@@ -552,117 +698,271 @@ function applyReadOnly() {
 document.querySelectorAll('nav button').forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
-    ['numbers', 'lists', 'campaigns', 'recordings'].forEach((t) =>
+    ['numbers', 'lists', 'campaigns', 'calllog', 'research'].forEach((t) =>
       $('tab-' + t).classList.toggle('hide', t !== b.dataset.tab));
-    // Recordings are loaded on first open rather than at boot: it is the one
-    // tab most sessions never look at, and the query reads the CDR table.
-    if (b.dataset.tab === 'recordings' && !recordingsLoaded) loadRecordings();
+    // Loaded on first open rather than at boot: most sessions never look at
+    // the call log, and the query reads the whole CDR table.
+    if (b.dataset.tab === 'calllog' && !callLogLoaded) initCallLog();
   };
 });
 
-// ------------------------------------------------------------ recordings --
+// -------------------------------------------------------------- call log --
+// Everything on this screen comes from the dialer_call_log /
+// dialer_call_log_summary RPCs rather than from table reads. The rows need
+// campaign and list names beside each call, and those tables are gated on
+// role_can_use_dialer() -- which Quality deliberately does not hold, since
+// they review calls rather than place them. Reading them directly would hand
+// a reviewer a table with the name columns silently blank. The functions
+// apply one visibility rule (own calls, unless admin or reviewer) and return
+// the joined shape.
+//
 // The stored dialer_attempts.recording_path is NOT used for playback. Telnyx
 // hands out recording links as presigned S3 urls with X-Amz-Expires=600, so
 // every one of them is a 403 within ten minutes of the call ending. Playback
 // goes through dialer-recording, which asks the carrier for a fresh url (and
-// checks that this person is allowed to hear that particular call).
-let recordingsLoaded = false;
-let recAgents = new Map();   // agent_id -> full_name, accumulated as rows load
+// re-checks that this person may hear that particular call).
+let callLogLoaded = false;
+let callLogRows = [];        // last fetched page, reused by Export
 
 function mmss(total) {
   const s = Math.max(0, Math.floor(Number(total) || 0));
   return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
 }
+// "217 hours 28 min" reads better than 782880 for a period total.
+function humanSeconds(total) {
+  const s = Math.max(0, Math.floor(Number(total) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h) return `${h} hour${h === 1 ? '' : 's'} ${m} min`;
+  if (m) return `${m} min ${s % 60}s`;
+  return `${s}s`;
+}
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    + ', ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+function prettyPhone(e164) {
+  const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(e164 || '');
+  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : (e164 || '');
+}
 
-async function loadRecordings() {
-  recordingsLoaded = true;
+// Reads every filter control into the argument object both RPCs take. Empty
+// string means "All …" and is sent as null so the SQL skips that predicate.
+function callLogFilters() {
+  const from = $('recFrom').value, to = $('recTo').value;
+  return {
+    p_from: from ? new Date(from + 'T00:00:00').toISOString() : null,
+    // Inclusive end date: the SQL compares with < p_to, so push to midnight
+    // after the chosen day or "to = today" would hide today's calls.
+    p_to: to ? new Date(new Date(to + 'T00:00:00').getTime() + 86400000).toISOString() : null,
+    p_agent: $('recAgent').value || null,
+    p_campaign: $('recCampaign').value || null,
+    p_list: $('recList').value || null,
+    p_source: $('recSource').value || null,
+    p_duration: $('recDuration').value || null,
+    p_status: $('recStatus').value || null,
+    p_disp: $('recDisp').value || null,
+    p_recorded: $('recRecorded').checked ? true : null,
+  };
+}
+
+async function initCallLog() {
+  callLogLoaded = true;
+  // Default to the last 30 days rather than all history, so the first open is
+  // a small query.
+  const d = new Date();
+  $('recTo').value = d.toISOString().slice(0, 10);
+  d.setDate(d.getDate() - 30);
+  $('recFrom').value = d.toISOString().slice(0, 10);
+
+  // Filter options come from the same tables the admin screens already load,
+  // plus the agents who actually appear in the CDR.
+  $('recCampaign').innerHTML = '<option value="">All campaigns</option>'
+    + campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+
+  const [{ data: lists }, { data: disps }] = await Promise.all([
+    sb.from('dialer_lists').select('id, name').order('created_at', { ascending: false }),
+    sb.from('dialer_dispositions').select('code, label').eq('is_active', true).order('sort_order'),
+  ]);
+  // A reviewer without can_use_dialer cannot read these two, which is fine --
+  // the selects just stay at "All …" rather than the screen failing.
+  if (lists) {
+    $('recList').innerHTML = '<option value="">All files</option>'
+      + lists.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
+  }
+  if (disps) {
+    $('recDisp').innerHTML = '<option value="">All dispositions</option>'
+      + disps.map((x) => `<option value="${esc(x.code)}">${esc(x.label)}</option>`).join('');
+  }
+
+  await loadCallLog();
+}
+
+async function loadCallLog() {
+  const summary = $('recSummary').checked;
+  show($('recSummaryPanel'), summary);
+  show($('recListPanel'), !summary);
+  $('recMsg').textContent = 'Loading…';
+
+  const f = callLogFilters();
+  if (summary) await loadCallLogSummary(f);
+  else await loadCallLogRows(f);
+}
+
+async function loadCallLogRows(f) {
   const tbody = $('recRows');
-  tbody.innerHTML = '<tr><td colspan="7">Loading…</td></tr>';
-  $('recMsg').textContent = '';
-
-  const limit = Math.min(200, Math.max(1, Number($('recLimit').value) || 50));
-  let q = sb.from('dialer_attempts')
-    .select('id, agent_id, from_number, to_number, talk_seconds, disposition, status, initiated_at')
-    // Either identifier means the carrier has audio for this call: rows from
-    // before v530 only have the (expired) path, newer ones have the id.
-    .or('recording_id.not.is.null,recording_path.not.is.null')
-    .order('initiated_at', { ascending: false })
-    .limit(limit);
-
-  const agent = $('recAgent').value;
-  if (agent) q = q.eq('agent_id', agent);
-  const since = $('recSince').value;
-  if (since) q = q.gte('initiated_at', new Date(since + 'T00:00:00').toISOString());
-
-  const { data, error } = await q;
+  const { data, error } = await sb.rpc('dialer_call_log', { ...f, p_limit: 200, p_offset: 0 });
   if (error) {
-    tbody.innerHTML = `<tr><td colspan="7">Could not load recordings: ${esc(error.message)}</td></tr>`;
+    $('recMsg').textContent = '';
+    tbody.innerHTML = `<tr><td colspan="7">Could not load the call log: ${esc(error.message)}</td></tr>`;
     return;
   }
-  const rows = data || [];
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7">No recorded calls in this range.</td></tr>';
+  callLogRows = data || [];
+  const total = callLogRows.length ? Number(callLogRows[0].total_count) : 0;
+  $('recCount').textContent = `${total} call result${total === 1 ? '' : 's'}`;
+  $('recMsg').textContent = total > callLogRows.length
+    ? `Showing the newest ${callLogRows.length} of ${total} — narrow the range to see the rest.` : '';
+
+  // Agent list is built from whoever actually appears in the CDR, so it never
+  // offers a name with no calls behind it.
+  const seen = new Map();
+  callLogRows.forEach((r) => { if (r.agent_id) seen.set(r.agent_id, r.agent_name || r.agent_id); });
+  if (seen.size) {
+    const keep = $('recAgent').value;
+    $('recAgent').innerHTML = '<option value="">All users</option>'
+      + [...seen.entries()].sort((a, b) => (a[1] || '').localeCompare(b[1] || ''))
+        .map(([id, n]) => `<option value="${esc(id)}">${esc(n)}</option>`).join('');
+    $('recAgent').value = keep;
+  }
+
+  if (!callLogRows.length) {
+    tbody.innerHTML = '<tr><td colspan="7">No calls match these filters.</td></tr>';
     return;
   }
 
-  // Names come from a second query rather than an embedded join: profiles has
-  // its own RLS, and a failed embed would take the whole recordings list with
-  // it instead of just leaving the column blank.
-  const ids = [...new Set(rows.map((r) => r.agent_id).filter(Boolean))];
-  if (ids.length) {
-    const { data: profs } = await sb.from('profiles').select('id, full_name').in('id', ids);
-    (profs || []).forEach((p) => recAgents.set(p.id, p.full_name || ''));
-  }
-  syncAgentFilter();
-
-  tbody.innerHTML = rows.map((r) => {
-    const when = new Date(r.initiated_at);
-    const name = recAgents.get(r.agent_id) || (r.agent_id ? '—' : 'System');
+  tbody.innerHTML = callLogRows.map((r) => {
+    const who = r.contact_name
+      ? `${esc(r.contact_name)}${r.contact_state ? ' ' + esc(r.contact_state) : ''} <span class="mono">${esc(prettyPhone(r.to_number))}</span>`
+      : `<span class="mono">${esc(prettyPhone(r.to_number))}</span>`;
+    const result = r.disposition_label
+      ? esc(r.disposition_label)
+      : `<span style="color:var(--text-dim)">${esc(r.status || '')}</span>`;
+    const src = r.is_manual ? 'Manual' : (esc(r.campaign_name || '—'));
+    const rec = r.has_recording
+      ? `<button class="sm" data-play="${esc(r.id)}">Play</button>
+         <button class="sm" data-dl="${esc(r.id)}" title="Download">↓</button>`
+      : '<span style="color:var(--text-dim)">—</span>';
     return `<tr>
-      <td style="white-space:nowrap">${esc(when.toLocaleString())}</td>
-      <td>${esc(name)}</td>
-      <td class="mono">${esc(r.to_number || '')}</td>
-      <td class="mono">${esc(r.from_number || '')}</td>
-      <td class="num mono">${mmss(r.talk_seconds)}</td>
-      <td>${r.disposition ? esc(r.disposition) : `<span style="color:var(--text-dim)">${esc(r.status || '')}</span>`}</td>
-      <td><button class="sm" data-play="${esc(r.id)}">Play</button></td>
+      <td>${esc(r.agent_name || '—')}</td>
+      <td style="white-space:nowrap">${esc(fmtWhen(r.initiated_at))}</td>
+      <td>${result}</td>
+      <td style="white-space:nowrap">${rec}</td>
+      <td class="num mono">${r.talk_seconds == null ? '—' : mmss(r.talk_seconds)}</td>
+      <td>${who}</td>
+      <td>${src}${r.list_name ? ` <span style="color:var(--text-dim)">· ${esc(r.list_name)}</span>` : ''}</td>
     </tr>`;
   }).join('');
 
-  tbody.querySelectorAll('button[data-play]').forEach((btn) => {
-    btn.onclick = () => playRecording(btn, btn.dataset.play);
+  tbody.querySelectorAll('button[data-play]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.play, false);
   });
-  $('recMsg').textContent = `${rows.length} recorded call${rows.length === 1 ? '' : 's'}.`;
+  tbody.querySelectorAll('button[data-dl]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.dl, true);
+  });
 }
 
-function syncAgentFilter() {
-  const sel = $('recAgent');
-  const keep = sel.value;
-  sel.innerHTML = '<option value="">Everyone</option>' + [...recAgents.entries()]
-    .sort((a, b) => (a[1] || '').localeCompare(b[1] || ''))
-    .map(([id, name]) => `<option value="${esc(id)}">${esc(name || id)}</option>`).join('');
-  sel.value = keep;
+async function loadCallLogSummary(f) {
+  const tbody = $('sumRows');
+  const { data, error } = await sb.rpc('dialer_call_log_summary', f);
+  if (error) {
+    $('recMsg').textContent = '';
+    tbody.innerHTML = `<tr><td colspan="3">Could not load the summary: ${esc(error.message)}</td></tr>`;
+    return;
+  }
+  const rows = data || [];
+  const total = rows.length ? Number(rows[0].total_calls) : 0;
+  const talk = rows.length ? Number(rows[0].total_talk_seconds) : 0;
+  const avg = rows.length ? Number(rows[0].avg_talk_seconds) : 0;
+
+  $('recCount').textContent = `${total} call result${total === 1 ? '' : 's'}`;
+  $('sumTotal').textContent = total.toLocaleString();
+  $('sumTime').textContent = humanSeconds(talk);
+  $('sumAvg').textContent = `${Math.round(avg)}s`;
+  $('recMsg').textContent = '';
+
+  tbody.innerHTML = rows.length
+    ? rows.map((r) => `<tr class="d-${esc(r.category || 'none')}">
+        <td>${esc(r.label || r.disposition)}</td>
+        <td class="num mono">${Number(r.calls).toLocaleString()}</td>
+        <td class="num mono">${r.pct}%</td>
+      </tr>`).join('')
+    : '<tr><td colspan="3">No calls match these filters.</td></tr>';
 }
 
-async function playRecording(btn, attemptId) {
+// Export is of the rows currently loaded, not a second server query, so what
+// lands in the file is exactly what is on screen.
+function exportCallLog() {
+  if (!callLogRows.length) { $('recMsg').textContent = 'Nothing to export.'; return; }
+  const cols = ['initiated_at', 'agent_name', 'to_number', 'contact_name', 'contact_state',
+    'campaign_name', 'list_name', 'direction', 'is_manual', 'status', 'disposition_label',
+    'talk_seconds', 'billed_seconds', 'has_recording', 'cost_usd'];
+  const cell = (v) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [cols.join(',')]
+    .concat(callLogRows.map((r) => cols.map((c) => cell(r[c])).join(',')))
+    .join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `call-log-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  $('recMsg').textContent = `Exported ${callLogRows.length} rows.`;
+}
+
+async function playRecording(btn, attemptId, download) {
   const label = btn.textContent;
+  // Messages go to whichever tab the button is on, for the same reason the
+  // player does: the other tab's status line is inside a hidden section.
+  const msg = $(btn.closest('#tab-research') ? 'resMsg' : 'recMsg');
   btn.disabled = true;
-  btn.textContent = 'Loading…';
+  btn.textContent = '…';
   try {
     const res = await callFn('dialer-recording', { attempt_id: attemptId });
     if (!res?.ok || !res.url) {
-      $('recMsg').textContent = res?.error || res?.detail || 'No recording available for that call.';
+      msg.textContent = res?.error || res?.detail || 'No recording available for that call.';
       return;
     }
+    if (download) {
+      // The signed url is short-lived, so the download has to start now
+      // rather than being handed to the person as a link to keep.
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = `call-${attemptId}.mp3`;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.click();
+      msg.textContent = 'Download started.';
+      return;
+    }
+    // Play into whichever tab the button was pressed on: the other tab's
+    // player is inside a display:none section and would be silent.
+    const onResearch = !!btn.closest('#tab-research');
+    const player = $(onResearch ? 'resPlayer' : 'recPlayer');
+    const nowPlaying = $(onResearch ? 'resNowPlaying' : 'recNowPlaying');
+    const audio = $(onResearch ? 'resAudio' : 'recAudio');
+
     const row = btn.closest('tr');
-    $('recNowPlaying').textContent = row
-      ? `${row.cells[1].textContent} · ${row.cells[2].textContent} · ${row.cells[0].textContent}`
+    nowPlaying.textContent = row
+      ? [...row.cells].slice(0, 3).map((c) => c.textContent.trim()).filter(Boolean).join(' · ')
       : '';
-    show($('recPlayer'), true);
-    const audio = $('recAudio');
+    show(player, true);
     audio.src = res.url;
     audio.play().catch(() => { /* the controls are there; autoplay may be blocked */ });
-    $('recMsg').textContent = '';
+    msg.textContent = '';
   } finally {
     btn.disabled = false;
     btn.textContent = label;
@@ -671,14 +971,87 @@ async function playRecording(btn, attemptId) {
 
 function show(el, on) { el.classList.toggle('hide', !on); }
 
-$('recRefresh').onclick = () => loadRecordings();
-// Default to the last 30 days so the first open is a small, fast query
-// rather than the whole CDR history.
-(function initRecFilters() {
-  const d = new Date();
-  d.setDate(d.getDate() - 30);
-  $('recSince').value = d.toISOString().slice(0, 10);
-})();
+$('recRefresh').onclick = () => loadCallLog();
+$('recExport').onclick = () => exportCallLog();
+$('recSummary').onchange = () => loadCallLog();
+// Changing any filter re-runs whichever view is showing. Re-running on change
+// rather than behind an Apply button keeps the summary honest: it can never
+// be describing a different filter set than the one on screen.
+['recFrom', 'recTo', 'recAgent', 'recCampaign', 'recList', 'recSource',
+ 'recDuration', 'recStatus', 'recDisp', 'recRecorded'].forEach((id) => {
+  $(id).onchange = () => loadCallLog();
+});
+
+// -------------------------------------------------------------- research --
+// One RPC round trip returns the contact rows, the internal DNC history and
+// every call to the number. Phone normalisation happens in SQL so that
+// "(815) 822-5358", "8158225358" and "+18158225358" all resolve to the same
+// number rather than each needing its own client-side guess.
+async function researchNumber() {
+  const raw = $('resNum').value.trim();
+  if (!raw) { $('resMsg').textContent = 'Enter a number to research.'; return; }
+  $('resMsg').textContent = 'Searching…';
+  show($('resResults'), false);
+
+  const { data, error } = await sb.rpc('dialer_research_number', { p_phone: raw });
+  if (error) { $('resMsg').textContent = 'Search failed: ' + error.message; return; }
+  if (!data?.ok) { $('resMsg').textContent = data?.error || 'Nothing found.'; return; }
+
+  $('resNumEcho').textContent = prettyPhone(data.phone_e164);
+  $('resMsg').textContent = '';
+  show($('resResults'), true);
+
+  const contacts = data.contacts || [], dnc = data.dnc || [], calls = data.calls || [];
+
+  $('resContacts').innerHTML = contacts.length ? contacts.map((c) => `<tr>
+      <td>${esc(c.contact_name || '—')}</td>
+      <td>${esc(c.list_name || '—')}</td>
+      <td>${esc(c.campaign_name || '—')}</td>
+      <td style="white-space:nowrap">${esc(fmtWhen(c.created_at))}</td>
+      <td class="num mono">${c.attempt_count ?? 0}</td>
+      <td>${esc(c.status || '')}${c.retired_reason ? ` <span style="color:var(--text-dim)">(${esc(c.retired_reason)})</span>` : ''}</td>
+      <td>${esc(c.last_outcome || '—')}</td>
+      <td style="white-space:nowrap">${c.next_attempt_at ? esc(fmtWhen(c.next_attempt_at)) : '—'}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="8">No contact rows found — this number is not on any loaded list.</td></tr>';
+
+  // Suppression is the one thing on this screen worth being unmissable.
+  $('resDnc').innerHTML = dnc.length ? dnc.map((d) => `<tr class="d-dnc">
+      <td style="white-space:nowrap">${esc(fmtWhen(d.created_at))}</td>
+      <td>${esc(d.source || '')}</td>
+      <td>${esc(d.reason || '—')}</td>
+      <td>${esc(d.added_by || '—')}</td>
+      <td>${d.synced_to_readymode_at ? esc(fmtWhen(d.synced_to_readymode_at))
+            : '<span style="color:var(--away)">Not yet exported</span>'}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="5">No internal DNC entries — this number is not suppressed.</td></tr>';
+
+  $('resCalls').innerHTML = calls.length ? calls.map((c) => `<tr>
+      <td style="white-space:nowrap">${esc(fmtWhen(c.initiated_at))}</td>
+      <td class="num mono">${c.talk_seconds == null ? '—' : mmss(c.talk_seconds)}</td>
+      <td>${esc(c.agent_name || '—')}</td>
+      <td>${c.is_manual ? 'Manual' : esc(c.campaign_name || c.direction || '—')}</td>
+      <td>${c.disposition_label ? esc(c.disposition_label)
+            : `<span style="color:var(--text-dim)">${esc(c.status || '')}</span>`}</td>
+      <td>${c.has_recording
+            ? `<button class="sm" data-play="${esc(c.id)}">Play</button>
+               <button class="sm" data-dl="${esc(c.id)}" title="Download">&darr;</button>`
+            : '<span style="color:var(--text-dim)">—</span>'}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="6">No calls to this number.</td></tr>';
+
+  // The research tab reuses the call log's single player, so playback behaves
+  // identically on both screens.
+  $('resCalls').querySelectorAll('button[data-play]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.play, false);
+  });
+  $('resCalls').querySelectorAll('button[data-dl]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.dl, true);
+  });
+}
+
+$('resGo').onclick = researchNumber;
+$('resNum').addEventListener('keydown', (e) => { if (e.key === 'Enter') researchNumber(); });
 
 // -------------------------------------------------------------- coverage --
 async function loadCoverage() {
