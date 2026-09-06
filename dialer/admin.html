@@ -947,9 +947,12 @@ function exportCallLog() {
 
 async function playRecording(btn, attemptId, download) {
   const label = btn.textContent;
-  // Messages go to whichever tab the button is on, for the same reason the
-  // player does: the other tab's status line is inside a hidden section.
   const msg = $(btn.closest('#tab-research') ? 'resMsg' : 'recMsg');
+  // Snapshot the cell BEFORE the button is put into its loading state.
+  // Taking it afterwards captured the disabled "…" button, so closing the
+  // player restored a Play button that was permanently stuck mid-load.
+  const cell = btn.closest('td');
+  const cellHtml = cell ? cell.innerHTML : null;
   btn.disabled = true;
   btn.textContent = '…';
   try {
@@ -975,9 +978,8 @@ async function playRecording(btn, attemptId, download) {
     // player parked at the bottom loses which call it belongs to the moment
     // you scroll; in the row it cannot be misread. Only one plays at a time.
     closeInlinePlayer();
-    const cell = btn.closest('td');
     if (!cell) return;
-    openPlayer = { cell, html: cell.innerHTML };
+    openPlayer = { cell, html: cellHtml };
     cell.innerHTML =
       '<div class="inline-player">'
       + '<button type="button" class="ip-close" title="Close player">&times;</button>'
