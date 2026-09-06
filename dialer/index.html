@@ -313,7 +313,15 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
                   <button id="wrapNowBtn">Dial now</button>
                   <button id="wrapCancelBtn">Stop auto-dial</button>
                 </div>
+              </div>
 
+              <!-- OUTSIDE contactBody on purpose. A manual dial has no contact
+                   row, so with no campaign selected contactBody is hidden --
+                   which used to hide Hang up, Mute and the timer along with it
+                   for the whole of a manual call. These controls belong to the
+                   CALL, not to the queue, so they follow "a contact is loaded
+                   OR a call is up" via syncCallControls(). -->
+              <div id="callControls" class="hide">
                 <div class="callbar">
                   <button class="primary" id="dialBtn">Dial</button>
                   <button class="danger hide" id="hangupBtn">Hang up</button>
@@ -438,6 +446,14 @@ let paused = false;
 const stats = { dials: 0, connects: 0, leads: 0, talkSeconds: 0 };
 
 function show(el, on) { el.classList.toggle('hide', !on); }
+
+// The call controls belong to the CALL, not to the queue. A manual dial has
+// no contact row, so tying them to contactBody meant a manual call placed
+// with no campaign selected ran with Hang up, Mute, the timer and the keypad
+// all off screen.
+function syncCallControls() {
+  show($('callControls'), Boolean(contact) || Boolean(activeCall));
+}
 function banner(text, kind) {
   const b = $('banner');
   b.textContent = text;
@@ -647,7 +663,10 @@ const QUEUE_COLS = 'id, phone_e164, contact_name, first_name, last_name, email, 
 async function loadNextContact() {
   contact = null; attemptId = null;
   show($('dispPanel'), false);
-  if (!campaign) { show($('contactBody'), false); show($('contactEmpty'), true); return; }
+  if (!campaign) {
+    show($('contactBody'), false); show($('contactEmpty'), true);
+    syncCallControls(); return;
+  }
 
   const nowIso = new Date().toISOString();
 
@@ -687,6 +706,7 @@ async function loadNextContact() {
     show($('contactBody'), false);
     show($('contactEmpty'), true);
     $('contactEmpty').textContent = 'Nothing due in this campaign right now.';
+    syncCallControls();
     return;
   }
 
@@ -707,6 +727,7 @@ async function loadNextContact() {
 function renderContact() {
   show($('contactEmpty'), false);
   show($('contactBody'), true);
+  syncCallControls();
   banner('', null);
 
   $('cName').textContent = contact.contact_name || 'Unknown contact';
@@ -958,6 +979,7 @@ async function manualDial() {
   stats.dials++; $('sDials').textContent = stats.dials;
   setSessionStatus('on_call');
   sipState('busy', 'Manual call…');
+  syncCallControls();          // no contact row, but there is very much a call
   show($('hangupBtn'), true);
   show($('dialBtn'), false);
   $('manualNum').value = '';
@@ -1084,6 +1106,7 @@ function endCallUi() {
   dtmfSent = ''; $('keypadSent').textContent = '';
   $('keypadBtn').disabled = true;
   openKeypad(false);
+  syncCallControls();   // a manual call with no contact takes the bar away again
   sipState('on', 'Ready');
   setSessionStatus('wrap_up');
   showDispositions();
