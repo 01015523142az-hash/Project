@@ -309,7 +309,14 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
 
               <div id="contactBody" class="hide">
                 <p class="contact-name" id="cName">—</p>
-                <p class="contact-num" id="cNumber">—</p>
+                <p class="contact-num" style="display:flex;align-items:center;gap:10px">
+                  <span id="cNumber">—</span>
+                  <!-- Available whenever a contact is loaded, not only during a
+                       call: before this, the ONLY way to open a conversation was
+                       to dial, get no answer, and accept the fallback prompt. -->
+                  <button id="textBtn" style="font-size:12px;padding:3px 10px"
+                          title="Text this contact from +1 307-441-5766">Text</button>
+                </p>
                 <dl class="kv">
                   <dt>Local time</dt><dd id="cLocal">—</dd>
                   <dt>Line type</dt><dd id="cLine">—</dd>
@@ -452,8 +459,14 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
             +1 307-441-5766. Your team leader and admins can see all conversations;
             you see your own.
           </p>
-          <div class="row" style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+          <div class="row" style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
             <button id="agRefresh">Refresh</button>
+            <!-- Start a conversation with a number that has no thread yet.
+                 Without this an agent could only ever REPLY, so a first
+                 message was impossible unless a call had already failed. -->
+            <input id="agNewNum" type="tel" inputmode="tel" placeholder="New conversation — 10 digits"
+                   style="width:220px" autocomplete="off">
+            <button id="agNewBtn">Start</button>
             <span id="agMsg" style="font-size:13px;color:var(--dim,#5a6a69)"></span>
           </div>
           <div style="display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start">
@@ -1662,6 +1675,60 @@ $('agRefresh').onclick = () => { agLoadThreads(); if (agPhone) agOpen(agPhone, a
 // landed without leaving the console, but re-rendering the list under them
 // while they are reading it would be worse than useless.
 agPollTimer = setInterval(() => agLoadThreads(true), 60000);
+
+
+// ---- starting a conversation ---------------------------------------------
+// Opening a thread that does not exist yet is the case both entry points
+// share. dialer_sms_thread returns nothing for an unknown number, which is
+// correct -- there are no messages -- so the composer is enabled anyway and
+// the thread appears in the list after the first send.
+function agToE164(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d[0] === '1') return '+' + d;
+  return null;
+}
+
+async function agStartConversation(phone, name) {
+  const e164 = agToE164(phone);
+  if (!e164) { $('agMsg').textContent = 'Enter a valid 10-digit US number.'; return; }
+
+  // Switch to Messages the same way the nav does, so the view and the nav
+  // highlight cannot disagree.
+  const btn = document.querySelector('.side-main-nav .tab-btn[data-view="messages"]');
+  if (btn) btn.click();
+
+  await agLoadThreads();
+  await agOpen(e164, name || null);
+  if (!$('agThread').textContent.trim() || $('agThread').textContent.includes('No messages')) {
+    $('agThread').innerHTML =
+      `<div style="color:var(--dim,#5a6a69)">No messages yet with ${e164}. `
+      + `Your first text opens the conversation.</div>`;
+  }
+  $('agBody').focus();
+}
+
+// Text the contact currently on the card. Enabled whenever a contact is
+// loaded, not only mid-call -- before this the only route to a conversation
+// was to dial, get no answer, and accept the fallback prompt.
+if ($('textBtn')) {
+  $('textBtn').onclick = () => {
+    if (!contact?.phone_e164) { banner('Load a contact first.', 'err'); return; }
+    agStartConversation(contact.phone_e164, contact.contact_name || null);
+  };
+}
+
+if ($('agNewBtn')) {
+  $('agNewBtn').onclick = () => {
+    const v = $('agNewNum').value.trim();
+    if (!v) return;
+    $('agNewNum').value = '';
+    agStartConversation(v, null);
+  };
+  $('agNewNum').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') $('agNewBtn').click();
+  });
+}
 
 </script>
 </body>
