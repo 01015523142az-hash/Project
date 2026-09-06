@@ -91,6 +91,28 @@ body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:1
 .theme-toggle-btn:hover{color:var(--text);background:var(--card-hover)}
 
 .app-body{display:flex;align-items:flex-start;gap:28px}
+/* ---- signed-out gate -----------------------------------------------------
+   Until a session is confirmed this page renders the sign-in card and nothing
+   else. It used to draw the entire console -- nav, queue panel, status
+   dropdown, manual-dial box with a live "Dial number" button -- behind a
+   one-line banner. No data was ever exposed (boot() returns before any query
+   runs, so no profile, campaign, queue or contact is fetched), but a fully
+   drawn console with dead controls reads as broken or leaking, and there is
+   nothing on it worth showing to someone who is not signed in.
+   Driven by a class the JS only adds once identity is established, so a
+   script error leaves the console hidden rather than exposed -- fail closed. */
+body:not(.authed) .app-body{display:none}
+body:not(.authed) .header-right .pill{display:none}
+.signed-out{display:none;max-width:520px;margin:64px auto;padding:30px 28px;
+  border:1px solid var(--border);border-radius:14px;background:var(--card);text-align:center}
+body:not(.authed) .signed-out{display:block}
+.signed-out h2{margin:0 0 10px;font-size:1.05rem;color:var(--text)}
+.signed-out p{margin:0 0 18px;font-size:.9rem;line-height:1.55;color:var(--text-2)}
+.signed-out a.so-btn{display:inline-block;padding:10px 20px;border-radius:9px;
+  background:var(--gold);color:#10131A;font-weight:600;text-decoration:none;font-size:.9rem}
+.signed-out a.so-btn:hover{filter:brightness(1.08)}
+.signed-out .so-detail{margin:16px 0 0;font-size:.8rem;color:var(--text-dim)}
+
 .main-content{flex:1 1 0;min-width:0}
 
 /* ---------- left navigation (portal's .side-main-nav pattern) ---------- */
@@ -256,6 +278,16 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
     </div>
   </header>
 
+
+  <!-- Shown whenever <body> lacks .authed; see the signed-out gate CSS. -->
+  <div class="signed-out" id="signedOut">
+    <h2>Sign in required</h2>
+    <p>
+      This console runs on your staff portal session. Sign in to the staff portal on this domain, then come back to this page.
+    </p>
+    <a class="so-btn" href="/">Open the staff portal</a>
+    <p class="so-detail" id="signedOutDetail"></p>
+  </div>
   <div class="app-body">
     <!-- Left navigation. Same .side-main-nav/.tab-btn shape the staff portal
          uses, so the two surfaces navigate identically. The view buttons
@@ -568,15 +600,20 @@ async function callFn(name, body) {
 
 // ---------------------------------------------------------------- boot ----
 (async function boot() {
+  // No session: the signed-out card is already on screen (the console is
+  // hidden by default and revealed only below), so stop before any query.
   const { data: { session } } = await sb.auth.getSession();
-  if (!session) {
-    banner('You are not signed in. Open the staff portal, sign in there, then reload this page.', 'err');
-    return;
-  }
+  if (!session) return;
 
   const { data: profile } = await sb.from('profiles')
     .select('id, full_name, role').eq('id', session.user.id).maybeSingle();
-  if (!profile) { banner('No staff profile found for this account.', 'err'); return; }
+  if (!profile) {
+    $('signedOutDetail').textContent = 'Signed in, but no staff profile is linked to this account.';
+    return;
+  }
+  // Identity established -- reveal the console. Anything that fails below
+  // surfaces in the banner without putting the page back to signed-out.
+  document.body.classList.add('authed');
   me = profile;
   $('agentName').textContent = profile.full_name || '';
 
