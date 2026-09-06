@@ -7347,7 +7347,7 @@ try{
   // unchanged. Supabase's own autoRefreshToken would otherwise keep a
   // merely-open (not necessarily actively used) tab's session alive
   // indefinitely on top of that, so the boot/idle-timeout code further
-  // down enforces a genuine 1-hour INACTIVITY timeout independent of the
+  // down enforces a genuine 4-hour INACTIVITY timeout independent of the
   // token's own expiry -- see IDLE_TIMEOUT_MS.
   //
   // flowType:'implicit' (unrelated to the above, kept as-is -- v38 fix,
@@ -8444,7 +8444,7 @@ async function performSignOut({ idleTimeout = false } = {}){
   }finally{
     try{ sessionStorage.removeItem(IDLE_LAST_ACTIVITY_KEY); }catch(e){}
     if(idleTimeout){
-      try{ sessionStorage.setItem(IDLE_SIGNOUT_MESSAGE_KEY, 'You were signed out after an hour of inactivity — please sign in again.'); }catch(e){}
+      try{ sessionStorage.setItem(IDLE_SIGNOUT_MESSAGE_KEY, 'You were signed out after 4 hours of inactivity — please sign in again.'); }catch(e){}
     }
     // Full navigation (not just location.reload()) so any leftover
     // hash/query (e.g. a stale password-recovery fragment) is dropped too.
@@ -38529,12 +38529,12 @@ $('billingAkExportCsvBtn').addEventListener('click', () => {
 // all -- see that client's own comment for why. On its own that would let
 // a merely-open tab stay signed in indefinitely (Supabase's
 // autoRefreshToken doesn't care whether anyone's actually using it), so
-// this enforces a genuine 1-hour INACTIVITY timeout independent of the
+// this enforces a genuine 4-hour INACTIVITY timeout independent of the
 // token's own expiry: real user input (click/keydown/mousemove/scroll/
 // touch) stamps a last-activity time in sessionStorage, checked once a
-// minute -- go a full hour with none of that and performSignOut() runs
+// minute -- go a full 4 hours with none of that and performSignOut() runs
 // the same as clicking "Sign out" manually.
-const IDLE_TIMEOUT_MS = 60 * 60 * 1000;
+const IDLE_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const IDLE_LAST_ACTIVITY_KEY = 'dashboardLastActivityAt';
 const IDLE_SIGNOUT_MESSAGE_KEY = 'dashboardIdleSignOutMessage';
 let lastActivityRecordedAt = 0;
@@ -38578,7 +38578,7 @@ setInterval(() => {
     // restoring a session that should already be considered expired.
     try{ await sb.auth.signOut(); }catch(e){}
     try{ sessionStorage.removeItem(IDLE_LAST_ACTIVITY_KEY); }catch(e){}
-    if(!staleMsg) $('loginMsg').textContent = 'You were signed out after an hour of inactivity — please sign in again.';
+    if(!staleMsg) $('loginMsg').textContent = 'You were signed out after 4 hours of inactivity — please sign in again.';
     $('loginScreen').style.display = 'block';
     prefillAndFocusLogin();
     return;
