@@ -267,6 +267,16 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
           <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg>
           <span>Console</span>
         </button>
+        <button class="tab-btn" data-view="messages">
+          <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h14v9H3z"/><path d="M3 6l7 5 7-5"/></svg>
+          <span>Messages</span>
+          <!-- Count of conversations whose LAST message came from them, i.e.
+               waiting on a reply. Not a true unread count -- there is no read
+               state, and inventing one that nobody clears would be worse than
+               a signal that is honest about what it means. -->
+          <span id="msgBadge" class="hide" style="margin-left:auto;background:var(--crit,#a2352c);
+                color:#fff;border-radius:99px;font-size:10.5px;font-weight:700;padding:1px 6px"></span>
+        </button>
         <button class="tab-btn" data-view="session">
           <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V9M10 16V4M16 16v-6"/></svg>
           <span>Session</span>
@@ -426,6 +436,44 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
             The durable record is <span style="font-family:var(--mono)">dialer_attempts</span>,
             which is written from the carrier's own call events rather than from this page.
           </p>
+        </div>
+      </section>
+
+      <!-- Two-way SMS on +1 307-441-5766. Reads the same v542 RPCs the admin
+           inbox uses, and the visibility rule lives inside them: an agent sees
+           ONLY conversations they have personally texted in, plus every reply
+           on those threads. Nothing is filtered here, so this page cannot leak
+           a colleague's conversation even if someone edits it. -->
+      <section class="view" id="view-messages">
+        <div class="panel">
+          <h2>Your messages</h2>
+          <p class="hint" style="color:var(--dim,#5a6a69);font-size:13px;margin:0 0 12px">
+            Conversations you have texted, and their replies. Sent from
+            +1 307-441-5766. Your team leader and admins can see all conversations;
+            you see your own.
+          </p>
+          <div class="row" style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+            <button id="agRefresh">Refresh</button>
+            <span id="agMsg" style="font-size:13px;color:var(--dim,#5a6a69)"></span>
+          </div>
+          <div style="display:grid;grid-template-columns:280px 1fr;gap:14px;align-items:start">
+            <div id="agThreads" style="max-height:440px;overflow:auto;border:1px solid var(--line,#dbe3e2);border-radius:6px">
+              <div style="padding:10px;font-size:13px">Loading…</div>
+            </div>
+            <div>
+              <div id="agThreadWrap" style="max-height:360px;overflow:auto;padding:12px;
+                   border:1px solid var(--line,#dbe3e2);border-radius:6px;background:#fbfcfc">
+                <div id="agThread" style="font-size:13px;color:var(--dim,#5a6a69)">
+                  Pick a conversation on the left.
+                </div>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:10px">
+                <textarea id="agBody" rows="2" style="flex:1" placeholder="Reply…" disabled></textarea>
+                <button class="primary" id="agSend" disabled>Send</button>
+              </div>
+              <div id="agLen" style="font-size:12px;color:var(--dim,#5a6a69);margin-top:4px"></div>
+            </div>
+          </div>
         </div>
       </section>
     </main>
@@ -1416,6 +1464,9 @@ document.querySelectorAll('.side-main-nav .tab-btn[data-view]').forEach((btn) =>
       .forEach((b) => b.classList.toggle('active', b === btn));
     document.querySelectorAll('.view')
       .forEach((v) => v.classList.toggle('active', v.id === 'view-' + btn.dataset.view));
+    // Loaded when opened rather than at boot: most shifts never open it,
+    // and it should be current when it IS opened rather than as of sign-in.
+    if (btn.dataset.view === 'messages') agLoadThreads();
   });
 });
 
@@ -1505,6 +1556,113 @@ applyThemeIcon();
     document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'visible') checkVersion(); });
     checkVersion();
   })();
+
+// --------------------------------------------------------- your messages --
+// Same v542 RPCs the admin inbox uses. The visibility rule lives INSIDE them:
+// a non-reviewer gets only threads they have personally texted in, plus every
+// reply on those threads. Nothing is filtered here, so this page cannot leak a
+// colleague's conversation even if someone edits it.
+let agPhone = null, agName = null, agPollTimer = null;
+
+const agTime = (t) => new Date(t).toLocaleString([], {
+  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+// A segment is 160 chars, but ONE non-ASCII character drops the whole message
+// to 70 -- a short-looking text can silently cost five segments.
+const agSegments = (t) => t ? Math.ceil(t.length / (/[^\u0000-\u007F]/.test(t) ? 70 : 160)) : 0;
+
+async function agLoadThreads(quiet) {
+  const { data, error } = await sb.rpc('dialer_sms_threads');
+  if (error) {
+    if (!quiet) $('agThreads').innerHTML = `<div style="padding:10px">${error.message}</div>`;
+    return;
+  }
+  const rows = data || [];
+
+  // Threads whose last message came from THEM are the ones waiting on a
+  // reply. Not a true unread count -- there is no read state, and inventing
+  // one nobody clears would be worse than a signal that is honest.
+  const waiting = rows.filter((r) => r.last_direction === 'inbound').length;
+  const badge = $('msgBadge');
+  if (badge) {
+    badge.textContent = String(waiting);
+    badge.classList.toggle('hide', waiting === 0);
+  }
+  if (!quiet) {
+    $('agMsg').textContent = rows.length
+      ? `${rows.length} conversation${rows.length === 1 ? '' : 's'}`
+        + (waiting ? ` · ${waiting} awaiting your reply` : '')
+      : '';
+  }
+
+  if (quiet) return;
+  $('agThreads').innerHTML = rows.length
+    ? rows.map((r) => `<div style="padding:9px 10px;border-bottom:1px solid var(--line,#dbe3e2);cursor:pointer"
+          data-ph="${r.contact_phone}" data-nm="${(r.contact_name || '').replace(/"/g, '&quot;')}">
+        <div style="display:flex;justify-content:space-between;gap:8px">
+          <strong style="font-size:13px">${(r.contact_name || r.contact_phone)}</strong>
+          <span style="font-size:10.5px;color:var(--dim,#5a6a69)">${agTime(r.last_at)}</span>
+        </div>
+        <div style="font-size:11px;color:var(--dim,#5a6a69)">${r.contact_phone}</div>
+        <div style="font-size:12px;color:var(--dim,#5a6a69);margin-top:3px;overflow:hidden;
+                    text-overflow:ellipsis;white-space:nowrap">
+          ${r.last_direction === 'inbound' ? '' : 'You: '}${(r.last_body || '')}
+        </div></div>`).join('')
+    : '<div style="padding:10px;font-size:13px">No conversations yet. Texts you send after an unanswered manual call appear here.</div>';
+
+  $('agThreads').querySelectorAll('[data-ph]').forEach((el) => {
+    el.onclick = () => agOpen(el.dataset.ph, el.dataset.nm);
+  });
+}
+
+async function agOpen(phone, name) {
+  agPhone = phone; agName = name || null;
+  const { data, error } = await sb.rpc('dialer_sms_thread', { p_phone: phone });
+  if (error) { $('agThread').textContent = error.message; return; }
+  const msgs = data || [];
+  $('agThread').innerHTML = msgs.length
+    ? msgs.map((m) => {
+      const out = m.direction !== 'inbound';
+      return `<div style="display:flex;justify-content:${out ? 'flex-end' : 'flex-start'};margin-bottom:8px">
+        <div style="max-width:76%;padding:8px 11px;border-radius:10px;font-size:13px;
+             background:${out ? 'var(--accent,#0c6b6b)' : '#fff'};color:${out ? '#fff' : 'inherit'};
+             border:1px solid ${out ? 'var(--accent,#0c6b6b)' : 'var(--line,#dbe3e2)'}">
+          <div style="white-space:pre-wrap">${m.body || ''}</div>
+          <div style="font-size:10.5px;margin-top:4px;opacity:.75">${agTime(m.message_at)}</div>
+        </div></div>`;
+    }).join('')
+    : '<div>No messages in this conversation.</div>';
+  const w = $('agThreadWrap'); w.scrollTop = w.scrollHeight;
+  $('agBody').disabled = false; $('agSend').disabled = false; $('agBody').focus();
+}
+
+$('agBody').addEventListener('input', () => {
+  const t = $('agBody').value, n = agSegments(t);
+  $('agLen').textContent = t ? `${t.length} characters · ${n} segment${n === 1 ? '' : 's'}` : '';
+});
+
+$('agSend').onclick = async () => {
+  const text = $('agBody').value.trim();
+  if (!agPhone || !text) return;
+  $('agSend').disabled = true;
+  const r = await callFn('dialer-sms', { action: 'send', to: agPhone, body: text,
+                                         name: agName || undefined });
+  $('agSend').disabled = false;
+  if (!r?.ok) { $('agMsg').textContent = r?.error || 'Send failed'; return; }
+  if (!r.sent) { $('agMsg').textContent = r.detail || 'Not sent.'; return; }
+  $('agBody').value = ''; $('agLen').textContent = '';
+  // Re-read rather than appending optimistically: dialer-sms writes the row
+  // into ghl_messages itself, so the thread is the source of truth.
+  await agOpen(agPhone, agName);
+  agLoadThreads();
+};
+
+$('agRefresh').onclick = () => { agLoadThreads(); if (agPhone) agOpen(agPhone, agName); };
+
+// Poll quietly for the badge only. An agent on a call needs to know a reply
+// landed without leaving the console, but re-rendering the list under them
+// while they are reading it would be worse than useless.
+agPollTimer = setInterval(() => agLoadThreads(true), 60000);
+
 </script>
 </body>
 </html>
