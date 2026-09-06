@@ -1536,7 +1536,9 @@ applyThemeIcon();
   // header by itself on every static host worth the name.
   // Caveat, same as the portal's: if the host sends neither header this
   // silently never fires -- no false positives, it just cannot detect
-  // updates. Behind a CDN, detection lags by that cache's TTL.
+  // updates. Behind a CDN, detection lags by that cache's TTL: this host
+  // sends Cache-Control: max-age=600, so allow up to ten minutes between a
+  // push landing and the banner appearing on an already-open tab.
   (function(){
     var CHECK_INTERVAL_MS = 5 * 60 * 1000; // 5 min
     var baseline = null;
