@@ -1466,7 +1466,10 @@ async function loadCampaigns() {
 const CAMP_LIMITS = [
   { key: 'max_attempts',              label: 'Max attempts per contact', min: 1,  max: 30 },
   { key: 'min_hours_between_attempts', label: 'Min hours between attempts', min: 1, max: 720 },
-  { key: 'ring_seconds',              label: 'Ring seconds',             min: 15, max: 60 },
+  // ring_seconds deliberately NOT editable: ring duration is negotiated by
+  // the WebRTC SDK and the carrier on the leg the browser places, and
+  // nothing reads this column. Exposing it would promise a control that
+  // does not exist. The column stays for if server-side origination lands.
 ];
 // calling_days holds ISO weekdays -- Monday is 1 and SUNDAY IS 7, not 0.
 // dialer-call-control's gate 3 compares against Intl's weekday mapped the
@@ -1516,10 +1519,10 @@ async function toggleCampaignEditor(id) {
       <span class="fb-label">Calling days</span>
       ${CALLING_DAYS.map(([v, d]) => `<label style="display:flex;align-items:center;gap:5px">
         <input type="checkbox" data-day="${v}"${(c.calling_days || []).includes(v) ? ' checked' : ''}>${d}</label>`).join('')}
-      <label style="display:flex;align-items:center;gap:5px;margin-left:14px">
-        <input type="checkbox" data-f="amd_enabled"${c.amd_enabled ? ' checked' : ''}>Answering-machine detection</label>
-      <label style="display:flex;align-items:center;gap:5px">
-        <input type="checkbox" data-f="recording_enabled"${c.recording_enabled ? ' checked' : ''}>Record calls</label>
+      <label style="display:flex;align-items:center;gap:5px;margin-left:14px;opacity:.55" title="Not available: the agent's browser places the call, so there is no server-side dial to attach AMD to. Would need server-side origination, which is deliberately out of scope at one line per agent.">
+        <input type="checkbox" data-f="amd_enabled" disabled${c.amd_enabled ? ' checked' : ''}>Answering-machine detection <span style="font-size:11px">(n/a)</span></label>
+      <label style="display:flex;align-items:center;gap:5px;opacity:.55" title="Recording is enabled per connection in the Telnyx portal (Outbound &rarr; Record All Outbound Calls), not per campaign. This checkbox does not control it.">
+        <input type="checkbox" data-f="recording_enabled" disabled${c.recording_enabled ? ' checked' : ''}>Record calls <span style="font-size:11px">(set in Telnyx)</span></label>
     </div>
     <p class="hint" style="margin:12px 0 0">
       The window is in each contact's own local time, not yours.
@@ -1579,8 +1582,10 @@ async function saveCampaign(id, td, tr) {
     dial_mode: val('dial_mode').value,
     calling_window_start: val('calling_window_start').value,
     calling_window_end: val('calling_window_end').value,
-    amd_enabled: val('amd_enabled').checked,
-    recording_enabled: val('recording_enabled').checked,
+    // amd_enabled / recording_enabled are intentionally NOT sent: their
+    // controls are disabled above because nothing reads either column,
+    // and writing whatever a disabled checkbox happens to show would
+    // quietly rewrite the stored value on every save.
     calling_days: [...td.querySelectorAll('[data-day]')]
       .filter((c) => c.checked).map((c) => Number(c.dataset.day)),
   };
