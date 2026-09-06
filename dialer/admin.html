@@ -169,6 +169,35 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 .result-count{font-family:var(--mono);font-size:11px;color:var(--text);background:var(--inset);
   border:1px solid var(--border-light);border-radius:999px;padding:6px 13px;white-space:nowrap}
 
+/* ---------- multi-select (call results) ---------- */
+.ms{position:relative}
+.ms-btn{font-family:var(--mono);font-size:11px;background:var(--inset);color:var(--text);
+  border:1px solid var(--border-light);border-radius:999px;padding:7px 14px;white-space:nowrap}
+.ms-btn::after{content:' ▾';opacity:.6}
+.ms-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:60;width:250px;
+  max-height:340px;overflow-y:auto;background:var(--card);border:1px solid var(--border-light);
+  border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.35)}
+.ms-actions{display:flex;gap:6px;padding:9px;border-bottom:1px solid var(--border);
+  position:sticky;top:0;background:var(--card);z-index:1}
+.ms-group{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-dim);padding:10px 11px 5px;border-top:1px solid var(--border)}
+.ms-group:first-child{border-top:none}
+.ms-item{display:flex;align-items:center;gap:9px;padding:6px 11px;font-size:12.5px;
+  color:var(--text);cursor:pointer}
+.ms-item:hover{background:var(--card-hover)}
+.ms-item input{width:15px;height:15px;accent-color:var(--focus);flex-shrink:0}
+
+/* ---------- inline row player ---------- */
+/* Sits in the row's own Recording cell. A player parked under the table
+   loses which call it belongs to as soon as you scroll; here it cannot be
+   misread, which matters when the thing being played is a recorded
+   conversation with a member of the public. */
+.inline-player{display:flex;align-items:center;gap:8px}
+.inline-player audio{height:34px;min-width:230px}
+.ip-close{background:transparent;border:none;color:var(--danger);font-size:17px;
+  line-height:1;padding:2px 5px;border-radius:6px;cursor:pointer}
+.ip-close:hover{background:var(--danger-dim)}
+
 /* Disposition summary. Colour carries the same meaning as the numbers do:
    suppression and bad numbers read as a cost, conversions as a win, and the
    rest stay neutral so the eye goes to the two that matter. */
@@ -431,7 +460,19 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
   <section id="tab-calllog" class="hide">
     <div class="panel">
       <div class="filterbar">
-        <span class="result-count" id="recCount">—</span>
+        <!-- Call results is a multi-select, not a single pick: "everything
+             except voicemail and no-answer" is the question people actually
+             ask of a call log, and a one-of dropdown cannot express it. -->
+        <div class="ms" id="recDispWrap">
+          <button type="button" class="ms-btn" id="recDispBtn">All call results</button>
+          <div class="ms-panel hide" id="recDispPanel">
+            <div class="ms-actions">
+              <button type="button" class="sm" id="recDispAll">Check all</button>
+              <button type="button" class="sm" id="recDispNone">Uncheck all</button>
+            </div>
+            <div id="recDispList"></div>
+          </div>
+        </div>
         <span class="fb-label">Time range</span>
         <input type="date" id="recFrom">
         <span class="fb-label">to</span>
@@ -510,15 +551,6 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
           <tbody id="recRows"><tr><td colspan="7">Loading…</td></tr></tbody>
         </table>
       </div>
-      <!-- One shared player rather than one per row: only one recording can
-           usefully be listened to at a time, and a table of 200 <audio>
-           elements each holding a signed URL is 200 pointless requests. -->
-      <div id="recPlayer" class="hide" style="margin-top:16px">
-        <div style="font-family:var(--mono);font-size:10px;text-transform:uppercase;
-                    letter-spacing:1px;color:var(--text-dim);margin-bottom:8px"
-             id="recNowPlaying"></div>
-        <audio id="recAudio" controls preload="none" style="width:100%"></audio>
-      </div>
     </div>
   </section>
 
@@ -575,15 +607,6 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
               <th>Result</th><th style="width:150px">Recording</th></tr></thead>
             <tbody id="resCalls"></tbody>
           </table>
-        </div>
-        <!-- Its own player rather than the call log's: that one lives inside
-             #tab-calllog, which is display:none while this tab is showing, so
-             sharing it would play audio into a hidden element. -->
-        <div id="resPlayer" class="hide" style="margin-top:16px">
-          <div style="font-family:var(--mono);font-size:10px;text-transform:uppercase;
-                      letter-spacing:1px;color:var(--text-dim);margin-bottom:8px"
-               id="resNowPlaying"></div>
-          <audio id="resAudio" controls preload="none" style="width:100%"></audio>
         </div>
       </div>
     </div>
@@ -762,7 +785,7 @@ function callLogFilters() {
     p_source: $('recSource').value || null,
     p_duration: $('recDuration').value || null,
     p_status: $('recStatus').value || null,
-    p_disp: $('recDisp').value || null,
+    p_disp: dispSelection(),
     p_recorded: $('recRecorded').checked ? true : null,
   };
 }
@@ -783,7 +806,7 @@ async function initCallLog() {
 
   const [{ data: lists }, { data: disps }] = await Promise.all([
     sb.from('dialer_lists').select('id, name').order('created_at', { ascending: false }),
-    sb.from('dialer_dispositions').select('code, label').eq('is_active', true).order('sort_order'),
+    sb.from('dialer_dispositions').select('code, label, group_name').eq('is_active', true).order('sort_order'),
   ]);
   // A reviewer without can_use_dialer cannot read these two, which is fine --
   // the selects just stay at "All …" rather than the screen failing.
@@ -791,10 +814,7 @@ async function initCallLog() {
     $('recList').innerHTML = '<option value="">All files</option>'
       + lists.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
   }
-  if (disps) {
-    $('recDisp').innerHTML = '<option value="">All dispositions</option>'
-      + disps.map((x) => `<option value="${esc(x.code)}">${esc(x.label)}</option>`).join('');
-  }
+  buildDispMenu(disps || []);
 
   await loadCallLog();
 }
@@ -820,9 +840,12 @@ async function loadCallLogRows(f) {
   }
   callLogRows = data || [];
   const total = callLogRows.length ? Number(callLogRows[0].total_count) : 0;
-  $('recCount').textContent = `${total} call result${total === 1 ? '' : 's'}`;
+  // The count lives in the status line rather than the filter bar: the bar's
+  // leftmost control is the call-results multi-select, and two different
+  // "N call results" readings side by side would be read as the same number.
   $('recMsg').textContent = total > callLogRows.length
-    ? `Showing the newest ${callLogRows.length} of ${total} — narrow the range to see the rest.` : '';
+    ? `${total} calls match — showing the newest ${callLogRows.length}. Narrow the range to see the rest.`
+    : `${total} call${total === 1 ? '' : 's'}.`;
 
   // Agent list is built from whoever actually appears in the CDR, so it never
   // offers a name with no calls behind it.
@@ -885,11 +908,10 @@ async function loadCallLogSummary(f) {
   const talk = rows.length ? Number(rows[0].total_talk_seconds) : 0;
   const avg = rows.length ? Number(rows[0].avg_talk_seconds) : 0;
 
-  $('recCount').textContent = `${total} call result${total === 1 ? '' : 's'}`;
   $('sumTotal').textContent = total.toLocaleString();
   $('sumTime').textContent = humanSeconds(talk);
   $('sumAvg').textContent = `${Math.round(avg)}s`;
-  $('recMsg').textContent = '';
+  $('recMsg').textContent = `${total} call${total === 1 ? '' : 's'} in range.`;
 
   tbody.innerHTML = rows.length
     ? rows.map((r) => `<tr class="d-${esc(r.category || 'none')}">
@@ -948,25 +970,44 @@ async function playRecording(btn, attemptId, download) {
       msg.textContent = 'Download started.';
       return;
     }
-    // Play into whichever tab the button was pressed on: the other tab's
-    // player is inside a display:none section and would be silent.
-    const onResearch = !!btn.closest('#tab-research');
-    const player = $(onResearch ? 'resPlayer' : 'recPlayer');
-    const nowPlaying = $(onResearch ? 'resNowPlaying' : 'recNowPlaying');
-    const audio = $(onResearch ? 'resAudio' : 'recAudio');
-
-    const row = btn.closest('tr');
-    nowPlaying.textContent = row
-      ? [...row.cells].slice(0, 3).map((c) => c.textContent.trim()).filter(Boolean).join(' · ')
-      : '';
-    show(player, true);
-    audio.src = res.url;
-    audio.play().catch(() => { /* the controls are there; autoplay may be blocked */ });
+    // Playback happens INSIDE the row, replacing that row's Recording cell,
+    // rather than in a panel under the table. With fifty rows on screen a
+    // player parked at the bottom loses which call it belongs to the moment
+    // you scroll; in the row it cannot be misread. Only one plays at a time.
+    closeInlinePlayer();
+    const cell = btn.closest('td');
+    if (!cell) return;
+    openPlayer = { cell, html: cell.innerHTML };
+    cell.innerHTML =
+      '<div class="inline-player">'
+      + '<button type="button" class="ip-close" title="Close player">&times;</button>'
+      + '<audio controls autoplay preload="none"></audio>'
+      + '</div>';
+    cell.querySelector('audio').src = res.url;
+    cell.querySelector('.ip-close').onclick = closeInlinePlayer;
     msg.textContent = '';
   } finally {
     btn.disabled = false;
     btn.textContent = label;
   }
+}
+
+// The open player, so a second Play (or the row being re-rendered by a
+// filter change) restores the buttons rather than leaving a stranded widget.
+let openPlayer = null;
+function closeInlinePlayer() {
+  if (!openPlayer) return;
+  const a = openPlayer.cell.querySelector('audio');
+  if (a) { a.pause(); a.src = ''; }
+  openPlayer.cell.innerHTML = openPlayer.html;
+  // The restored markup is a fresh set of buttons, so re-bind them.
+  openPlayer.cell.querySelectorAll('button[data-play]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.play, false);
+  });
+  openPlayer.cell.querySelectorAll('button[data-dl]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.dl, true);
+  });
+  openPlayer = null;
 }
 
 function show(el, on) { el.classList.toggle('hide', !on); }
@@ -978,9 +1019,72 @@ $('recSummary').onchange = () => loadCallLog();
 // rather than behind an Apply button keeps the summary honest: it can never
 // be describing a different filter set than the one on screen.
 ['recFrom', 'recTo', 'recAgent', 'recCampaign', 'recList', 'recSource',
- 'recDuration', 'recStatus', 'recDisp', 'recRecorded'].forEach((id) => {
+ 'recDuration', 'recStatus', 'recRecorded'].forEach((id) => {
   $(id).onchange = () => loadCallLog();
 });
+
+
+// ------------------------------------------------- call results multi-select
+// Mirrors the control the floor already uses: every result checked by
+// default, Check all / Uncheck all, grouped, and the button reporting how
+// many are selected. "Not logged" is the '(none)' sentinel the RPCs
+// understand -- calls that were never dispositioned at all.
+let dispAll = [];   // [{code, label, group_name}], plus the Not logged entry
+
+function buildDispMenu(rows) {
+  dispAll = rows.map((r) => ({ code: r.code, label: r.label, group: r.group_name || 'Call results' }));
+  dispAll.push({ code: '(none)', label: 'Not logged', group: 'Other' });
+
+  const groups = [...new Set(dispAll.map((d) => d.group))];
+  $('recDispList').innerHTML = groups.map((g) => {
+    const items = dispAll.filter((d) => d.group === g).map((d) => `
+      <label class="ms-item">
+        <input type="checkbox" value="${esc(d.code)}" checked>
+        <span>${esc(d.label)}</span>
+      </label>`).join('');
+    return `<div class="ms-group">${esc(g)}</div>${items}`;
+  }).join('');
+
+  $('recDispList').querySelectorAll('input').forEach((cb) => {
+    cb.onchange = () => { syncDispLabel(); loadCallLog(); };
+  });
+  syncDispLabel();
+}
+
+// null when everything is checked: the RPCs read that as "no filter", which
+// is cheaper than passing every code and means the untouched state and the
+// all-checked state behave identically.
+function dispSelection() {
+  const boxes = [...$('recDispList').querySelectorAll('input')];
+  if (!boxes.length) return null;
+  const on = boxes.filter((b) => b.checked).map((b) => b.value);
+  return on.length === boxes.length ? null : on;
+}
+
+function syncDispLabel() {
+  const boxes = [...$('recDispList').querySelectorAll('input')];
+  const on = boxes.filter((b) => b.checked).length;
+  $('recDispBtn').textContent = on === boxes.length
+    ? 'All call results'
+    : `${on} call result${on === 1 ? '' : 's'}`;
+}
+
+function setAllDisp(on) {
+  $('recDispList').querySelectorAll('input').forEach((cb) => { cb.checked = on; });
+  syncDispLabel();
+  loadCallLog();
+}
+
+$('recDispBtn').onclick = (e) => {
+  e.stopPropagation();
+  show($('recDispPanel'), $('recDispPanel').classList.contains('hide'));
+};
+$('recDispAll').onclick = () => setAllDisp(true);
+$('recDispNone').onclick = () => setAllDisp(false);
+// Clicks inside the panel must not close it, or ticking a box would shut the
+// menu after every single change.
+$('recDispPanel').onclick = (e) => e.stopPropagation();
+document.addEventListener('click', () => show($('recDispPanel'), false));
 
 // -------------------------------------------------------------- research --
 // One RPC round trip returns the contact rows, the internal DNC history and
