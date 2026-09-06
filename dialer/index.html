@@ -165,6 +165,10 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
   padding:9px 0 7px;line-height:1.1;cursor:pointer}
 .keypad-grid button .sub{display:block;font-size:8px;letter-spacing:1.4px;
   color:var(--text-dim);font-weight:500;margin-top:2px;min-height:10px}
+.keypad-grid button:disabled{cursor:default}
+/* Between calls the keypad stays on screen but is plainly not armed, so an
+   agent reads it as "not yet" rather than as broken. */
+.keypad.idle{opacity:.45}
 .keypad-hint{font-size:11px;color:var(--text-dim);margin:10px 0 0;line-height:1.5}
 
 /* ---------- messages ---------- */
@@ -326,7 +330,6 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
                   <button class="primary" id="dialBtn">Dial</button>
                   <button class="danger hide" id="hangupBtn">Hang up</button>
                   <button id="muteBtn" disabled>Mute</button>
-                  <button id="keypadBtn" disabled>Keypad</button>
                   <span class="timer" id="timer">00:00</span>
                   <div class="spacer"></div>
                   <button id="skipBtn">Skip</button>
@@ -335,13 +338,19 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
                 <!-- DTMF. Outbound calls hit IVRs constantly — "press 1 to be
                      connected", carrier menus, voicemail systems that want a
                      key before they will take a message. Without a keypad the
-                     agent's only move on hearing a prompt is to hang up. -->
-                <div id="keypadWrap" class="keypad hide">
+                     agent's only move on hearing a prompt is to hang up.
+
+                     Always on screen rather than behind a toggle: an IVR
+                     counts down, and a prompt that needs a digit is not worth
+                     a click to reveal the thing that sends it. Between calls
+                     the keys sit visibly disabled, which reads as "not yet"
+                     rather than as missing. -->
+                <div id="keypadWrap" class="keypad idle">
                   <div class="keypad-sent" id="keypadSent"></div>
                   <div class="keypad-grid" id="keypadGrid"></div>
-                  <p class="keypad-hint">Tones go to the far end only. While this
-                     is open you can type <b>0-9</b>, <b>*</b> and <b>#</b> instead
-                     of clicking.</p>
+                  <!-- Matches setKeypadLive(false) so first paint and the
+                       idle state say the same thing. -->
+                  <p class="keypad-hint" id="keypadHint">Keys are live once a call is ringing.</p>
                 </div>
               </div>
             </div>
@@ -576,7 +585,7 @@ function onTelnyxNotification(n) {
     sipState('busy', 'Ringing…');
     // Early media is where "press 1 to be connected" lives, so the keypad has
     // to be live before the call goes active — by then the prompt is over.
-    $('keypadBtn').disabled = false;
+    setKeypadLive(true);
     startAmdWatch();
   }
 
@@ -588,7 +597,7 @@ function onTelnyxNotification(n) {
     }
     sipState('busy', 'On call');
     $('muteBtn').disabled = false;
-    $('keypadBtn').disabled = false;
+    setKeypadLive(true);
     startAmdWatch();
   }
 
@@ -1042,11 +1051,23 @@ function playTone(d) {
 
 function buildKeypad() {
   $('keypadGrid').innerHTML = DTMF_KEYS.map(([d, sub]) =>
-    '<button type="button" data-dtmf="' + d + '">' + d
+    '<button type="button" data-dtmf="' + d + '" disabled>' + d
     + '<span class="sub">' + sub + '</span></button>').join('');
   $('keypadGrid').querySelectorAll('button[data-dtmf]').forEach((b) => {
     b.onclick = () => sendDtmf(b.dataset.dtmf);
   });
+}
+
+// The keypad is always on screen, so its state has to be legible from the
+// keys themselves: dimmed and unclickable between calls, live from the moment
+// the phone is ringing.
+function setKeypadLive(on) {
+  $('keypadWrap').classList.toggle('idle', !on);
+  $('keypadGrid').querySelectorAll('button[data-dtmf]')
+    .forEach((b) => { b.disabled = !on; });
+  $('keypadHint').textContent = on
+    ? 'Tones go to the far end only. Type 0-9, * and # instead of clicking.'
+    : 'Keys are live once a call is ringing.';
 }
 
 function sendDtmf(d) {
@@ -1060,19 +1081,11 @@ function sendDtmf(d) {
   $('keypadSent').textContent = dtmfSent;
 }
 
-function openKeypad(on) {
-  const want = (on === undefined) ? $('keypadWrap').classList.contains('hide') : on;
-  show($('keypadWrap'), want);
-  $('keypadBtn').textContent = want ? 'Hide keypad' : 'Keypad';
-}
-
-$('keypadBtn').onclick = () => openKeypad();
-
-// Typing beats clicking when an IVR is counting down — but only while the
-// keypad is open and out of a text field, or a digit typed into a note would
-// go down the line.
+// Typing beats clicking when an IVR is counting down — but only during a live
+// call and out of a text field, or a digit typed into the disposition note
+// would go down the line.
 document.addEventListener('keydown', (e) => {
-  if (!activeCall || $('keypadWrap').classList.contains('hide')) return;
+  if (!activeCall) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT'
@@ -1104,8 +1117,7 @@ function endCallUi() {
   // Digits are per-call: leaving the last call's string on screen invites
   // reading it as this call's.
   dtmfSent = ''; $('keypadSent').textContent = '';
-  $('keypadBtn').disabled = true;
-  openKeypad(false);
+  setKeypadLive(false);
   syncCallControls();   // a manual call with no contact takes the bar away again
   sipState('on', 'Ready');
   setSessionStatus('wrap_up');
