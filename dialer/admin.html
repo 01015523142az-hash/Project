@@ -272,6 +272,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
             <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="5.5"/><path d="M13.2 13.2L17 17"/></svg>
             <span>Research</span>
           </button>
+          <button data-tab="reports">
+            <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V9M10 16V4M16 16v-6"/></svg>
+            <span>Reports</span>
+          </button>
         </nav>
       </div>
 
@@ -676,6 +680,62 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       </div>
     </div>
   </section>
+
+  <!-- ================================================ REPORTS ========== -->
+  <!-- Aggregates only. The Call log tab already lists individual calls with
+       filters, and Agents already shows who is on shift -- this answers the
+       question neither does: how did a person or a campaign perform over a
+       period. Built on dialer_agent_stats / dialer_campaign_stats (v541),
+       which aggregate in Postgres because any Supabase read over ~1000 rows
+       truncates silently and summing a month here would under-report. -->
+  <section id="tab-reports" class="hide">
+    <div class="panel">
+      <h2>Agent performance</h2>
+      <p class="hint">
+        <strong>Talk</strong> is real conversation time; <strong>billed</strong> is what the
+        carrier charges, rounded up to a whole minute per answered call. They diverge sharply
+        and only the second reconciles to an invoice.
+      </p>
+      <div class="row">
+        <div class="field"><label for="rpAFrom">From</label><input type="date" id="rpAFrom"></div>
+        <div class="field"><label for="rpATo">To</label><input type="date" id="rpATo"></div>
+        <button class="primary" id="rpARun">Run</button>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Agent</th><th class="num">Dials</th><th class="num">Connects</th>
+            <th class="num">Answer&nbsp;%</th><th class="num">Talk</th><th class="num">Billed</th>
+            <th class="num">Leads</th><th class="num">Manual</th>
+            <th class="num">Hours&nbsp;unchecked</th></tr></thead>
+          <tbody id="rpAgentRows"><tr><td colspan="9">Pick a range and run.</td></tr></tbody>
+        </table>
+      </div>
+      <div id="rpUnchecked" class="msg warn hide"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Campaign performance</h2>
+      <p class="hint">
+        <strong>Abandoned</strong> should always read zero. At one line per agent the agent is
+        on the call before the contact's phone rings, so a live answer with nobody there cannot
+        happen by design — a non-zero figure here is an incident in the call path, not a pacing
+        number to tune.
+      </p>
+      <div class="row">
+        <div class="field"><label for="rpCFrom">From</label><input type="date" id="rpCFrom"></div>
+        <div class="field"><label for="rpCTo">To</label><input type="date" id="rpCTo"></div>
+        <button class="primary" id="rpCRun">Run</button>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Campaign</th><th class="num">Dials</th><th class="num">Connects</th>
+            <th class="num">Answer&nbsp;%</th><th class="num">Leads</th>
+            <th class="num">Abandoned</th><th>Call results</th></tr></thead>
+          <tbody id="rpCampRows"><tr><td colspan="7">Pick a range and run.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
     </main>
   </div>
 </div>
@@ -788,7 +848,7 @@ function applyReadOnly() {
 document.querySelectorAll('nav button').forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
-    ['numbers', 'lists', 'campaigns', 'agents', 'calllog', 'research'].forEach((t) =>
+    ['numbers', 'lists', 'campaigns', 'agents', 'calllog', 'research', 'reports'].forEach((t) =>
       $('tab-' + t).classList.toggle('hide', t !== b.dataset.tab));
     // Loaded on first open rather than at boot: most sessions never look at
     // the call log, and the query reads the whole CDR table.
@@ -2065,6 +2125,94 @@ applyThemeIcon();
     document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'visible') checkVersion(); });
     checkVersion();
   })();
+
+// ---------------------------------------------------------------- reports --
+// Aggregates over a date range. Deliberately NOT another live-floor view --
+// the Agents tab already shows who is on shift, and the Call log already
+// lists individual calls. This answers what neither does: how a person or a
+// campaign performed over a period.
+//
+// Open to reviewers as well as managers: the RPCs re-check
+// role_can_review_calls() themselves (v541), so a read-only Quality user
+// gets real numbers here even though every write control elsewhere on this
+// page is disabled for them.
+const rpPct = (v) => v == null ? '—' : (Number(v) * 100).toFixed(1) + '%';
+const rpDur = (s) => {
+  s = Number(s || 0);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+};
+
+function rpInitDates() {
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  [['rpAFrom', monthAgo], ['rpATo', today], ['rpCFrom', monthAgo], ['rpCTo', today]]
+    .forEach(([id, v]) => { const el = $(id); if (el && !el.value) el.value = v; });
+}
+
+async function rpRunAgents() {
+  const { data, error } = await sb.rpc('dialer_agent_stats', {
+    from_ts: new Date($('rpAFrom').value + 'T00:00:00').toISOString(),
+    to_ts: new Date($('rpATo').value + 'T23:59:59').toISOString(),
+  });
+  if (error) { $('rpAgentRows').innerHTML = `<tr><td colspan="9">${esc(error.message)}</td></tr>`; return; }
+  const rows = data || [];
+  $('rpAgentRows').innerHTML = rows.length
+    ? rows.map((r) => `<tr>
+        <td>${esc(r.agent_name || '—')}</td>
+        <td class="num">${Number(r.dials).toLocaleString()}</td>
+        <td class="num">${Number(r.connects).toLocaleString()}</td>
+        <td class="num">${rpPct(r.answer_rate)}</td>
+        <td class="num">${rpDur(r.talk_seconds)}</td>
+        <td class="num">${rpDur(r.billed_seconds)}</td>
+        <td class="num">${r.leads}</td>
+        <td class="num">${r.manual_dials}</td>
+        <td class="num">${r.unchecked_hours}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="9">No calls in that range.</td></tr>';
+
+  // Manual dials skip the calling-hours check by policy (v527). That choice
+  // is only defensible if somebody actually looks at the result, so it is
+  // surfaced here rather than left to a SQL query nobody runs.
+  const unchecked = rows.reduce((a, r) => a + Number(r.unchecked_hours || 0), 0);
+  const note = $('rpUnchecked');
+  note.classList.toggle('hide', !unchecked);
+  if (unchecked) {
+    note.textContent = `${unchecked} call(s) went out without a calling-hours check — `
+      + `all manual dials, where the agent judges local time instead of the system. `
+      + `Worth a look if they cluster at odd hours.`;
+  }
+}
+
+async function rpRunCampaigns() {
+  const { data, error } = await sb.rpc('dialer_campaign_stats', {
+    from_ts: new Date($('rpCFrom').value + 'T00:00:00').toISOString(),
+    to_ts: new Date($('rpCTo').value + 'T23:59:59').toISOString(),
+  });
+  if (error) { $('rpCampRows').innerHTML = `<tr><td colspan="7">${esc(error.message)}</td></tr>`; return; }
+  const rows = data || [];
+  $('rpCampRows').innerHTML = rows.length
+    ? rows.map((r) => {
+      const d = r.dispositions || {};
+      const chips = Object.keys(d).sort((a, b) => d[b] - d[a])
+        .map((k) => `${esc(k)} ${d[k]}`).join(' · ') || '—';
+      return `<tr>
+        <td>${esc(r.campaign_name || 'Manual / no campaign')}</td>
+        <td class="num">${Number(r.dials).toLocaleString()}</td>
+        <td class="num">${Number(r.connects).toLocaleString()}</td>
+        <td class="num">${rpPct(r.answer_rate)}</td>
+        <td class="num">${r.leads}</td>
+        <td class="num">${r.abandoned}</td>
+        <td style="color:var(--ink2)">${chips}</td>
+      </tr>`;
+    }).join('')
+    : '<tr><td colspan="7">No calls in that range.</td></tr>';
+}
+
+if ($('rpARun')) $('rpARun').onclick = rpRunAgents;
+if ($('rpCRun')) $('rpCRun').onclick = rpRunCampaigns;
+rpInitDates();
+
 </script>
 </body>
 </html>

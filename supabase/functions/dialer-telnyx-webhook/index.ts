@@ -33,9 +33,13 @@
 //   call.answered                  -> answered_at, status answered
 //   call.machine.detection.ended   -> amd_result
 //   call.hangup                    -> final status, timings, billed seconds
-//   call.recording.saved           -> recording_path
+//   call.recording.saved           -> recording_id + recording_path
+//   call.cost                      -> provider_cost_usd, the real charge
 // Anything else is acknowledged and ignored — Telnyx retries non-2xx, so an
-// unknown event type must still return 200 or it retries forever.
+// unknown event type must still return 200 or it retries forever. Live
+// traffic also sends call.bridged, which falls through to the default ack;
+// it would give a more precise agent-connected timestamp than call.answered
+// if that is ever wanted.
 
 import { createClient } from 'jsr:@supabase/supabase-js@2';
 
@@ -242,10 +246,48 @@ Deno.serve(async (req) => {
         update.amd_result = normaliseAmd(p.result);
         break;
 
+      case 'call.cost': {
+        // The real carrier charge, sent because "Enable Call Cost" is on for
+        // the connection. Worth capturing because it is the figure that
+        // reconciles to the invoice, while billed_seconds explains WHY that
+        // figure is what it is -- 60/60 rounding turns a 10-second voicemail
+        // into a full billed minute, and the live data already shows 89
+        // seconds of talk costing 360 seconds of billing.
+        //
+        // Field name read defensively across the shapes Telnyx has used
+        // rather than assuming one: guessing wrong would silently store null
+        // forever. The raw payload is kept below when nothing matches, so a
+        // wrong guess stays correctable instead of being lost.
+        const c = p.total_cost ?? p.cost ?? p.call_cost ?? null;
+        const amount = (c && typeof c === 'object') ? (c.amount ?? c.total ?? null) : c;
+        if (amount != null && Number.isFinite(Number(amount))) {
+          update.provider_cost_usd = Number(amount);
+          update.provider_cost_currency =
+            (c && typeof c === 'object' ? c.currency : null) ?? p.currency ?? 'USD';
+        } else {
+          console.warn('dialer-telnyx-webhook: call.cost with no recognised amount:',
+                       JSON.stringify(p).slice(0, 300));
+        }
+        break;
+      }
+
       case 'call.recording.saved': {
+        // recording_id is THE durable handle and the only thing here worth
+        // trusting long-term (v530). Everything below it expires.
+        update.recording_id = p.recording_id ?? null;
+
         // Telnyx offers several formats; prefer mp3 for size, fall back to wav.
-        const urls = p.recording_urls || p.public_recording_urls || {};
-        update.recording_path = urls.mp3 || urls.wav || null;
+        //
+        // public_recording_urls is preferred over recording_urls, which is a
+        // presigned S3 link carrying X-Amz-Expires=600 -- ten minutes, then
+        // 403 forever. Storing that one and rendering it later produced a
+        // table of dead links that looked fine until someone clicked one.
+        // Neither is relied on for playback any more: dialer-recording mints
+        // a fresh url from recording_id at the moment somebody presses play.
+        // This column is kept as the record of what the carrier reported.
+        const pub = p.public_recording_urls || {};
+        const tmp = p.recording_urls || {};
+        update.recording_path = pub.mp3 || pub.wav || tmp.mp3 || tmp.wav || null;
         break;
       }
 
@@ -301,6 +343,9 @@ Deno.serve(async (req) => {
     // Keep the raw payload of the terminal event for debugging a call whose
     // mapped columns look wrong — same reasoning skip_trace_results.raw has.
     if (eventType === 'call.hangup') update.raw = payload;
+    // A cost event whose shape we did not recognise must leave evidence, or
+    // provider_cost_usd stays null and nobody ever finds out why.
+    if (eventType === 'call.cost' && update.provider_cost_usd === undefined) update.raw = payload;
 
     const { error: upErr } = await admin
       .from('dialer_attempts').update(update).eq('id', attempt.id);

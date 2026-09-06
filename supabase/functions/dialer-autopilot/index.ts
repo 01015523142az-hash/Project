@@ -1,7 +1,7 @@
 // supabase/functions/dialer-autopilot/index.ts
 //
 // Keeps the DID pool healthy without anyone watching it. Runs on pg_cron
-// (see v531), same net.http_post pattern as auto-close-stale-entries and the
+// (see v540), same net.http_post pattern as auto-close-stale-entries and the
 // list-builder maintenance jobs.
 //
 // WHY THIS EXISTS. Caller-ID reputation, not dialer features, is what
@@ -13,7 +13,7 @@
 //
 // THE TRIGGER IS ANSWER RATE, NOT A VENDOR FLAG. Waiting for a reputation
 // service to report a spam label is too slow: carriers suppress a number
-// days before any monitoring vendor says so. dialer_did_health() (v530)
+// days before any monitoring vendor says so. dialer_did_health() (v539)
 // compares each DID's answer rate against the pool MEDIAN over the same
 // window -- same lists, same hours, same agents -- so anything that moves
 // one number and not the others is the number itself.
