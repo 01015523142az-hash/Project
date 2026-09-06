@@ -195,6 +195,14 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
 </head>
 <body>
 
+<!-- The far end's audio. TelnyxRTC needs an element to attach the remote
+     stream to; newCall() is given this by id as remoteElement. Without it the
+     agent hears nothing at all -- no ringback, no voicemail greeting, no
+     person -- while the call itself connects normally, which is exactly the
+     symptom that showed up on the floor. autoplay + playsinline because this
+     never has controls and must start on its own. -->
+<audio id="remoteAudio" autoplay playsinline style="display:none"></audio>
+
 <div id="app">
   <header class="app-header">
     <div>
@@ -490,6 +498,18 @@ function onTelnyxNotification(n) {
   const call = n.call;
   const state = call.state;
 
+  // The console used to react only to 'active' and 'hangup', so everything
+  // between pressing Dial and someone picking up looked identical to nothing
+  // happening. These are the SDK's own states; 'early' is the one that
+  // carries ringback, which is why it reads as Ringing rather than Calling.
+  if (state === 'new' || state === 'trying' || state === 'requesting') {
+    sipState('busy', 'Calling…');
+  }
+  if (state === 'ringing' || state === 'early') {
+    sipState('busy', 'Ringing…');
+    startAmdWatch();
+  }
+
   if (state === 'active') {
     if (!callStartedAt) {
       callStartedAt = Date.now();
@@ -498,11 +518,45 @@ function onTelnyxNotification(n) {
     }
     sipState('busy', 'On call');
     $('muteBtn').disabled = false;
+    startAmdWatch();
   }
 
   if (state === 'hangup' || state === 'destroy') {
     endCallUi();
   }
+}
+
+// ---------------------------------------------------------------- AMD ----
+// Telnyx decides human-vs-machine server-side and dialer-telnyx-webhook
+// writes it to dialer_attempts.amd_result. The console had no idea that
+// column existed, so an agent talking to an answering machine had to work it
+// out by ear. Polled rather than pushed: dialer_attempts is not in the
+// realtime publication, and a handful of reads over the life of one call is
+// cheaper than adding it.
+let amdTimer = null;
+function startAmdWatch() {
+  if (amdTimer || !attemptId) return;
+  const startedFor = attemptId;
+  let tries = 0;
+  amdTimer = setInterval(async () => {
+    tries += 1;
+    // AMD resolves within the first few seconds or not at all.
+    if (!attemptId || attemptId !== startedFor || tries > 10) { stopAmdWatch(); return; }
+    const { data } = await sb.from('dialer_attempts')
+      .select('amd_result').eq('id', startedFor).maybeSingle();
+    const amd = data?.amd_result;
+    if (!amd) return;
+    stopAmdWatch();
+    if (amd === 'machine') {
+      sipState('busy', 'Answering machine');
+      banner('Answering machine detected — leave a message or disposition as voicemail.', 'info');
+    } else if (amd === 'human') {
+      banner('', null);
+    }
+  }, 1500);
+}
+function stopAmdWatch() {
+  if (amdTimer) { clearInterval(amdTimer); amdTimer = null; }
 }
 
 // ------------------------------------------------------------- campaigns --
@@ -646,6 +700,8 @@ $('dialBtn').onclick = async () => {
       callerNumber: auth.from_number,
       audio: true,
       video: false,
+      // Where the far end is heard. See #remoteAudio.
+      remoteElement: 'remoteAudio',
     });
   } catch (e) {
     banner('Could not place the call: ' + (e?.message || e), 'err');
@@ -733,6 +789,7 @@ async function manualDial() {
       destinationNumber: auth.to_number,
       callerNumber: auth.from_number,
       audio: true, video: false,
+      remoteElement: 'remoteAudio',
     });
   } catch (e) {
     banner('Could not place the call: ' + (e?.message || e), 'err');
@@ -771,6 +828,7 @@ function startTimer() {
 }
 
 function endCallUi() {
+  stopAmdWatch();
   clearInterval(timerTick);
   if (callStartedAt) {
     stats.talkSeconds += Math.floor((Date.now() - callStartedAt) / 1000);
