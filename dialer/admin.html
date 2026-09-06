@@ -260,6 +260,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
             <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3 3v12h-10z"/><path d="M7 9h6M7 12h6M7 15h3.5"/></svg>
             <span>Campaigns</span>
           </button>
+          <button data-tab="agents">
+            <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="7" r="2.8"/><path d="M2.8 16c0-2.6 2.1-4.2 4.7-4.2s4.7 1.6 4.7 4.2"/><path d="M13.5 5.5a2.5 2.5 0 010 5"/><path d="M15 16c0-2 .8-3.4 2.2-4"/></svg>
+            <span>Agents</span>
+          </button>
           <button data-tab="calllog">
             <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0011 0"/><path d="M10 15v2.5"/></svg>
             <span>Call log</span>
@@ -465,11 +469,53 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 
     <div class="panel">
       <h2>Campaigns</h2>
+      <p class="hint">
+        Edit opens the queue's limits and the agents assigned to it. Assignment is
+        a permission, not a filter: an agent who is not on a queue cannot read its
+        contacts at all, whatever their screen shows them.
+      </p>
       <div class="scroll">
         <table>
           <thead><tr><th>Name</th><th>Mode</th><th>Window</th><th>Status</th>
-            <th class="num">Queued</th><th></th></tr></thead>
-          <tbody id="campRows"><tr><td colspan="6">Loading…</td></tr></tbody>
+            <th class="num">Queued</th><th class="num">Agents</th><th></th></tr></thead>
+          <tbody id="campRows"><tr><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================ AGENTS =========== -->
+  <section id="tab-agents" class="hide">
+    <div class="panel">
+      <h2>Agent statuses</h2>
+      <p class="hint">
+        What an agent can put themselves in, and what each one means to the system.
+        <b>Dials</b> decides whether the queue keeps feeding them — Ready and Last
+        call do; everything else holds the queue. <b>Counts as</b> is what a
+        timesheet should call the time. <b>Limit</b> is a daily budget in minutes:
+        it is advisory, and warns rather than logging anyone out, because cutting
+        an agent off mid-call to enforce a break budget is worse than the overrun.
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Status</th><th>Dials</th><th>Counts as</th>
+            <th class="num">Limit (min/day)</th><th>Active</th></tr></thead>
+          <tbody id="statusRows"><tr><td colspan="5">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button id="statusSave" class="primary">Save statuses</button>
+        <span id="statusMsg"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Who is on shift</h2>
+      <p class="hint">Live sessions, newest first — what each agent is set to right now.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Agent</th><th>Status</th><th>Queue</th><th>Since</th></tr></thead>
+          <tbody id="shiftRows"><tr><td colspan="4">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -671,6 +717,7 @@ function say(el, text, kind) {
 
 // ------------------------------------------------------------------ boot --
 let campaigns = [];
+let meId = null;            // written into dialer_campaign_agents.assigned_by
 let isOwnerAdmin = false;   // may order numbers (spends money)
 let canManage = false;      // may change campaigns, lists, DID status
 let canReview = false;      // may look, and nothing else
@@ -705,6 +752,7 @@ function applyReadOnly() {
     say($('gate'), 'Not signed in. Sign in to the staff portal on this domain, then reload.', 'err');
     return;
   }
+  meId = session.user.id;
   const { data: p } = await sb.from('profiles')
     .select('full_name, role').eq('id', session.user.id).maybeSingle();
   if (!p) { say($('gate'), 'No staff profile found for this account.', 'err'); return; }
@@ -740,11 +788,12 @@ function applyReadOnly() {
 document.querySelectorAll('nav button').forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
-    ['numbers', 'lists', 'campaigns', 'calllog', 'research'].forEach((t) =>
+    ['numbers', 'lists', 'campaigns', 'agents', 'calllog', 'research'].forEach((t) =>
       $('tab-' + t).classList.toggle('hide', t !== b.dataset.tab));
     // Loaded on first open rather than at boot: most sessions never look at
     // the call log, and the query reads the whole CDR table.
     if (b.dataset.tab === 'calllog' && !callLogLoaded) initCallLog();
+    if (b.dataset.tab === 'agents') loadStatusEditor();
   };
 });
 
@@ -1312,17 +1361,30 @@ async function loadCampaigns() {
       .eq('campaign_id', c.id).in('status', ['new', 'queued']);
     counts[c.id] = count ?? 0;
   }
+  // Assigned-agent counts, so the table shows at a glance which queues have
+  // nobody on them -- a queue with zero agents is silently dead work.
+  const { data: assigns } = await sb.from('dialer_campaign_agents')
+    .select('campaign_id, agent_id, is_active');
+  const agentCounts = {};
+  (assigns || []).forEach((a) => {
+    if (a.is_active) agentCounts[a.campaign_id] = (agentCounts[a.campaign_id] || 0) + 1;
+  });
+
   $('campRows').innerHTML = campaigns.length
-    ? campaigns.map((c) => `<tr>
+    ? campaigns.map((c) => `<tr data-row="${esc(c.id)}">
         <td>${esc(c.name)}</td>
         <td>${esc(c.dial_mode)}</td>
         <td class="mono">${esc(c.calling_window_start)}–${esc(c.calling_window_end)}</td>
         <td><span class="tag ${c.status === 'active' ? 't-active' : 't-resting'}">${esc(c.status)}</span></td>
         <td class="num">${counts[c.id].toLocaleString()}</td>
-        <td>${canManage ? `<button class="sm" data-camp="${esc(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">
+        <td class="num">${agentCounts[c.id] ? agentCounts[c.id]
+            : '<span style="color:var(--away)">0</span>'}</td>
+        <td>${canManage ? `
+          <button class="sm" data-edit="${esc(c.id)}">Edit</button>
+          <button class="sm" data-camp="${esc(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">
           ${c.status === 'active' ? 'Pause' : 'Activate'}</button>` : ''}</td>
       </tr>`).join('')
-    : '<tr><td colspan="6">No campaigns yet.</td></tr>';
+    : '<tr><td colspan="7">No campaigns yet.</td></tr>';
 
   $('campRows').querySelectorAll('button[data-camp]').forEach((b) => {
     b.onclick = async () => {
@@ -1331,6 +1393,271 @@ async function loadCampaigns() {
       loadCampaigns();
     };
   });
+  $('campRows').querySelectorAll('button[data-edit]').forEach((b) => {
+    b.onclick = () => toggleCampaignEditor(b.dataset.edit);
+  });
+}
+
+// ------------------------------------------------- campaign limits editor --
+// These columns existed since v524 but were fixed at creation: nothing in the
+// product could change a calling window or an attempt cap once a campaign was
+// made. The constraints below mirror the CHECKs in the database exactly, so a
+// bad number is refused here with a sentence instead of a Postgres error.
+const CAMP_LIMITS = [
+  { key: 'max_attempts',              label: 'Max attempts per contact', min: 1,  max: 30 },
+  { key: 'min_hours_between_attempts', label: 'Min hours between attempts', min: 1, max: 720 },
+  { key: 'ring_seconds',              label: 'Ring seconds',             min: 15, max: 60 },
+];
+// calling_days holds ISO weekdays -- Monday is 1 and SUNDAY IS 7, not 0.
+// dialer-call-control's gate 3 compares against Intl's weekday mapped the
+// same way, so a JS getDay()-style 0 for Sunday would silently mean "never
+// Sunday" while the box looked ticked. Values are explicit here for that
+// reason, and the week starts on Monday to match the default {1,2,3,4,5}.
+const CALLING_DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'],
+                      [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
+
+async function toggleCampaignEditor(id) {
+  const existing = document.querySelector(`tr[data-editor="${id}"]`);
+  if (existing) { existing.remove(); return; }
+  document.querySelectorAll('tr[data-editor]').forEach((r) => r.remove());
+
+  const row = document.querySelector(`tr[data-row="${id}"]`);
+  if (!row) return;
+
+  const { data: c } = await sb.from('dialer_campaigns')
+    .select('id, name, dial_mode, status, calling_window_start, calling_window_end, '
+          + 'calling_days, max_attempts, min_hours_between_attempts, ring_seconds, '
+          + 'amd_enabled, recording_enabled, script')
+    .eq('id', id).maybeSingle();
+  if (!c) return;
+
+  const tr = document.createElement('tr');
+  tr.dataset.editor = id;
+  const td = document.createElement('td');
+  td.colSpan = 7;
+  td.style.cssText = 'background:var(--inset);padding:18px';
+  td.innerHTML = `
+    <div class="row">
+      <div class="field"><label>Dial mode</label>
+        <select data-f="dial_mode">
+          <option value="preview"${c.dial_mode === 'preview' ? ' selected' : ''}>Preview</option>
+          <option value="power"${c.dial_mode === 'power' ? ' selected' : ''}>Power</option>
+        </select></div>
+      <div class="field"><label>Window opens</label>
+        <input type="time" data-f="calling_window_start" value="${esc((c.calling_window_start || '').slice(0, 5))}"></div>
+      <div class="field"><label>Window closes</label>
+        <input type="time" data-f="calling_window_end" value="${esc((c.calling_window_end || '').slice(0, 5))}"></div>
+      ${CAMP_LIMITS.map((f) => `
+      <div class="field"><label>${esc(f.label)}</label>
+        <input type="number" data-f="${f.key}" min="${f.min}" max="${f.max}"
+               value="${c[f.key] ?? ''}"></div>`).join('')}
+    </div>
+    <div class="row" style="margin-top:10px;align-items:center">
+      <span class="fb-label">Calling days</span>
+      ${CALLING_DAYS.map(([v, d]) => `<label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" data-day="${v}"${(c.calling_days || []).includes(v) ? ' checked' : ''}>${d}</label>`).join('')}
+      <label style="display:flex;align-items:center;gap:5px;margin-left:14px">
+        <input type="checkbox" data-f="amd_enabled"${c.amd_enabled ? ' checked' : ''}>Answering-machine detection</label>
+      <label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" data-f="recording_enabled"${c.recording_enabled ? ' checked' : ''}>Record calls</label>
+    </div>
+    <p class="hint" style="margin:12px 0 0">
+      The window is in each contact's own local time, not yours.
+    </p>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="fb-label" style="margin-bottom:8px">Assigned agents &amp; their caps on this queue</div>
+      <div class="scroll"><table><thead><tr>
+        <th>Agent</th><th>Assigned</th>
+        <th class="num">Max calls / day</th><th class="num">Max contacts</th>
+      </tr></thead><tbody data-assign></tbody></table></div>
+      <p class="hint" style="margin:10px 0 0">Leave a cap blank for no limit.</p>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <button class="primary" data-save>Save queue</button>
+      <button data-cancel>Cancel</button>
+      <span data-msg></span>
+    </div>`;
+  tr.appendChild(td);
+  row.after(tr);
+
+  // Only people who can actually use the dialer can be assigned to a queue.
+  const { data: roles } = await sb.from('roles').select('name, can_use_dialer');
+  const dialerRoles = new Set((roles || []).filter((r) => r.can_use_dialer).map((r) => r.name));
+  const { data: people } = await sb.from('profiles').select('id, full_name, role').order('full_name');
+  const eligible = (people || []).filter((p) => dialerRoles.has(p.role));
+
+  const { data: rows } = await sb.from('dialer_campaign_agents')
+    .select('agent_id, is_active, max_calls_per_day, max_contacts').eq('campaign_id', id);
+  const byAgent = {};
+  (rows || []).forEach((r) => { byAgent[r.agent_id] = r; });
+
+  td.querySelector('[data-assign]').innerHTML = eligible.length
+    ? eligible.map((p) => {
+        const a = byAgent[p.id];
+        return `<tr>
+          <td>${esc(p.full_name || p.id)} <span class="muted">${esc(p.role)}</span></td>
+          <td><input type="checkbox" data-a="${esc(p.id)}"${a && a.is_active ? ' checked' : ''}></td>
+          <td class="num"><input type="number" min="1" style="width:90px"
+              data-cap="${esc(p.id)}" value="${a?.max_calls_per_day ?? ''}"></td>
+          <td class="num"><input type="number" min="1" style="width:90px"
+              data-cont="${esc(p.id)}" value="${a?.max_contacts ?? ''}"></td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="4">No profiles hold a role with dialer access.</td></tr>';
+
+  td.querySelector('[data-cancel]').onclick = () => tr.remove();
+  td.querySelector('[data-save]').onclick = () => saveCampaign(id, td, tr);
+}
+
+async function saveCampaign(id, td, tr) {
+  const msg = td.querySelector('[data-msg]');
+  const val = (k) => td.querySelector(`[data-f="${k}"]`);
+
+  const patch = {
+    dial_mode: val('dial_mode').value,
+    calling_window_start: val('calling_window_start').value,
+    calling_window_end: val('calling_window_end').value,
+    amd_enabled: val('amd_enabled').checked,
+    recording_enabled: val('recording_enabled').checked,
+    calling_days: [...td.querySelectorAll('[data-day]')]
+      .filter((c) => c.checked).map((c) => Number(c.dataset.day)),
+  };
+
+  // Checked here rather than letting Postgres reject it, so the admin gets
+  // the field name and the allowed range instead of a constraint name.
+  for (const f of CAMP_LIMITS) {
+    const n = Number(val(f.key).value);
+    if (!Number.isInteger(n) || n < f.min || n > f.max) {
+      say(msg, `${f.label} must be a whole number between ${f.min} and ${f.max}.`, 'err');
+      return;
+    }
+    patch[f.key] = n;
+  }
+  if (!patch.calling_window_start || !patch.calling_window_end) {
+    say(msg, 'Both ends of the calling window are required.', 'err'); return;
+  }
+  if (!patch.calling_days.length) {
+    say(msg, 'Pick at least one calling day, or the queue can never dial.', 'err'); return;
+  }
+
+  td.querySelector('[data-save]').disabled = true;
+  say(msg, 'Saving…', 'ok');
+
+  const { error } = await sb.from('dialer_campaigns').update(patch).eq('id', id);
+  if (error) { say(msg, error.message, 'err'); td.querySelector('[data-save]').disabled = false; return; }
+
+  // Assignment rows: upsert the ones that are ticked, and mark the rest
+  // inactive rather than deleting them -- assigned_by/assigned_at is a record
+  // of who put an agent on a queue, and deleting the row destroys it.
+  const ups = [];
+  const off = [];
+  td.querySelectorAll('[data-a]').forEach((cb) => {
+    const aid = cb.dataset.a;
+    const cap = td.querySelector(`[data-cap="${aid}"]`).value;
+    const cont = td.querySelector(`[data-cont="${aid}"]`).value;
+    if (cb.checked) {
+      ups.push({
+        campaign_id: id, agent_id: aid, is_active: true,
+        max_calls_per_day: cap === '' ? null : Number(cap),
+        max_contacts: cont === '' ? null : Number(cont),
+        assigned_by: meId,
+      });
+    } else off.push(aid);
+  });
+
+  if (ups.length) {
+    const { error: e2 } = await sb.from('dialer_campaign_agents')
+      .upsert(ups, { onConflict: 'campaign_id,agent_id' });
+    if (e2) { say(msg, e2.message, 'err'); td.querySelector('[data-save]').disabled = false; return; }
+  }
+  if (off.length) {
+    await sb.from('dialer_campaign_agents').update({ is_active: false })
+      .eq('campaign_id', id).in('agent_id', off);
+  }
+
+  say(msg, 'Saved.', 'ok');
+  tr.remove();
+  loadCampaigns();
+}
+
+// ------------------------------------------------------- status catalogue --
+let statusCatalogue = [];
+async function loadStatusEditor() {
+  const { data } = await sb.from('dialer_agent_statuses')
+    .select('code, label, allows_dialing, counts_as, daily_limit_minutes, is_active, sort_order')
+    .order('sort_order');
+  statusCatalogue = data || [];
+
+  $('statusRows').innerHTML = statusCatalogue.map((s) => `<tr>
+    <td>${esc(s.label)} <span class="muted mono">${esc(s.code)}</span></td>
+    <td><input type="checkbox" data-s="${esc(s.code)}" data-k="allows_dialing"${s.allows_dialing ? ' checked' : ''}${canManage ? '' : ' disabled'}></td>
+    <td><select data-s="${esc(s.code)}" data-k="counts_as"${canManage ? '' : ' disabled'}>
+      ${['available', 'paused', 'busy'].map((v) =>
+        `<option value="${v}"${s.counts_as === v ? ' selected' : ''}>${v}</option>`).join('')}
+    </select></td>
+    <td class="num"><input type="number" min="1" style="width:90px" data-s="${esc(s.code)}"
+        data-k="daily_limit_minutes" value="${s.daily_limit_minutes ?? ''}"${canManage ? '' : ' disabled'}></td>
+    <td><input type="checkbox" data-s="${esc(s.code)}" data-k="is_active"${s.is_active ? ' checked' : ''}${canManage ? '' : ' disabled'}></td>
+  </tr>`).join('') || '<tr><td colspan="5">No statuses defined.</td></tr>';
+
+  $('statusSave').disabled = !canManage;
+  loadShift();
+}
+
+$('statusSave').onclick = async () => {
+  $('statusSave').disabled = true;
+  say($('statusMsg'), 'Saving…', 'ok');
+
+  const read = (code, k) => document.querySelector(`[data-s="${code}"][data-k="${k}"]`);
+  for (const s of statusCatalogue) {
+    const limRaw = read(s.code, 'daily_limit_minutes').value;
+    if (limRaw !== '' && (!Number.isInteger(Number(limRaw)) || Number(limRaw) < 1)) {
+      say($('statusMsg'), `${s.label}: a limit must be a whole number of minutes, or blank.`, 'err');
+      $('statusSave').disabled = false; return;
+    }
+    const { error } = await sb.from('dialer_agent_statuses').update({
+      allows_dialing: read(s.code, 'allows_dialing').checked,
+      counts_as: read(s.code, 'counts_as').value,
+      daily_limit_minutes: limRaw === '' ? null : Number(limRaw),
+      is_active: read(s.code, 'is_active').checked,
+    }).eq('code', s.code);
+    if (error) { say($('statusMsg'), error.message, 'err'); $('statusSave').disabled = false; return; }
+  }
+  say($('statusMsg'), 'Saved. Agents pick it up on their next reload.', 'ok');
+  $('statusSave').disabled = false;
+  loadStatusEditor();
+};
+
+// Live sessions. A stale heartbeat means a crashed tab rather than a logout,
+// which is why the age of the heartbeat is shown rather than hidden.
+async function loadShift() {
+  const { data } = await sb.from('dialer_agent_sessions')
+    .select('agent_id, agent_status, agent_status_since, campaign_id, last_heartbeat_at, status')
+    .is('ended_at', null).order('agent_status_since', { ascending: false }).limit(50);
+  const rows = data || [];
+  if (!rows.length) {
+    $('shiftRows').innerHTML = '<tr><td colspan="4">Nobody signed in.</td></tr>'; return;
+  }
+  const { data: people } = await sb.from('profiles').select('id, full_name');
+  const nameOf = {}; (people || []).forEach((p) => { nameOf[p.id] = p.full_name; });
+  const labelOf = {}; statusCatalogue.forEach((s) => { labelOf[s.code] = s.label; });
+  const campOf = {}; campaigns.forEach((c) => { campOf[c.id] = c.name; });
+
+  $('shiftRows').innerHTML = rows.map((r) => {
+    const since = r.agent_status_since ? new Date(r.agent_status_since) : null;
+    const mins = since ? Math.floor((Date.now() - since.getTime()) / 60000) : null;
+    const stale = r.last_heartbeat_at
+      && (Date.now() - new Date(r.last_heartbeat_at).getTime()) > 120000;
+    return `<tr>
+      <td>${esc(nameOf[r.agent_id] || r.agent_id)}${stale
+          ? ' <span class="tag t-resting">no heartbeat</span>' : ''}</td>
+      <td>${esc(labelOf[r.agent_status] || r.agent_status || '—')}</td>
+      <td>${esc(campOf[r.campaign_id] || '—')}</td>
+      <td>${mins === null ? '—' : mins + 'm'}</td>
+    </tr>`;
+  }).join('');
 }
 
 $('cCreate').onclick = async () => {

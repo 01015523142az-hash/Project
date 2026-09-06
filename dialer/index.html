@@ -171,6 +171,13 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
 .keypad.idle{opacity:.45}
 .keypad-hint{font-size:11px;color:var(--text-dim);margin:10px 0 0;line-height:1.5}
 
+/* ---------- queue / status ---------- */
+.queue-name{font-size:15px;font-weight:600;color:var(--text);line-height:1.4}
+.queue-name.none{font-size:13px;font-weight:400;color:var(--text-2)}
+.status-meta{font-size:11px;color:var(--text-dim);margin-top:8px;line-height:1.6}
+.status-meta .over{color:var(--away);font-weight:600}
+.status-meta .off{color:var(--away)}
+
 /* ---------- messages ---------- */
 .msg{padding:11px 14px;border-radius:10px;font-size:13px;margin-bottom:14px;
   border:1px solid transparent}
@@ -372,10 +379,19 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
           <div>
             <div class="panel">
               <h2>Queue</h2>
-              <label class="muted" for="campaignSel" style="display:block;margin-bottom:6px">Campaign</label>
-              <select id="campaignSel" style="width:100%"><option value="">Loading campaigns…</option></select>
-              <div class="callbar" style="margin-top:14px;padding-top:14px">
-                <button id="pauseBtn" style="width:100%">Pause</button>
+              <!-- Queues are ASSIGNED by an admin, not chosen here. With one
+                   assignment this is a label, because a dropdown of one is a
+                   decision the agent does not actually have. The picker only
+                   appears when someone really is assigned to more than one. -->
+              <div id="queueName" class="queue-name">Loading…</div>
+              <label class="muted hide" for="campaignSel" id="queueLabel"
+                     style="display:block;margin:10px 0 6px">Assigned queues</label>
+              <select id="campaignSel" class="hide" style="width:100%"></select>
+
+              <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+                <label class="muted" for="statusSel" style="display:block;margin-bottom:6px">My status</label>
+                <select id="statusSel" style="width:100%"><option>Loading…</option></select>
+                <div id="statusMeta" class="status-meta"></div>
               </div>
             </div>
 
@@ -503,6 +519,7 @@ async function callFn(name, body) {
   buildKeypad();
   await loadProfileDefs();
   await startSession();
+  await loadAgentStatuses();   // before the queue: dialling is gated on status
   await loadCampaigns();
   await initSoftphone();
 
@@ -536,12 +553,101 @@ function setSessionStatus(status, pauseReason) {
     .update({ status, pause_reason: pauseReason || null }).eq('id', sessionId).then(() => {});
 }
 
-$('pauseBtn').onclick = () => {
-  paused = !paused;
-  $('pauseBtn').textContent = paused ? 'Resume' : 'Pause';
-  setSessionStatus(paused ? 'paused' : 'ready', paused ? 'manual' : null);
-  $('dialBtn').disabled = paused || !contact || Boolean(activeCall);
+// ------------------------------------------------------- agent status ----
+// One Pause boolean could not tell the floor the difference between a break,
+// a coaching session and prayer, so status is a list the floor owns
+// (dialer_agent_statuses) rather than a hardcoded pair. Each row says whether
+// the agent may keep dialling; nothing here decides that locally.
+let agentStatuses = [];
+let agentStatus = null;      // the row, not just the code
+let statusSince = Date.now();
+let statusUsage = [];        // dialer_status_usage_today()
+
+async function loadAgentStatuses() {
+  const { data } = await sb.from('dialer_agent_statuses')
+    .select('code, label, allows_dialing, counts_as, daily_limit_minutes')
+    .eq('is_active', true).order('sort_order');
+  agentStatuses = data || [];
+  $('statusSel').innerHTML = agentStatuses.map((s) =>
+    `<option value="${s.code}">${s.label}</option>`).join('');
+  agentStatus = agentStatuses.find((s) => s.code === 'ready') || agentStatuses[0] || null;
+  if (agentStatus) $('statusSel').value = agentStatus.code;
+  applyStatus();
+
+  // Open the first stretch explicitly. Without it the shift's opening Ready
+  // time is simply missing from the timesheet, since nothing else writes an
+  // event until the agent changes status.
+  if (sessionId && agentStatus) {
+    statusSince = Date.now();
+    await sb.rpc('dialer_set_agent_status',
+      { p_session: sessionId, p_status: agentStatus.code });
+  }
+  await refreshStatusUsage();
+}
+
+$('statusSel').onchange = async () => {
+  const next = agentStatuses.find((s) => s.code === $('statusSel').value);
+  if (!next) return;
+
+  // Changing status mid-call would leave the far end talking to someone the
+  // system thinks is on a break, so the change waits for the hangup.
+  if (activeCall && !next.allows_dialing) {
+    banner('You are on a call. Hang up first, then change status.', 'err');
+    $('statusSel').value = agentStatus?.code || 'ready';
+    return;
+  }
+
+  agentStatus = next;
+  statusSince = Date.now();
+  applyStatus();
+
+  // One RPC closes the previous stretch and opens the new one. Doing it as
+  // two writes from here leaves a hole in the timesheet if the tab dies
+  // between them.
+  const { error } = await sb.rpc('dialer_set_agent_status',
+    { p_session: sessionId, p_status: next.code });
+  if (error) banner('Status not saved: ' + error.message, 'err');
+  await refreshStatusUsage();
 };
+
+// `paused` is now derived, never toggled: the status row is the single source
+// of truth for whether this agent gets numbers.
+function applyStatus() {
+  paused = !(agentStatus?.allows_dialing);
+  setSessionStatus(paused ? 'paused' : 'ready', paused ? agentStatus?.code : null);
+  $('dialBtn').disabled = paused || !contact || Boolean(activeCall);
+  if (paused) stopWrap();
+  renderStatusMeta();
+}
+
+async function refreshStatusUsage() {
+  const { data } = await sb.rpc('dialer_status_usage_today');
+  statusUsage = data || [];
+  renderStatusMeta();
+}
+
+function renderStatusMeta() {
+  const el = $('statusMeta');
+  if (!agentStatus) { el.textContent = ''; return; }
+
+  const mins = Math.floor((Date.now() - statusSince) / 60000);
+  const parts = [`In ${agentStatus.label.toLowerCase()} for ${mins}m`];
+  if (paused) parts.push('<span class="off">queue paused</span>');
+
+  // Daily caps are advisory. Nothing logs anybody out: cutting an agent off
+  // to enforce a break budget is worse than the overrun, and the floor can
+  // see the number either way.
+  const u = statusUsage.find((s) => s.status_code === agentStatus.code);
+  if (u && u.daily_limit_minutes) {
+    const used = Number(u.minutes_used) + mins;
+    const over = used > u.daily_limit_minutes;
+    parts.push(`${used.toFixed(0)} of ${u.daily_limit_minutes}m today`
+      + (over ? ' <span class="over">— over limit</span>' : ''));
+  }
+  el.innerHTML = parts.join(' &middot; ');
+}
+
+setInterval(renderStatusMeta, 30000);
 
 // ------------------------------------------------------------ softphone ---
 async function initSoftphone() {
@@ -640,21 +746,48 @@ function stopAmdWatch() {
 }
 
 // ------------------------------------------------------------- campaigns --
+// The agent no longer picks a queue. dialer_campaigns' select policy (v537)
+// returns only campaigns this agent is assigned to, so this query IS the
+// assignment — there is no client-side filter to get wrong, and no request
+// that could return a queue they are not meant to work.
 async function loadCampaigns() {
   const { data } = await sb.from('dialer_campaigns')
     .select('id, name, script, dial_mode, status').eq('status', 'active').order('name');
   campaigns = data || [];
   const sel = $('campaignSel');
-  sel.innerHTML = '<option value="">Select a campaign…</option>' +
-    campaigns.map((c) => `<option value="${c.id}">${c.name}</option>`).join('');
-  sel.onchange = async () => {
-    campaign = campaigns.find((c) => c.id === sel.value) || null;
-    $('scriptBox').textContent = campaign?.script || 'No script set for this campaign.';
-    if (sessionId && campaign) {
-      sb.from('dialer_agent_sessions').update({ campaign_id: campaign.id }).eq('id', sessionId).then(() => {});
-    }
+
+  if (!campaigns.length) {
+    $('queueName').textContent = 'No queue assigned yet. An admin assigns queues — ask the floor.';
+    $('queueName').className = 'queue-name none';
+    show($('queueLabel'), false); show(sel, false);
+    campaign = null;
     await loadNextContact();
-  };
+    return;
+  }
+
+  sel.innerHTML = campaigns.map((c) =>
+    `<option value="${c.id}">${c.name}</option>`).join('');
+  sel.onchange = () => selectCampaign(sel.value);
+
+  // One assignment is the normal case: show it as a fact, not a question.
+  const multi = campaigns.length > 1;
+  $('queueName').className = 'queue-name';
+  $('queueName').textContent = multi
+    ? `${campaigns.length} queues assigned` : campaigns[0].name;
+  show($('queueLabel'), multi); show(sel, multi);
+
+  sel.value = campaigns[0].id;
+  await selectCampaign(campaigns[0].id);
+}
+
+async function selectCampaign(id) {
+  campaign = campaigns.find((c) => c.id === id) || null;
+  $('scriptBox').textContent = campaign?.script || 'No script set for this campaign.';
+  if (sessionId && campaign) {
+    sb.from('dialer_agent_sessions').update({ campaign_id: campaign.id })
+      .eq('id', sessionId).then(() => {});
+  }
+  await loadNextContact();
 }
 
 // ----------------------------------------------------------- the queue ----
@@ -1189,14 +1322,14 @@ function stopWrap(reason) {
   wrapTimer = null;
   show($('wrapBar'), false);
   if (reason === 'cancelled') {
-    // A deliberate stop pauses the session rather than silently reverting to
-    // preview — otherwise the agent has no signal about why numbers stopped
-    // arriving, and the timesheet would still read 'ready'.
-    paused = true;
-    $('pauseBtn').textContent = 'Resume';
-    setSessionStatus('paused', 'auto_dial_stopped');
-    $('dialBtn').disabled = true;
-    banner('Auto-dial stopped. Press Resume when you are ready.', 'info');
+    // Stopping auto-dial used to force the session to 'paused'. It no longer
+    // does: status is the agent's own statement now (v537), and writing
+    // 'paused' over their Ready would put a break on the timesheet that they
+    // never took. They are still Ready — the numbers just stop arriving by
+    // themselves, which is the whole point of cancelling — so the banner
+    // carries the signal instead.
+    banner('Auto-dial stopped. Press Dial when you are ready, or set your '
+         + 'status if you are stepping away.', 'info');
   }
 }
 
