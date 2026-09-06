@@ -153,6 +153,20 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
   font-variant-numeric:tabular-nums;color:var(--num)}
 .spacer{flex:1}
 
+/* ---------- dtmf keypad ---------- */
+/* Deliberately phone-shaped and finger-sized: this gets used mid-sentence
+   against an IVR that is counting down, not browsed at leisure. */
+.keypad{margin-top:14px;padding:14px;border:1px solid var(--border);
+  border-radius:12px;background:var(--inset);max-width:268px}
+.keypad-sent{font-family:var(--mono);font-size:15px;letter-spacing:3px;color:var(--num);
+  min-height:21px;margin-bottom:10px;overflow-wrap:anywhere}
+.keypad-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.keypad-grid button{font-family:var(--mono);font-size:17px;font-weight:600;
+  padding:9px 0 7px;line-height:1.1;cursor:pointer}
+.keypad-grid button .sub{display:block;font-size:8px;letter-spacing:1.4px;
+  color:var(--text-dim);font-weight:500;margin-top:2px;min-height:10px}
+.keypad-hint{font-size:11px;color:var(--text-dim);margin:10px 0 0;line-height:1.5}
+
 /* ---------- messages ---------- */
 .msg{padding:11px 14px;border-radius:10px;font-size:13px;margin-bottom:14px;
   border:1px solid transparent}
@@ -304,9 +318,22 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
                   <button class="primary" id="dialBtn">Dial</button>
                   <button class="danger hide" id="hangupBtn">Hang up</button>
                   <button id="muteBtn" disabled>Mute</button>
+                  <button id="keypadBtn" disabled>Keypad</button>
                   <span class="timer" id="timer">00:00</span>
                   <div class="spacer"></div>
                   <button id="skipBtn">Skip</button>
+                </div>
+
+                <!-- DTMF. Outbound calls hit IVRs constantly — "press 1 to be
+                     connected", carrier menus, voicemail systems that want a
+                     key before they will take a message. Without a keypad the
+                     agent's only move on hearing a prompt is to hang up. -->
+                <div id="keypadWrap" class="keypad hide">
+                  <div class="keypad-sent" id="keypadSent"></div>
+                  <div class="keypad-grid" id="keypadGrid"></div>
+                  <p class="keypad-hint">Tones go to the far end only. While this
+                     is open you can type <b>0-9</b>, <b>*</b> and <b>#</b> instead
+                     of clicking.</p>
                 </div>
               </div>
             </div>
@@ -448,6 +475,7 @@ async function callFn(name, body) {
   me = profile;
   $('agentName').textContent = profile.full_name || '';
 
+  buildKeypad();
   await loadProfileDefs();
   await startSession();
   await loadCampaigns();
@@ -530,6 +558,9 @@ function onTelnyxNotification(n) {
   }
   if (state === 'ringing' || state === 'early') {
     sipState('busy', 'Ringing…');
+    // Early media is where "press 1 to be connected" lives, so the keypad has
+    // to be live before the call goes active — by then the prompt is over.
+    $('keypadBtn').disabled = false;
     startAmdWatch();
   }
 
@@ -541,6 +572,7 @@ function onTelnyxNotification(n) {
     }
     sipState('busy', 'On call');
     $('muteBtn').disabled = false;
+    $('keypadBtn').disabled = false;
     startAmdWatch();
   }
 
@@ -947,6 +979,85 @@ $('muteBtn').onclick = () => {
   else { activeCall.muteAudio(); $('muteBtn').textContent = 'Unmute'; $('muteBtn').dataset.muted = '1'; }
 };
 
+// ---------------------------------------------------------------- DTMF ----
+const DTMF_KEYS = [
+  ['1', ''],   ['2', 'ABC'], ['3', 'DEF'],
+  ['4', 'GHI'],['5', 'JKL'], ['6', 'MNO'],
+  ['7', 'PQRS'],['8', 'TUV'],['9', 'WXYZ'],
+  ['*', ''],   ['0', '+'],   ['#', ''],
+];
+
+// The far end hears the digit; the agent does not. Without local feedback
+// there is no sign a press landed, so agents hammer the key and the IVR gets
+// four of them.
+const DTMF_TONES = {
+  '1': [697, 1209], '2': [697, 1336], '3': [697, 1477],
+  '4': [770, 1209], '5': [770, 1336], '6': [770, 1477],
+  '7': [852, 1209], '8': [852, 1336], '9': [852, 1477],
+  '*': [941, 1209], '0': [941, 1336], '#': [941, 1477],
+};
+
+let dtmfSent = '';
+let toneCtx = null;
+
+function playTone(d) {
+  const pair = DTMF_TONES[d];
+  if (!pair) return;
+  try {
+    toneCtx = toneCtx || new (window.AudioContext || window.webkitAudioContext)();
+    const gain = toneCtx.createGain();
+    gain.gain.value = 0.05;          // quiet — confirmation, not competing with the call
+    gain.connect(toneCtx.destination);
+    pair.forEach((f) => {
+      const osc = toneCtx.createOscillator();
+      osc.frequency.value = f;
+      osc.connect(gain);
+      osc.start();
+      osc.stop(toneCtx.currentTime + 0.12);
+    });
+  } catch (_) { /* the tone is a courtesy; it must never block the digit */ }
+}
+
+function buildKeypad() {
+  $('keypadGrid').innerHTML = DTMF_KEYS.map(([d, sub]) =>
+    '<button type="button" data-dtmf="' + d + '">' + d
+    + '<span class="sub">' + sub + '</span></button>').join('');
+  $('keypadGrid').querySelectorAll('button[data-dtmf]').forEach((b) => {
+    b.onclick = () => sendDtmf(b.dataset.dtmf);
+  });
+}
+
+function sendDtmf(d) {
+  if (!activeCall) return;
+  if (typeof activeCall.dtmf !== 'function') {
+    banner('This call cannot send tones.', 'err'); return;
+  }
+  activeCall.dtmf(d);
+  playTone(d);
+  dtmfSent += d;
+  $('keypadSent').textContent = dtmfSent;
+}
+
+function openKeypad(on) {
+  const want = (on === undefined) ? $('keypadWrap').classList.contains('hide') : on;
+  show($('keypadWrap'), want);
+  $('keypadBtn').textContent = want ? 'Hide keypad' : 'Keypad';
+}
+
+$('keypadBtn').onclick = () => openKeypad();
+
+// Typing beats clicking when an IVR is counting down — but only while the
+// keypad is open and out of a text field, or a digit typed into a note would
+// go down the line.
+document.addEventListener('keydown', (e) => {
+  if (!activeCall || $('keypadWrap').classList.contains('hide')) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT'
+            || t.isContentEditable)) return;
+  if (/^[0-9*#]$/.test(e.key)) { e.preventDefault(); sendDtmf(e.key); }
+});
+
 function startTimer() {
   clearInterval(timerTick);
   timerTick = setInterval(() => {
@@ -968,6 +1079,11 @@ function endCallUi() {
   $('dialBtn').disabled = true;   // must disposition before the next dial
   $('muteBtn').disabled = true;
   $('muteBtn').textContent = 'Mute'; $('muteBtn').dataset.muted = '0';
+  // Digits are per-call: leaving the last call's string on screen invites
+  // reading it as this call's.
+  dtmfSent = ''; $('keypadSent').textContent = '';
+  $('keypadBtn').disabled = true;
+  openKeypad(false);
   sipState('on', 'Ready');
   setSessionStatus('wrap_up');
   showDispositions();
