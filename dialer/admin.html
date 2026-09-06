@@ -1490,7 +1490,7 @@ async function toggleCampaignEditor(id) {
   const { data: c } = await sb.from('dialer_campaigns')
     .select('id, name, dial_mode, status, calling_window_start, calling_window_end, '
           + 'calling_days, max_attempts, min_hours_between_attempts, ring_seconds, '
-          + 'amd_enabled, recording_enabled, script')
+          + 'amd_enabled, recording_enabled, script, sms_fallback_enabled, sms_fallback_template')
     .eq('id', id).maybeSingle();
   if (!c) return;
 
@@ -1527,6 +1527,26 @@ async function toggleCampaignEditor(id) {
     <p class="hint" style="margin:12px 0 0">
       The window is in each contact's own local time, not yours.
     </p>
+
+    <!-- SMS fallback. Manual dials only, by decision: an automatic text after
+         queued cold traffic is a different consent posture from following up
+         with one specific person an agent just chose to call. The wording is
+         editable here rather than constant in code because it is the part
+         that gets tuned, and it lands from a number the recipient does not
+         recognise -- so it has to say who is texting and why. -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600">
+        <input type="checkbox" data-f="sms_fallback_enabled"${c.sms_fallback_enabled ? ' checked' : ''}>
+        Text after an unanswered <em>manual</em> dial</label>
+      <p class="hint" style="margin:8px 0">
+        Sent from +1 307-441-5766. Merge fields: <span class="mono">{{first_name}}</span>,
+        <span class="mono">{{agent}}</span>. Never sent to a number on the internal
+        do-not-call list. One segment is 160 characters &mdash; a single emoji drops that to 70.
+      </p>
+      <textarea data-f="sms_fallback_template" rows="3" style="width:100%"
+        placeholder="Hi {{first_name}}, this is {{agent}} at ...">${esc(c.sms_fallback_template || '')}</textarea>
+      <div class="hint" id="smsLen_${c.id}" style="margin-top:4px"></div>
+    </div>
 
     <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
       <div class="fb-label" style="margin-bottom:8px">Assigned agents &amp; their caps on this queue</div>
@@ -1582,6 +1602,8 @@ async function saveCampaign(id, td, tr) {
     dial_mode: val('dial_mode').value,
     calling_window_start: val('calling_window_start').value,
     calling_window_end: val('calling_window_end').value,
+    sms_fallback_enabled: val('sms_fallback_enabled').checked,
+    sms_fallback_template: val('sms_fallback_template').value.trim() || null,
     // amd_enabled / recording_enabled are intentionally NOT sent: their
     // controls are disabled above because nothing reads either column,
     // and writing whatever a disabled checkbox happens to show would

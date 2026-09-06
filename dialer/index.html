@@ -465,6 +465,9 @@ let contact = null;         // dialer_contacts row currently loaded
 let attemptId = null;       // dialer_attempts.id for the live call
 let rtc = null;             // TelnyxRTC client
 let activeCall = null;
+// Set by manualDial, cleared by endCallUi. The SMS fallback fires only for
+// a manual dial that reached nobody.
+let manualCall = null;
 let callStartedAt = null;
 let timerTick = null;
 let paused = false;
@@ -696,6 +699,7 @@ function onTelnyxNotification(n) {
   }
 
   if (state === 'active') {
+    if (manualCall) manualCall.answered = true;
     if (!callStartedAt) {
       callStartedAt = Date.now();
       stats.connects++; $('sConnects').textContent = stats.connects;
@@ -752,7 +756,8 @@ function stopAmdWatch() {
 // that could return a queue they are not meant to work.
 async function loadCampaigns() {
   const { data } = await sb.from('dialer_campaigns')
-    .select('id, name, script, dial_mode, status').eq('status', 'active').order('name');
+    .select('id, name, script, dial_mode, status, sms_fallback_enabled, sms_fallback_template')
+    .eq('status', 'active').order('name');
   campaigns = data || [];
   const sel = $('campaignSel');
 
@@ -1119,6 +1124,9 @@ async function manualDial() {
   }
 
   stats.dials++; $('sDials').textContent = stats.dials;
+  // Remembered so endCallUi can offer the SMS fallback. Only manual calls
+  // carry this -- queued traffic never triggers a text.
+  manualCall = { to: auth.to_number, answered: false };
   setSessionStatus('on_call');
   sipState('busy', 'Manual call…');
   syncCallControls();          // no contact row, but there is very much a call
@@ -1254,7 +1262,44 @@ function endCallUi() {
   syncCallControls();   // a manual call with no contact takes the bar away again
   sipState('on', 'Ready');
   setSessionStatus('wrap_up');
+  maybeSmsFallback();
   showDispositions();
+}
+
+// --------------------------------------------------------- SMS fallback --
+// Fires ONLY after a manual dial that reached nobody. Queued cold traffic
+// never triggers a text: following up with one specific person an agent
+// just chose to call is a different consent posture from auto-texting a
+// list. The wording is the campaign's own sms_fallback_template (v543) so
+// it can be changed without a deploy, and the server refuses to send to a
+// number on the internal do-not-call list regardless of what is asked here.
+//
+// Confirmed rather than automatic: the agent was on the call and knows
+// whether a text is wanted -- an answering machine that says 'this is a
+// business line' should not get one. A silent auto-send would also make
+// the message invisible to the person accountable for it.
+async function maybeSmsFallback() {
+  const mc = manualCall;
+  manualCall = null;                       // one shot, whatever happens next
+  if (!mc || mc.answered) return;          // somebody picked up; no text
+  if (!campaign?.sms_fallback_enabled) return;
+  const tpl = (campaign.sms_fallback_template || '').trim();
+  if (!tpl) return;
+
+  const name = (contact?.contact_name || '').trim().split(/\s+/)[0] || 'there';
+  const text = tpl
+    .replace(/\{\{\s*first_name\s*\}\}/gi, name)
+    .replace(/\{\{\s*agent\s*\}\}/gi, (me?.full_name || '').split(/\s+/)[0] || 'we');
+
+  if (!confirm(`No answer. Text ${mc.to}?
+
+“${text}”`)) return;
+
+  const r = await callFn('dialer-sms', { action: 'send', to: mc.to, body: text,
+                                         name: contact?.contact_name || undefined });
+  if (!r?.ok) { banner(r?.error || 'Could not send the text.', 'err'); return; }
+  banner(r.sent ? `Text sent to ${mc.to}.`
+                : (r.detail || 'Not sent.'), r.sent ? 'info' : 'err');
 }
 
 // --------------------------------------------------------- dispositions ---
