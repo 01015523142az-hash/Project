@@ -2345,6 +2345,10 @@ async function loadInbox() {
 async function openThread(phone, name) {
   inboxPhone = phone;
   inboxName = name || null;
+  // See the agent console's copy: pulls whatever GHL holds that no
+  // workflow pushed to us, so a reply is never visible in GHL and
+  // missing here.
+  try { await callFn('dialer-sms', { action: 'sync_thread', to: phone }); } catch {}
   const { data, error } = await sb.rpc('dialer_sms_thread', { p_phone: phone });
   if (error) { $('inboxThread').innerHTML = esc(error.message); return; }
   const msgs = data || [];

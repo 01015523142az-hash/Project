@@ -1629,6 +1629,12 @@ async function agLoadThreads(quiet) {
 
 async function agOpen(phone, name) {
   agPhone = phone; agName = name || null;
+  // Pull anything GHL has that we have not been pushed. Inbound only
+  // reaches ghl_messages when a GHL workflow fires a webhook at us, and
+  // where that is not configured the reply is visible in GHL and invisible
+  // here. Awaited so the thread renders complete rather than filling in a
+  // moment later under the reader.
+  try { await callFn('dialer-sms', { action: 'sync_thread', to: phone }); } catch {}
   const { data, error } = await sb.rpc('dialer_sms_thread', { p_phone: phone });
   if (error) { $('agThread').textContent = error.message; return; }
   const msgs = data || [];

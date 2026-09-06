@@ -19,11 +19,18 @@
 // month. Revisit if volume ever reaches thousands of segments.
 //
 // ACTIONS:
-//   send  -- text an arbitrary E.164 from the two-way number
+//   send         -- text an arbitrary E.164 from the two-way number
+//   sync_thread  -- pull a conversation from GHL's API into local storage
 //
-// Reading threads is NOT here: dialer_sms_threads() / dialer_sms_thread()
-// (v542) are called straight from the page over PostgREST, because they are
-// pure reads over ghl_messages with the visibility rule baked in.
+// Listing threads is NOT here: dialer_sms_threads() / dialer_sms_thread()
+// (v542, v545) are called straight from the page over PostgREST, because
+// they are pure reads with the visibility rule baked in.
+//
+// sync_thread exists because inbound SMS only reaches ghl_messages when a GHL
+// WORKFLOW fires a Custom Webhook at ghl-webhook. Where that workflow does not
+// cover the number a reply landed on, the message is visible in GHL and
+// invisible here. Polling the API the way the staff chat panel already does
+// removes that dependency entirely.
 //
 // Deploy with:
 //   supabase functions deploy dialer-sms
@@ -135,8 +142,94 @@ Deno.serve(async (req) => {
     if (!allowed) return json(req, { ok: false, error: "Your role doesn't have permission to use the dialer." }, 403);
 
     const body = await req.json().catch(() => ({}));
-    if (String(body?.action || 'send') !== 'send') {
+    const action = String(body?.action || 'send');
+    if (action !== 'send' && action !== 'sync_thread') {
       return json(req, { ok: false, error: 'Unknown action' }, 400);
+    }
+
+    // ---- sync_thread ------------------------------------------------------
+    // Pulls a conversation from GHL's API and stores it locally.
+    //
+    // WHY THIS EXISTS: inbound SMS only reaches ghl_messages when a GHL
+    // WORKFLOW fires a Custom Webhook at ghl-webhook. If that workflow does
+    // not exist, or does not cover the number a reply landed on, the reply is
+    // visible in GHL and invisible here -- which is exactly what happened.
+    // The staff chat panel never had that problem because it polls
+    // conversations/search + conversations/{id}/messages on demand rather
+    // than waiting to be pushed. This does the same for the dialer inbox, so
+    // it works regardless of workflow configuration and regardless of WHICH
+    // of the location's numbers the conversation is bound to.
+    if (action === 'sync_thread') {
+      const phone = toE164(body?.to || '');
+      if (!phone) return json(req, { ok: false, error: 'A valid 10-digit US number is required.' }, 400);
+
+      const { data: conns0 } = await admin.from('ghl_connections')
+        .select('location_id, access_token, refresh_token, expires_at');
+      if (!conns0?.length) return json(req, { ok: false, error: 'No GoHighLevel location is connected.' }, 503);
+      const c0 = conns0[0];
+      const tok = await getValidAccessToken(admin, c0);
+      if (!tok) return json(req, { ok: false, error: 'Could not obtain a GoHighLevel access token.' }, 502);
+      const h = { Authorization: `Bearer ${tok}`, Accept: 'application/json', Version: '2021-07-28' };
+
+      // Resolve the contact. upsert rather than search: it returns the id for
+      // an existing contact and creates nothing new for one we already have.
+      const cRes = await fetch('https://services.leadconnectorhq.com/contacts/upsert', {
+        method: 'POST',
+        headers: { ...h, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ locationId: c0.location_id, phone }),
+      });
+      const cBody = await cRes.json().catch(() => null);
+      const cid = cBody?.contact?.id || cBody?.id || null;
+      if (!cid) return json(req, { ok: true, synced: 0, note: 'No GoHighLevel contact for that number.' });
+
+      const convRes = await fetch(
+        `https://services.leadconnectorhq.com/conversations/search?locationId=${encodeURIComponent(c0.location_id)}&contactId=${encodeURIComponent(cid)}&limit=1`,
+        { headers: h });
+      const convBody = await convRes.json().catch(() => null);
+      const convId = (convBody?.conversations || convBody?.data || [])[0]?.id;
+      if (!convId) return json(req, { ok: true, synced: 0, note: 'No conversation yet.' });
+
+      const mRes = await fetch(
+        `https://services.leadconnectorhq.com/conversations/${encodeURIComponent(convId)}/messages?limit=100`,
+        { headers: h });
+      const mBody = await mRes.json().catch(() => null);
+      // GHL nests this as { messages: { messages: [...] } } on some
+      // deliveries and flat { messages: [...] } on others -- the same
+      // inconsistency ghl-api's lookup_contact_activity already handles.
+      const list = mBody?.messages?.messages || mBody?.messages || mBody?.data || [];
+
+      // Skip anything ghl_messages already has: a message sent from here is
+      // already recorded with the agent's user_id, and re-storing it without
+      // that attribution would show the same text twice and lose who sent it.
+      const ids = list.map((m: any) => m.id).filter(Boolean);
+      const { data: known } = ids.length
+        ? await admin.from('ghl_messages').select('ghl_message_id').in('ghl_message_id', ids)
+        : { data: [] as any[] };
+      const knownSet = new Set((known || []).map((k: any) => k.ghl_message_id));
+
+      const rows = list
+        .filter((m: any) => m.id && !knownSet.has(m.id))
+        .filter((m: any) => (m.body ?? m.message ?? '').toString().trim() !== '')
+        .map((m: any) => ({
+          provider: 'ghl',
+          provider_message_id: m.id,
+          direction: String(m.direction || '').toLowerCase() === 'inbound' ? 'inbound' : 'outbound',
+          contact_phone: phone,
+          body: (m.body ?? m.message ?? '').toString(),
+          // Left null deliberately: GHL does not tell us which of OUR users
+          // sent an outbound it pulled back. Attribution for anything sent
+          // from here already lives on the ghl_messages row.
+          user_id: null,
+          message_at: m.dateAdded || m.dateUpdated || new Date().toISOString(),
+          raw: m,
+        }));
+
+      if (rows.length) {
+        const { error: upErr } = await admin.from('dialer_sms_messages')
+          .upsert(rows, { onConflict: 'provider_message_id' });
+        if (upErr) return json(req, { ok: false, error: upErr.message }, 500);
+      }
+      return json(req, { ok: true, synced: rows.length, conversation_id: convId });
     }
 
     const to = toE164(body?.to || '');
