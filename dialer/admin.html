@@ -276,6 +276,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
             <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V9M10 16V4M16 16v-6"/></svg>
             <span>Reports</span>
           </button>
+          <button data-tab="inbox">
+            <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5.5h14v9H3z"/><path d="M3 6l7 5 7-5"/></svg>
+            <span>Inbox</span>
+          </button>
         </nav>
       </div>
 
@@ -736,6 +740,52 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
       </div>
     </div>
   </section>
+
+  <!-- ================================================== INBOX ========== -->
+  <!-- Two-way SMS on +1 307-441-5766. No separate message store: ghl-webhook
+       already writes every SMS to ghl_messages, so this reads v542's RPCs,
+       which carry the visibility rule -- an agent sees threads they have
+       personally sent into, a reviewer sees all of them. Threads are scoped
+       to numbers the dialer has engaged, so client-notification traffic from
+       the other number stays out. -->
+  <section id="tab-inbox" class="hide">
+    <div class="panel">
+      <h2>Messages</h2>
+      <p class="hint">
+        Two-way SMS on <span class="mono">+1 307-441-5766</span>. Agents see conversations
+        they have texted in; team leaders, Quality and admins see every conversation.
+        Numbers on the internal do-not-call list cannot be texted at all.
+      </p>
+      <div class="row" style="margin-bottom:10px">
+        <button id="inboxRefresh">Refresh</button>
+        <span id="inboxMsg" style="font-size:13px;color:var(--ink2)"></span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:300px 1fr;gap:14px;align-items:start">
+        <div class="scroll" style="max-height:520px">
+          <table>
+            <thead><tr><th>Conversation</th></tr></thead>
+            <tbody id="inboxThreads"><tr><td>Loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div>
+          <div class="scroll" id="inboxThreadWrap"
+               style="max-height:430px;padding:12px;background:#fbfcfc">
+            <div id="inboxThread" style="font-size:13px;color:var(--ink2)">
+              Pick a conversation on the left.
+            </div>
+          </div>
+          <div class="row" style="margin:10px 0 0;align-items:stretch">
+            <textarea id="inboxBody" rows="2" style="flex:1;min-width:240px"
+              placeholder="Reply…" disabled></textarea>
+            <button class="primary" id="inboxSend" disabled>Send</button>
+          </div>
+          <div class="hint" id="inboxLen" style="margin-top:4px"></div>
+        </div>
+      </div>
+    </div>
+  </section>
     </main>
   </div>
 </div>
@@ -848,11 +898,15 @@ function applyReadOnly() {
 document.querySelectorAll('nav button').forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
-    ['numbers', 'lists', 'campaigns', 'agents', 'calllog', 'research', 'reports'].forEach((t) =>
+    ['numbers', 'lists', 'campaigns', 'agents', 'calllog', 'research', 'reports', 'inbox'].forEach((t) =>
       $('tab-' + t).classList.toggle('hide', t !== b.dataset.tab));
     // Loaded on first open rather than at boot: most sessions never look at
     // the call log, and the query reads the whole CDR table.
     if (b.dataset.tab === 'calllog' && !callLogLoaded) initCallLog();
+    // Same reasoning for the inbox: it is a per-agent read most sessions
+    // never open, and it should be fresh when it IS opened rather than as
+    // of whenever the page loaded.
+    if (b.dataset.tab === 'inbox') loadInbox();
     if (b.dataset.tab === 'agents') loadStatusEditor();
   };
 });
@@ -2239,6 +2293,119 @@ async function rpRunCampaigns() {
 if ($('rpARun')) $('rpARun').onclick = rpRunAgents;
 if ($('rpCRun')) $('rpCRun').onclick = rpRunCampaigns;
 rpInitDates();
+
+
+// ------------------------------------------------------------------ inbox --
+// Reads v542's RPCs, which carry the visibility rule themselves: an agent
+// sees only threads they have personally texted in, a reviewer sees all.
+// Nothing is filtered client-side, so opening this page directly gains
+// nobody a conversation they should not see.
+let inboxPhone = null;
+let inboxName = null;
+
+const smsTime = (t) => new Date(t).toLocaleString([], {
+  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+// A segment is 160 chars, but a single emoji drops the whole message to 70 --
+// so a short-looking text can silently cost five segments. Count honestly.
+const smsSegments = (t) => {
+  if (!t) return 0;
+  const unicode = /[^\u0000-\u007F]/.test(t);
+  const per = unicode ? 70 : 160;
+  return Math.ceil(t.length / per);
+};
+
+async function loadInbox() {
+  const { data, error } = await sb.rpc('dialer_sms_threads');
+  if (error) { $('inboxThreads').innerHTML = `<tr><td>${esc(error.message)}</td></tr>`; return; }
+  const rows = data || [];
+  $('inboxMsg').textContent = rows.length
+    ? `${rows.length} conversation${rows.length === 1 ? '' : 's'}`
+    : '';
+  $('inboxThreads').innerHTML = rows.length
+    ? rows.map((r) => `<tr>
+        <td style="cursor:pointer" data-ph="${esc(r.contact_phone)}"
+            data-nm="${esc(r.contact_name || '')}">
+          <div style="display:flex;justify-content:space-between;gap:8px">
+            <strong>${esc(r.contact_name || r.contact_phone)}</strong>
+            <span style="font-size:11px;color:var(--ink2)">${smsTime(r.last_at)}</span>
+          </div>
+          <div class="mono" style="font-size:11px;color:var(--ink2)">${esc(r.contact_phone)}</div>
+          <div style="font-size:12px;color:var(--ink2);margin-top:3px;
+                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${r.last_direction === 'inbound' ? '' : '<span style="color:var(--accent)">You: </span>'}${esc(r.last_body || '')}
+          </div>
+        </td></tr>`).join('')
+    : '<tr><td>No conversations yet.</td></tr>';
+
+  $('inboxThreads').querySelectorAll('td[data-ph]').forEach((td) => {
+    td.onclick = () => openThread(td.dataset.ph, td.dataset.nm);
+  });
+}
+
+async function openThread(phone, name) {
+  inboxPhone = phone;
+  inboxName = name || null;
+  const { data, error } = await sb.rpc('dialer_sms_thread', { p_phone: phone });
+  if (error) { $('inboxThread').innerHTML = esc(error.message); return; }
+  const msgs = data || [];
+
+  $('inboxThread').innerHTML = msgs.length
+    ? msgs.map((m) => {
+      const out = m.direction !== 'inbound';
+      return `<div style="display:flex;justify-content:${out ? 'flex-end' : 'flex-start'};margin-bottom:8px">
+        <div style="max-width:74%;padding:8px 11px;border-radius:10px;font-size:13px;
+                    background:${out ? 'var(--accent)' : '#fff'};
+                    color:${out ? '#fff' : 'var(--ink)'};
+                    border:1px solid ${out ? 'var(--accent)' : 'var(--line)'}">
+          <div style="white-space:pre-wrap">${esc(m.body || '')}</div>
+          <div style="font-size:10.5px;margin-top:4px;opacity:.75">
+            ${smsTime(m.message_at)}${out && m.agent_name ? ' \u00b7 ' + esc(m.agent_name) : ''}
+          </div>
+        </div></div>`;
+    }).join('')
+    : '<div style="color:var(--ink2)">No messages in this conversation.</div>';
+
+  // Scroll to newest, which is what anyone opening a thread wants to read.
+  const wrap = $('inboxThreadWrap');
+  wrap.scrollTop = wrap.scrollHeight;
+
+  $('inboxBody').disabled = false;
+  $('inboxSend').disabled = false;
+  $('inboxBody').focus();
+}
+
+$('inboxBody').addEventListener('input', () => {
+  const t = $('inboxBody').value;
+  const seg = smsSegments(t);
+  $('inboxLen').textContent = t
+    ? `${t.length} characters \u00b7 ${seg} segment${seg === 1 ? '' : 's'}`
+      + (/[^\u0000-\u007F]/.test(t) ? ' (non-ASCII \u2014 70 chars per segment)' : '')
+    : '';
+});
+
+$('inboxSend').onclick = async () => {
+  const text = $('inboxBody').value.trim();
+  if (!inboxPhone || !text) return;
+  $('inboxSend').disabled = true;
+  const r = await callFn('dialer-sms', {
+    action: 'send', to: inboxPhone, body: text, name: inboxName || undefined,
+  });
+  $('inboxSend').disabled = false;
+  if (!r?.ok) { say($('inboxMsg'), r?.error || 'Send failed', 'err'); return; }
+  if (!r.sent) { say($('inboxMsg'), r.detail || 'Not sent.', 'warn'); return; }
+  $('inboxBody').value = '';
+  $('inboxLen').textContent = '';
+  // Re-read rather than appending optimistically: dialer-sms writes the row
+  // into ghl_messages itself, so the thread is the source of truth and an
+  // optimistic bubble could disagree with it.
+  await openThread(inboxPhone, inboxName);
+  loadInbox();
+};
+
+$('inboxRefresh').onclick = () => {
+  loadInbox();
+  if (inboxPhone) openThread(inboxPhone, inboxName);
+};
 
 </script>
 </body>
