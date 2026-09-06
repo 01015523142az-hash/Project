@@ -175,6 +175,21 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
 .stat b{font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums;color:var(--num)}
 .muted{color:var(--text-2);font-size:13px;line-height:1.6}
 
+/* ---------- seller profile ---------- */
+/* Two columns of label/value so a long record stays scannable while the
+   phone is ringing; collapses to one on a narrow screen. */
+.profile{margin-top:18px;padding-top:16px;border-top:1px solid var(--border)}
+.profile-group + .profile-group{margin-top:16px}
+.profile-group h3{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;
+  letter-spacing:1.2px;color:var(--text-dim);font-weight:600;margin:0 0 8px}
+.profile-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px 18px}
+@media(max-width:720px){.profile-grid{grid-template-columns:1fr}}
+.profile-item{display:flex;gap:10px;font-size:12.5px;min-width:0}
+.profile-item .k{color:var(--text-dim);flex:0 0 44%;font-family:var(--mono);font-size:10px;
+  text-transform:uppercase;letter-spacing:.6px;padding-top:2px}
+.profile-item .v{color:var(--text);flex:1 1 auto;min-width:0;overflow-wrap:anywhere}
+.profile-item a{color:var(--focus)}
+
 /* ---------- views (switched by the left nav) ---------- */
 .view{display:none}
 .view.active{display:block}
@@ -267,6 +282,13 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
                   <dt>Last outcome</dt><dd id="cLast">—</dd>
                   <dt>Property</dt><dd id="cProperty">—</dd>
                 </dl>
+
+                <!-- Seller profile. Rendered from the fields mapped at import
+                     (v536), so it reads one shape whatever the source file
+                     called its columns. Groups with nothing in them are not
+                     drawn at all -- a screen of empty labels reads as broken
+                     data rather than as an absent optional field. -->
+                <div id="profileWrap" class="profile"></div>
 
                 <!-- Power mode only. Auto-advance must always be visibly cancellable:
                      an agent who needs a moment after a hard call should never have
@@ -426,6 +448,7 @@ async function callFn(name, body) {
   me = profile;
   $('agentName').textContent = profile.full_name || '';
 
+  await loadProfileDefs();
   await startSession();
   await loadCampaigns();
   await initSoftphone();
@@ -578,9 +601,14 @@ async function loadCampaigns() {
 }
 
 // ----------------------------------------------------------- the queue ----
-const QUEUE_COLS = 'id, phone_e164, contact_name, timezone, state, phone_line_type, ' +
-                   'phone_valid, attempt_count, last_outcome, property_id, next_attempt_at, ' +
-                   'status, phone_rank';
+// Everything the seller profile shows, fetched with the contact rather than
+// in a second round trip: the agent has the record on screen before the phone
+// is answered, or the profile is useless.
+const QUEUE_COLS = 'id, phone_e164, contact_name, first_name, last_name, email, ' +
+                   'address, city, zip, timezone, state, ' +
+                   'phone_line_type, phone_valid, attempt_count, last_outcome, ' +
+                   'property_id, next_attempt_at, status, phone_rank, contact_fields, ' +
+                   'list_id, created_at';
 
 // next_attempt_at plus the partial index from v524 IS the queue — a contact
 // is due when it is new (never attempted) or its next_attempt_at has passed.
@@ -631,6 +659,16 @@ async function loadNextContact() {
   }
 
   contact = data[0];
+  // The list name is the "origin file" the agent sees; cached per list so a
+  // queue of hundreds does not re-fetch it for every contact.
+  if (contact.list_id) {
+    if (listNameCache[contact.list_id] === undefined) {
+      const { data: l } = await sb.from('dialer_lists')
+        .select('name').eq('id', contact.list_id).maybeSingle();
+      listNameCache[contact.list_id] = l?.name || null;
+    }
+    contact.__list_name = listNameCache[contact.list_id];
+  }
   renderContact();
 }
 
@@ -655,8 +693,97 @@ function renderContact() {
       : 'unknown';
   } catch { $('cLocal').textContent = contact.timezone || 'unknown'; }
 
+  renderProfile();
+
   $('dialBtn').disabled = paused || Boolean(activeCall);
   if (contact.property_id) loadProperty(contact.property_id);
+}
+
+// ------------------------------------------------------------- profile ----
+// The seller record, built from the fields mapped at import. fieldDefs gives
+// the labels and grouping, so adding a field to the catalogue puts it on this
+// screen without touching this file.
+let profileDefs = [];
+const listNameCache = {};
+async function loadProfileDefs() {
+  const { data } = await sb.from('dialer_field_defs')
+    .select('key, label, group_name, is_required, sort_order')
+    .eq('is_active', true).order('sort_order');
+  profileDefs = data || [];
+}
+
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+// Anything that is obviously a link or an address is worth making actionable:
+// an agent reading a LinkedIn url aloud is not the point of having it.
+function profileValue(key, raw) {
+  const v = String(raw).trim();
+  if (/^https?:\/\//i.test(v)) {
+    return '<a href="' + esc(v) + '" target="_blank" rel="noopener noreferrer">' + esc(v) + '</a>';
+  }
+  if (key === 'email' || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) {
+    return '<a href="mailto:' + esc(v) + '">' + esc(v) + '</a>';
+  }
+  if (/^phone(_\d+)?$/.test(key)) {
+    return '<span class="mono">' + esc(v) + '</span>';
+  }
+  return esc(v);
+}
+
+function renderProfile() {
+  const wrap = $('profileWrap');
+  if (!contact) { wrap.innerHTML = ''; return; }
+
+  // Required fields live in real columns; the rest in contact_fields. Both
+  // are keyed the same way, so one lookup covers them.
+  const extra = contact.contact_fields || {};
+  const direct = {
+    first_name: contact.first_name, last_name: contact.last_name,
+    phone: contact.phone_e164, email: contact.email,
+    address: contact.address, city: contact.city,
+    state: contact.state, zip: contact.zip,
+  };
+  const valueFor = (k) => {
+    const v = direct[k] !== undefined && direct[k] !== null && direct[k] !== ''
+      ? direct[k] : extra[k];
+    return (v === undefined || v === null || String(v).trim() === '') ? null : v;
+  };
+
+  // Campaign and the file it arrived on are context the agent needs and that
+  // no mapped column carries.
+  const context = [];
+  if (campaign?.name) context.push(['Campaign', campaign.name]);
+  if (contact.__list_name) context.push(['Origin file', contact.__list_name]);
+
+  const groups = [...new Set(profileDefs.map((f) => f.group_name))];
+  let html = '';
+
+  if (context.length) {
+    html += '<div class="profile-group"><h3>Lead</h3><div class="profile-grid">'
+      + context.map(([k, v]) =>
+          '<div class="profile-item"><span class="k">' + esc(k) + '</span>'
+          + '<span class="v">' + esc(v) + '</span></div>').join('')
+      + '</div></div>';
+  }
+
+  groups.forEach((g) => {
+    const items = profileDefs
+      .filter((f) => f.group_name === g)
+      .map((f) => [f, valueFor(f.key)])
+      .filter(([, v]) => v !== null);
+    if (!items.length) return;   // draw nothing rather than a row of blanks
+    html += '<div class="profile-group"><h3>' + esc(g) + '</h3><div class="profile-grid">'
+      + items.map(([f, v]) =>
+          '<div class="profile-item"><span class="k">' + esc(f.label) + '</span>'
+          + '<span class="v">' + profileValue(f.key, v) + '</span></div>').join('')
+      + '</div></div>';
+  });
+
+  wrap.innerHTML = html
+    || '<span class="muted">No profile fields were mapped for this list.</span>';
 }
 
 async function loadProperty(propertyId) {
