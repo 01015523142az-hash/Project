@@ -1641,7 +1641,16 @@ async function loadCampaigns() {
 // bad number is refused here with a sentence instead of a Postgres error.
 const CAMP_LIMITS = [
   { key: 'max_attempts',              label: 'Max attempts per contact', min: 1,  max: 30 },
-  { key: 'min_hours_between_attempts', label: 'Min hours between attempts', min: 1, max: 720 },
+  { key: 'min_hours_between_attempts', label: 'Hours between tries on one number', min: 1, max: 720 },
+  // v562. Three trials on a line before the next one opens, then the whole
+  // contact rests and comes back. The two numbers interact and the pairing
+  // is the thing worth getting right: attempts_per_number x
+  // min_hours_between_attempts is how long a single number occupies the
+  // contact. 3 x 4h works a number out in a day; 3 x 24h takes three days
+  // and a ten-number contact then takes a month to reach the end of.
+  { key: 'attempts_per_number', label: 'Tries per number before the next', min: 1, max: 10 },
+  { key: 'recycle_after_days',  label: 'Recycle after (days)', min: 1, max: 365 },
+  { key: 'max_recycles',        label: 'Max recycles', min: 0, max: 10 },
   // ring_seconds deliberately NOT editable: ring duration is negotiated by
   // the WebRTC SDK and the carrier on the leg the browser places, and
   // nothing reads this column. Exposing it would promise a control that
@@ -1666,6 +1675,7 @@ async function toggleCampaignEditor(id) {
   const { data: c } = await sb.from('dialer_campaigns')
     .select('id, name, dial_mode, status, calling_window_start, calling_window_end, '
           + 'calling_days, max_attempts, min_hours_between_attempts, ring_seconds, '
+          + 'attempts_per_number, recycle_enabled, recycle_after_days, max_recycles, '
           + 'amd_enabled, recording_enabled, script, sms_fallback_enabled, sms_fallback_template')
     .eq('id', id).maybeSingle();
   if (!c) return;
@@ -1703,6 +1713,40 @@ async function toggleCampaignEditor(id) {
     <p class="hint" style="margin:12px 0 0">
       The window is in each contact's own local time, not yours.
     </p>
+
+    <!-- v562. How a contact's numbers are worked, and what happens when they
+         run out. The two numbers above interact and the pairing is the thing
+         worth getting right, so it is spelled out rather than left to be
+         inferred from two fields sitting side by side. -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <div class="fb-label" style="margin-bottom:6px">Working a contact's numbers</div>
+      <p class="hint" style="margin:0 0 10px">
+        A number is tried <strong>${Number(c.attempts_per_number ?? 3)}</strong> times,
+        <strong>${Number(c.min_hours_between_attempts ?? 24)}h</strong> apart, before the
+        next one opens &mdash; so one number occupies a contact for about
+        <strong>${(((c.attempts_per_number ?? 3) - 1) * (c.min_hours_between_attempts ?? 24) / 24).toFixed(1)} days</strong>.
+        Only silence counts: no answer, busy, voicemail, a dead call. Being told
+        no, a wrong number, a disconnected line or reaching the wrong person
+        retires that number immediately and it never comes back.
+        <br><br>
+        Max attempts per contact is <strong>${Number(c.max_attempts ?? 6)}</strong>, which
+        caps the whole contact
+        ${(c.max_attempts ?? 6) < (c.attempts_per_number ?? 3) * 2
+          ? '&mdash; <strong>lower than two numbers’ worth of tries</strong>, so the '
+            + 'contact stops before its alternates are reached. Raise it to at least '
+            + ((c.attempts_per_number ?? 3) * 3) + ' to work three numbers.'
+          : 'across all of its numbers.'}
+      </p>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600">
+        <input type="checkbox" data-f="recycle_enabled"${c.recycle_enabled !== false ? ' checked' : ''}>
+        Recycle a contact once every number is spent</label>
+      <p class="hint" style="margin:8px 0 0">
+        It rests for the recycle interval above, then reopens at Ph#1 with the
+        counters cleared, up to the recycle cap. Numbers retired as DNC, wrong
+        number or disconnected are never reopened by a recycle. After the last
+        recycle the contact is retired as <span class="mono">all_numbers_exhausted</span>.
+      </p>
+    </div>
 
     <!-- SMS fallback. Manual dials only, by decision: an automatic text after
          queued cold traffic is a different consent posture from following up
@@ -1779,6 +1823,7 @@ async function saveCampaign(id, td, tr) {
     calling_window_start: val('calling_window_start').value,
     calling_window_end: val('calling_window_end').value,
     sms_fallback_enabled: val('sms_fallback_enabled').checked,
+    recycle_enabled: val('recycle_enabled').checked,
     sms_fallback_template: val('sms_fallback_template').value.trim() || null,
     // amd_enabled / recording_enabled are intentionally NOT sent: their
     // controls are disabled above because nothing reads either column,
@@ -2770,6 +2815,11 @@ $('impBtn').onclick = async () => {
   const optional = fieldDefs.filter((f) => !f.is_required && !f.column_name);
   const seen = new Set(); const contacts = []; let bad = 0;
   let unusable = 0, noZone = 0;
+  // Ph#2..Ph#10, keyed by the primary number so they can be turned into
+  // dialer_contact_phones rows once the contacts have ids. Before v563
+  // nothing created those rows and the alternates were mapped, stored and
+  // never dialled -- see that migration's header.
+  const altsFor = new Map();
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
@@ -2795,6 +2845,21 @@ $('impBtn').onclick = async () => {
     // loop dialable; nothing has to run afterwards.
     const tz = timezoneForNumber(phone);
     if (!tz) noZone++;
+
+    // Each alternate carries its OWN zone, from its OWN area code. A
+    // seller's second line is routinely in a different state from their
+    // first, and dialer-call-control reads the phone row's timezone before
+    // the contact's, so inheriting the primary's would gate the alternate
+    // on the wrong clock. Alternates go through the same structural screen
+    // as the primary: an undialable one is dropped, not loaded and skipped.
+    const alts = [];
+    for (let n = 2; n <= 10; n++) {
+      const a = toE164(extra['phone_' + n]);
+      if (!a || a === phone || numberProblem(a)) continue;
+      if (alts.some((x) => x.phone_e164 === a)) continue;
+      alts.push({ rank: n, label: 'Ph#' + n, phone_e164: a, timezone: timezoneForNumber(a) });
+    }
+    if (alts.length) altsFor.set(phone, alts);
 
     contacts.push({
       list_id: list.id, campaign_id: campaignId, phone_e164: phone,
@@ -2822,12 +2887,53 @@ $('impBtn').onclick = async () => {
     say($('impMsg'), 'Imported ' + done + ' of ' + contacts.length + '...', 'ok');
   }
 
+  // ---- the per-number rows the queue actually works ---------------------
+  // dialer_next_number reads dialer_contact_phones, not dialer_contacts. A
+  // contact with no rows here has no alternates the engine can reach and
+  // falls back to its primary alone -- which is what every import between
+  // v548 and v563 quietly produced. Rank 1 is the primary; 2..10 are the
+  // Ph# columns the mapper picked up.
+  //
+  // Ids come from reading the list back rather than from the upsert, which
+  // returns nothing under ignoreDuplicates, and re-importing the same file
+  // must not create a second set of rows.
+  say($('impMsg'), 'Imported ' + done + ' contacts. Building number rows...', 'ok');
+  const phoneRows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data: page, error } = await sb.from('dialer_contacts')
+      .select('id, phone_e164, timezone')
+      .eq('list_id', list.id)
+      .order('id')
+      .range(from, from + 999);
+    if (error) { say($('impMsg'), 'Contacts loaded, but number rows failed: ' + error.message, 'err'); break; }
+    if (!page?.length) break;
+    for (const c of page) {
+      phoneRows.push({
+        contact_id: c.id, rank: 1, label: 'Phone number',
+        phone_e164: c.phone_e164, timezone: c.timezone, status: 'new',
+      });
+      for (const a of (altsFor.get(c.phone_e164) || [])) {
+        phoneRows.push({ contact_id: c.id, ...a, status: 'new' });
+      }
+    }
+    if (page.length < 1000) break;
+  }
+
+  let phonesDone = 0;
+  for (let i = 0; i < phoneRows.length; i += 500) {
+    const { error } = await sb.from('dialer_contact_phones')
+      .upsert(phoneRows.slice(i, i + 500),
+              { onConflict: 'contact_id,phone_e164', ignoreDuplicates: true });
+    if (error) { say($('impMsg'), 'Number rows stopped after ' + phonesDone + ': ' + error.message, 'err'); break; }
+    phonesDone += Math.min(500, phoneRows.length - i);
+  }
+
   await sb.from('dialer_lists').update({
     status: 'ready', loaded_rows: done, skipped_rows: bad + unusable,
   }).eq('id', list.id);
 
   $('impBtn').disabled = false;
-  say($('impMsg'), 'Imported ' + done + ' contacts, dialable now. '
+  say($('impMsg'), 'Imported ' + done + ' contacts (' + phonesDone + ' numbers incl. alternates), dialable now. '
     + bad + ' skipped (no usable phone, or a duplicate of a row already in this list)'
     + (unusable ? ', ' + unusable + ' skipped as undialable numbers (service codes, '
       + 'toll-free or placeholder digits)' : '')

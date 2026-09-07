@@ -556,6 +556,64 @@ Deno.serve(async (req) => {
       inserted += slice.length;
     }
 
+    // --- the per-number rows the queue actually works ---------------------
+    // dialer_next_number reads dialer_contact_phones, not dialer_contacts.
+    // Nothing created those rows between v548 and v563, so every contact
+    // loaded in that window had its alternates mapped, stored, shown in the
+    // profile panel -- and never dialled. Rank 1 is the primary; 2..10 are
+    // the Ph# columns, each with its OWN zone from its OWN area code,
+    // because dialer-call-control reads the phone row's timezone before the
+    // contact's and a second line is routinely in a different state.
+    //
+    // Ids are read back rather than taken from the upsert, which returns
+    // nothing under ignoreDuplicates. A redelivered email must not produce
+    // a second set of rows, hence the same conflict target here.
+    const phoneRows: Record<string, unknown>[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data: page } = await admin.from('dialer_contacts')
+        .select('id, phone_e164, timezone, contact_fields')
+        .eq('list_id', listId)
+        .order('id')
+        .range(from, from + 999);
+      if (!page?.length) break;
+      for (const c of page) {
+        phoneRows.push({
+          contact_id: c.id, rank: 1, label: 'Phone number',
+          phone_e164: c.phone_e164, timezone: c.timezone, status: 'new',
+        });
+        const cf = (c.contact_fields ?? {}) as Record<string, string>;
+        const takenForContact = new Set<string>([c.phone_e164]);
+        for (let n = 2; n <= 10; n++) {
+          const alt = toE164(cf['phone_' + n] ?? '');
+          // Alternates go through the same structural screen as the primary:
+          // an undialable one is dropped, not loaded and skipped later.
+          if (!alt || takenForContact.has(alt) || numberProblem(alt)) continue;
+          takenForContact.add(alt);
+          phoneRows.push({
+            contact_id: c.id, rank: n, label: `Ph#${n}`,
+            phone_e164: alt, timezone: timezoneForNumber(alt), status: 'new',
+          });
+        }
+      }
+      if (page.length < 1000) break;
+    }
+
+    let phonesInserted = 0;
+    for (let i = 0; i < phoneRows.length; i += BATCH) {
+      const { error } = await admin.from('dialer_contact_phones')
+        .upsert(phoneRows.slice(i, i + BATCH),
+                { onConflict: 'contact_id,phone_e164', ignoreDuplicates: true });
+      if (error) {
+        // Contacts are loaded and their primaries are dialable through the
+        // contact-level fallback, so this is degraded, not failed. Log it
+        // and finish rather than throwing the whole import away.
+        console.error('dialer-list-import: phone rows failed at', i, error.message);
+        break;
+      }
+      phonesInserted += Math.min(BATCH, phoneRows.length - i);
+    }
+    (stats as Record<string, number>).phone_rows = phonesInserted;
+
     // Ready only once rows are in. Contacts are dialable from this point:
     // the calling-hours gate has the zone it needs, resolved above at no
     // cost. stats.no_timezone counts the residue that still is not.
