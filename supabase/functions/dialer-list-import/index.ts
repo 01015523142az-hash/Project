@@ -115,6 +115,36 @@ const PHONE_ALIASES = ['phone', 'phonenumber', 'phone1', 'primaryphone', 'mobile
 const FIRST_ALIASES = ['firstname', 'first', 'ownerfirstname', 'contactfirstname'];
 const LAST_ALIASES  = ['lastname', 'last', 'ownerlastname', 'contactlastname'];
 const NAME_ALIASES  = ['name', 'fullname', 'ownername', 'contactname', 'owner'];
+// The agent console's profile panel reads these off REAL COLUMNS -- see
+// renderProfile()'s `direct` map in dialer/index.html. Until now the importer
+// wrote none of them, so every imported contact showed a profile panel
+// containing nothing but the phone number, and the Property line was blank
+// however the admin field defs were configured.
+//
+// The lists are deliberately conservative. Two things are NOT in them:
+//
+//   'st' for state -- it is at least as likely to mean "street". A wrong
+//   state is not cosmetic: dialer-call-control picks the caller-ID DID by
+//   matching dialer_contacts.state, so a street column read as a state
+//   silently dials from the wrong area code.
+//
+//   mailing* anything -- that is the OWNER's address, a different thing from
+//   the property's, and properties keeps them in separate columns for that
+//   reason. Showing an owner's mailing address on a line labelled Property
+//   would be worse than showing nothing.
+const EMAIL_ALIASES   = ['email', 'emailaddress', 'owneremail', 'contactemail', 'email1'];
+const ADDRESS_ALIASES = ['address', 'propertyaddress', 'siteaddress', 'streetaddress',
+                         'address1', 'addressline1'];
+const CITY_ALIASES    = ['city', 'propertycity', 'sitecity'];
+const STATE_ALIASES   = ['state', 'propertystate', 'sitestate'];
+const ZIP_ALIASES     = ['zip', 'zipcode', 'postalcode', 'propertyzip', 'sitezip', 'zip5'];
+
+// contact_fields is keyed to match dialer_field_defs.key, which is
+// snake_case ('apn_parcel_id', 'land_portal_link'). That is NOT what norm()
+// produces -- norm strips separators entirely for alias matching, so
+// "APN/Parcel ID" would become "apnparcelid" and match no field def at all.
+const fieldKey = (h: string) =>
+  h.toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 
 function findCol(headers: string[], aliases: string[]): number {
   const h = headers.map(norm);
@@ -240,6 +270,11 @@ Deno.serve(async (req) => {
     const iFirst = findCol(headers, FIRST_ALIASES);
     const iLast = findCol(headers, LAST_ALIASES);
     const iName = findCol(headers, NAME_ALIASES);
+    const iEmail = findCol(headers, EMAIL_ALIASES);
+    const iAddress = findCol(headers, ADDRESS_ALIASES);
+    const iCity = findCol(headers, CITY_ALIASES);
+    const iState = findCol(headers, STATE_ALIASES);
+    const iZip = findCol(headers, ZIP_ALIASES);
 
     // --- upsert the list (idempotent on the message id) ------------------
     const { data: existingList } = await admin
@@ -293,14 +328,38 @@ Deno.serve(async (req) => {
         ? String(row[iName]).trim()
         : [iFirst >= 0 ? row[iFirst] : '', iLast >= 0 ? row[iLast] : ''].filter(Boolean).join(' ').trim();
 
+      // source_row keeps the file verbatim, headers and all, because it is
+      // the evidence of what was actually imported. contact_fields is the
+      // same data keyed to dialer_field_defs so the profile panel can find
+      // it. Both, deliberately: one is the receipt, the other is the index.
       const sourceRow: Record<string, string> = {};
-      headers.forEach((h, i) => { if (h) sourceRow[h] = row[i] ?? ''; });
+      const contactFields: Record<string, string> = {};
+      headers.forEach((h, i) => {
+        if (!h) return;
+        const v = row[i] ?? '';
+        sourceRow[h] = v;
+        if (String(v).trim() !== '') contactFields[fieldKey(h)] = v;
+      });
+
+      const cell = (i: number) => (i >= 0 && row[i] ? String(row[i]).trim() || null : null);
 
       contacts.push({
         list_id: listId,
         campaign_id: campaign.id,
         phone_e164: phone,
         contact_name: name || null,
+        // The eight the console renders directly. Without these the profile
+        // panel is blank no matter what the field defs say, because
+        // renderProfile() looks at the COLUMN first and only then at
+        // contact_fields.
+        first_name: cell(iFirst),
+        last_name: cell(iLast),
+        email: cell(iEmail),
+        address: cell(iAddress),
+        city: cell(iCity),
+        state: cell(iState),
+        zip: cell(iZip),
+        contact_fields: contactFields,
         // timezone deliberately null -- see this file's header. Pre-dial
         // validation resolves it from the NUMBER, not from any address here.
         status: 'new',
