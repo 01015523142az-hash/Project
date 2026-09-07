@@ -14,9 +14,9 @@ so you can re-run it rather than trusting this file's date.
 
 | | |
 |---|---|
-| Migrations v523–v555 | all applied live |
+| Migrations v523–v565 | all applied live |
 | `dialer/index.html`, `dialer/admin.html` | live copies identical to the repo |
-| Dialer edge functions | 11 deployed and ACTIVE |
+| Dialer edge functions | 16 deployed and ACTIVE |
 | Uncommitted dialer work | none |
 | Committed locally but never pushed | none — all pushed 2026-09-06 |
 
@@ -186,6 +186,85 @@ See `freeswitch/README.md`.
 Phase 0 gates (confirmed volume, Telnyx's answer on increments, A-level
 attestation in writing, a named owner) are all still open.
 
+### Phase 10 — privileges, and the screens that read them (v556–v559)
+
+Started as one agent reporting they could open the admin console. It was
+three faults stacked, and the third was the one that mattered.
+
+**v553** (Phase 8) fixed the screens. **v556** found that
+`dialer_fs_credentials` had its privileges backwards — `authenticated` held
+full DML on the table storing SIP password hashes while `service_role` had no
+SELECT at all, because v554 created it and left the grants to schema
+defaults. **v557** audited all 130 tables in `public` and found the same shape
+in eighteen more: four with **RLS off entirely** (any signed-in user could
+read *and write* them, including `readymode_channel_hours_adjustments`, which
+feeds client reports) and fourteen safe only because RLS denied by default
+while the grants were never revoked — among them `ghl_connections`,
+`gmail_connections`, `readymode_connections` and `client_password_reset_codes`,
+three of which had SELECT granted to **anon**.
+
+**Do not let a table holding credentials inherit its grants.** State them in
+the migration that creates it. The ~60 tables where `anon`/`authenticated`
+hold grants *and* RLS has policies are correct and were deliberately left
+alone — grants are the wrong layer to read those at.
+
+**v558** documents the three `_`-prefixed tables as live cron state after they
+were nearly dropped as scratch: they are the cursor and working set for a
+rolling recompute of `properties.owner_portfolio_size` driven by two active
+jobs (every 2 minutes, and a 6-hourly reset). The `_` prefix, zero repo
+references and near-zero row counts all pointed the wrong way at once.
+
+**v559** gives the agent console's Property line a route to `properties`,
+which has RLS on with no policies. It had never displayed an address: it
+selected `address` (the column is `address_line1`), could not have read the
+table anyway, and only ran when `property_id` was set, which nothing
+populates. All three failures rendered as the same em dash that legitimately
+means "no property". `dialer_property_for_contact()` takes the CONTACT id, so
+an agent sees the property behind work they are assigned and cannot look up
+arbitrary rows in a 2.4M-row table.
+
+### Phase 11 — lists cost nothing, and a contact's numbers get worked (v560–v565)
+
+The arc: stop paying to make a list dialable, stop refusing files without a
+zip, work each number three times before moving on, create the per-number
+rows that had never existed, and give the residue a fallback.
+
+**v560** resolves calling-hours time zone from the **area code** at import,
+free, replacing a $0.0015/number Telnyx lookup — $150 on a 100k list. It is
+also *more accurate* than what it replaced, which mapped whole states and put
+all of Florida in Central. Split area codes take the western zone, because
+assuming Central for an Eastern number opens the window late (harmless) and
+the reverse opens it at 8am (a complaint). Also a structural screen for
+undialable numbers, and `unallocated_number` now retires a line instead of
+redialling it six times.
+
+**v561** drops zip from the mandatory import fields: nothing in the dial path
+reads it.
+
+**v562/v562b** — a line is tried `attempts_per_number` times before the next
+opens; when all are spent the contact is recycled, then retired. A **trial is
+silence**; outcomes that are facts about the LINE are terminal on the first
+occurrence and are never reopened by a recycle. v562b is the fix that makes it
+work: `dialer_bump_number_attempt` already counts at AUTHORIZE time, so
+`advance_number` must READ the count, not add to it — double-counting spent a
+line in two dials instead of three.
+
+**v563** creates `dialer_contact_phones` at import. Nothing had created them
+since v548's one-time backfill, so alternates Ph#2–Ph#10 were mapped, stored,
+shown in the profile panel — and never dialled once.
+
+**v564** adds a campaign fallback time zone for numbers the area-code table
+cannot place. Read at dial time only, never written onto the contact: writing
+a guess would make an unknown look resolved and survive a later real answer.
+
+**v565** fixes two dispositions that meant nothing. `spanish_speaker` and
+`transfer_agent` both mean CONTACTED and both carried no consequence flags, so
+both were counted as silence — a Spanish speaker, or a contact already handed
+to another agent, was re-dialled three times per number across every number
+and then recycled. The invariant to re-check after any catalogue change: **no
+disposition meaning CONTACTED may be flagless**, because flagless is
+indistinguishable from a phone ringing out.
+
 ---
 
 ## Open items
@@ -231,7 +310,16 @@ its file by content fingerprint first (answer-rate/reputation, `cron.schedule`,
 Verified after: **no duplicate names anywhere in the ledger** (256 migrations),
 and v533–v547 all present exactly once.
 
-### 3. Two temporary edge functions are still deployed
+### 3. ~~Two temporary edge functions are still deployed~~ — FIXED 2026-09-07
+
+Deleted from the Supabase dashboard; the MCP server has no delete-function
+call, which is why they survived as 410 stubs for so long. Verified by the
+signal that actually distinguishes them: both endpoints now return **404**,
+matching a slug that never existed, where before they returned 401 — the JWT
+gate still standing in front of a deployed function. 89 functions down to 87,
+and nothing else went with them.
+
+### 3b. (original note, kept for the reasoning)
 
 `tmp-recording-probe` (a debug stub that now returns a hard 410) and
 `tmp-motivated-export`. Neither has a caller. They need deleting from the
@@ -298,12 +386,59 @@ with `Cache-Control: max-age=600`, so a soft refresh can run code up to ten
 minutes old. Hard-reload, and confirm a string from the newest change is
 actually in the page before concluding anything.
 
-### 7. Disposition consequence flags need a floor review
+### 7. Disposition consequence flags — the two clear bugs fixed, the review still owed
 
-The v534 vocabulary set `retires_contact` / `schedules_callback` / `creates_lead`
-/ `adds_to_dnc` / `marks_invalid` per code from first principles. Whoever runs
-the floor should confirm them — these decide whether a contact is ever called
-again, so a wrong flag is silent and permanent. Flagged in the v534 header too.
+**v565 fixed the two that were provably wrong**: `spanish_speaker` and
+`transfer_agent` both mean CONTACTED and carried no flags at all, so both were
+counted as silence and re-dialled. Every remaining flagless disposition is now
+category `no_contact`, which is correct — those really are trials.
+
+**Still owed:** the v534 vocabulary set `retires_contact` /
+`schedules_callback` / `creates_lead` / `adds_to_dnc` / `marks_invalid` per
+code from first principles, and whoever runs the floor should confirm the rest.
+These decide whether a contact is ever called again, so a wrong flag is silent
+and permanent.
+
+The invariant to re-run after any catalogue change is in the v565 header: no
+disposition meaning CONTACTED may be flagless.
+
+### 8. Three SQL functions exist with nothing calling them
+
+Found in the 2026-09-07 audit and deliberately left, because each needs a
+decision rather than a fix:
+
+- **`dialer_live_floor()`** — returns agent, status, pause reason, campaign,
+  seconds in state, heartbeat age and staleness. A supervisor live-floor view
+  with no screen in front of it. Either build the screen or drop the function.
+- **`dialer_timezone_for_number()`** — v563 created it so SQL would have one
+  authoritative copy of the NPA table instead of a hand-placed copy per
+  migration. The argument was right and the wiring never happened; the import
+  paths still carry their own copy on purpose.
+- **`dialer_agent_sip_uri()`** — was in this list; **fixed 2026-09-07**, see
+  item 10.
+
+### 9. 43 Supabase calls discard their error
+
+14 in `dialer/index.html`, 29 in `dialer/admin.html`, all destructuring only
+`data`. This is the exact shape that hid the blank Property line for months: a
+failure and a legitimately-empty result render identically. Not all of them
+matter — the ones behind visible UI do, and `loadProperty()` was fixed in v559
+to report `unavailable` rather than the em dash that means "no property".
+
+### 10. ~~`dialer-inbound` hard-coded the Telnyx SIP domain~~ — FIXED 2026-09-07
+
+A latent break in Phase 9. `offerToNextAgent()` dialled
+`sip:<sip_username>@sip.telnyx.com` unconditionally, so the moment anyone set
+`transport='freeswitch'` that agent's OUTBOUND would work while their INBOUND
+rang a registration that no longer existed — no error anywhere, the leg simply
+never answered and looked like a timeout.
+
+It now calls `dialer_agent_sip_uri()`, which v554 added for exactly this and
+which nothing had ever called. Verified behaviour-identical today: all three
+agents resolve to precisely the URI the hard-coded string produced, because
+all three are still `transport='telnyx'`. It only diverges once someone flips
+one. A null (revoked or unprovisioned credential) settles the offer and moves
+to the next agent rather than leaving the caller on an event that never comes.
 
 ---
 

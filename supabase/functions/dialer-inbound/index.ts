@@ -208,9 +208,33 @@ Deno.serve(async (req) => {
       .insert({ attempt_id: attemptId, agent_id: next.agent_id })
       .select('id').single();
 
+    // WHICH SWITCH this agent is registered on is theirs, not ours to assume.
+    // dialer_agent_sip_uri() (v554) returns the Telnyx URI while their
+    // transport is 'telnyx' and the FreeSWITCH one once it is flipped.
+    //
+    // Hard-coding sip.telnyx.com here was a latent break in the FreeSWITCH
+    // work: the moment anyone set transport='freeswitch', that agent's
+    // OUTBOUND would work while their INBOUND rang a registration that no
+    // longer existed. No error anywhere -- the leg would simply never be
+    // answered, look like a timeout, and move to the next agent.
+    const { data: agentUri } = await admin
+      .rpc('dialer_agent_sip_uri', { p_agent: next.agent_id });
+
+    if (!agentUri) {
+      // Revoked credential, or none provisioned. Same treatment as a leg we
+      // could not place: settle the offer and move on, rather than leaving
+      // the caller waiting on an event that will never arrive.
+      console.error('dialer-inbound: no SIP URI for agent', next.agent_id, '-- skipping');
+      await admin.from('dialer_inbound_offers')
+        .update({ result: 'failed', settled_at: new Date().toISOString() })
+        .eq('id', offer?.id);
+      await offerToNextAgent(attemptId, queue, callerCcId, fromNumber);
+      return;
+    }
+
     const agentCcId = await dialAgent(
       TELNYX_API_KEY!, APP_ID!,
-      `sip:${next.sip_username}@sip.telnyx.com`,
+      agentUri,
       fromNumber,
       queue.ring_timeout_seconds,
       { r: 'agent', a: attemptId, q: queue.id, o: offer?.id },
