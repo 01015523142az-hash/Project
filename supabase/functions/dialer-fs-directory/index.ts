@@ -1,6 +1,6 @@
 // supabase/functions/dialer-fs-directory/index.ts
 //
-// Serves the FreeSWITCH user directory over mod_xml_curl (v554).
+// Serves the FreeSWITCH user directory over mod_xml_curl (v554, v555).
 //
 // FreeSWITCH asks this on every agent registration and on every SIP auth
 // challenge: "who is ola_t, and what is their password hash?" Answering it
@@ -13,6 +13,8 @@
 // carrier account. Hence:
 //   * dialer_fs_credentials has RLS on and NO policies -- only the service
 //     role reads it, and this function is the only thing that does.
+//   * the hash is EPHEMERAL (v555): dialer-fs-token mints one per sign-in
+//     with an expiry, and this refuses it afterwards.
 //   * the request must carry the shared secret. mod_xml_curl sends it as
 //     HTTP Basic via its gateway-credentials param.
 //   * deployed with --no-verify-jwt, because the caller is a switch and not
@@ -111,7 +113,7 @@ Deno.serve(async (req) => {
 
     const { data: cred, error } = await admin
       .from('dialer_fs_credentials')
-      .select('agent_id, sip_username, a1_hash, revoked_at')
+      .select('agent_id, sip_username, a1_hash, a1_expires_at, revoked_at')
       .eq('sip_username', user)
       .maybeSingle();
 
@@ -119,10 +121,22 @@ Deno.serve(async (req) => {
       console.error('dialer-fs-directory: lookup failed', error.message);
       return xml(NOT_FOUND, 500);
     }
-    // A revoked agent is "not found" as far as the switch is concerned --
-    // exactly the same answer as a username that never existed, so a probe
-    // cannot tell a disabled account from a nonexistent one.
-    if (!cred || cred.revoked_at) return xml(NOT_FOUND);
+
+    // Every refusal below returns the SAME "not found" the switch gets for a
+    // username that never existed. A probe therefore cannot tell a revoked
+    // agent from an off-shift one from a typo, which is the point.
+    //
+    // The expiry check is what makes the session secret ephemeral in fact
+    // rather than in intention: dialer-fs-token sets a1_expires_at, and this
+    // is the only place it is ever enforced. Without it the "ephemeral"
+    // password would be permanent and nobody would notice.
+    const expired = !cred?.a1_expires_at || new Date(cred.a1_expires_at) <= new Date();
+    if (!cred || cred.revoked_at || !cred.a1_hash || expired) {
+      console.log(`dialer-fs-directory: refusing ${user} (${
+        !cred ? 'unknown' : cred.revoked_at ? 'revoked' : !cred.a1_hash ? 'no session secret' : 'secret expired'
+      })`);
+      return xml(NOT_FOUND);
+    }
 
     // The agent id rides along as a channel variable so the dialplan and the
     // CDR both know who placed the call without another round trip.

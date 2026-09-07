@@ -642,6 +642,12 @@ let campaign = null;
 let contact = null;         // dialer_contacts row currently loaded
 let attemptId = null;       // dialer_attempts.id for the live call
 let rtc = null;             // TelnyxRTC client
+// Which switch this session's outbound calls go through, decided at sign-in
+// by dialer-fs-token and never guessed here. 'telnyx' is the default and the
+// rollback: if anything about the FreeSWITCH path is not ready -- agent not
+// flagged, not provisioned, host not configured -- the function says telnyx
+// and the agent keeps working.
+let transport = 'telnyx';
 let activeCall = null;
 // Set by manualDial, cleared by endCallUi. The SMS fallback fires only for
 // a manual dial that reached nobody.
@@ -847,16 +853,38 @@ function renderStatusMeta() {
 setInterval(renderStatusMeta, 30000);
 
 // ------------------------------------------------------------ softphone ---
+// THE SAME SDK TALKS TO BOTH SWITCHES. @telnyx/webrtc is FreeSWITCH's Verto
+// protocol with the method prefix renamed -- the bundle's own internals are
+// still called vertoSubscribe and Verto.newCall -- and its host is a plain
+// option that defaults to wss://rtc.telnyx.com. So pointing it at our own
+// switch is a host and a credential, not a rewrite: verto-shim translates
+// telnyx_rtc.* to verto.* on the way past, and everything below this line --
+// the call state machine, DTMF, hold, mute, the keypad, the synthesised
+// ringtone, the identity-based inbound detection -- is untouched and shared.
 async function initSoftphone() {
-  const res = await callFn('dialer-telnyx-token', {});
-  if (!res?.ok) { sipState('err', res?.error || 'Token request failed'); return; }
-  if (!res.token) { sipState('err', 'Telnyx not configured yet'); return; }
+  // Ask which switch we are on FIRST. This call is also what mints the
+  // ephemeral session secret, so it has to happen before we connect.
+  const fs = await callFn('dialer-fs-token', {});
+  let options;
+
+  if (fs?.ok && fs.transport === 'freeswitch') {
+    transport = 'freeswitch';
+    // passwd is the plaintext half of a secret that exists only for this
+    // shift; the server kept nothing but its md5. Not logged, not stored.
+    options = { host: fs.ws_url, login: fs.login, passwd: fs.passwd };
+  } else {
+    transport = 'telnyx';
+    const res = await callFn('dialer-telnyx-token', {});
+    if (!res?.ok) { sipState('err', res?.error || 'Token request failed'); return; }
+    if (!res.token) { sipState('err', 'Telnyx not configured yet'); return; }
+    options = { login_token: res.token };
+  }
 
   if (!window.TelnyxWebRTC || !window.TelnyxWebRTC.TelnyxRTC) {
     sipState('err', 'Telnyx SDK failed to load'); return;
   }
 
-  rtc = new window.TelnyxWebRTC.TelnyxRTC({ login_token: res.token, debug: window.__TELNYX_DEBUG__ === true });
+  rtc = new window.TelnyxWebRTC.TelnyxRTC({ ...options, debug: window.__TELNYX_DEBUG__ === true });
   rtc.enableMicrophone();
 
   rtc.on('telnyx.ready', () => sipState('on', 'Ready'));
@@ -865,6 +893,23 @@ async function initSoftphone() {
   rtc.on('telnyx.notification', onTelnyxNotification);
 
   rtc.connect();
+}
+
+// What we actually put on the wire as the destination.
+//
+// On FreeSWITCH the browser NEVER names a phone number. It sends the attempt
+// id, and dialer-fs-route resolves it server-side after checking the attempt
+// belongs to this agent, is outbound, and has not already been dialled.
+// dialer-call-control applied DNC, calling hours, per-agent caps, area code
+// and the v548 number order before that row existed, so the worst a tampered
+// session can do is re-dial work already approved for this same agent, once.
+//
+// Telnyx has no equivalent hook -- the credential connection dials whatever
+// the browser asks for -- so that path still sends the number. auth.to_number
+// is displayed on screen either way; showing it is not the same as trusting
+// the client to choose it.
+function dialTarget(auth) {
+  return transport === 'freeswitch' ? 'atmpt-' + auth.attempt_id : auth.to_number;
 }
 
 function sipState(kind, text) {
@@ -1346,7 +1391,7 @@ $('dialBtn').onclick = async () => {
     // returns, and they must not be mistaken for an incoming invite.
     placingCall = true;
     activeCall = rtc.newCall({
-      destinationNumber: auth.to_number,
+      destinationNumber: dialTarget(auth),
       callerNumber: auth.from_number,
       audio: true,
       video: false,
@@ -1441,7 +1486,7 @@ async function manualDial() {
     // returns, and they must not be mistaken for an incoming invite.
     placingCall = true;
     activeCall = rtc.newCall({
-      destinationNumber: auth.to_number,
+      destinationNumber: dialTarget(auth),
       callerNumber: auth.from_number,
       audio: true, video: false,
       remoteElement: 'remoteAudio',

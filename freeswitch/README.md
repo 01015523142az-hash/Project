@@ -29,7 +29,10 @@ registers, and the queueing, hold music, voicemail and transfer already work.
 | `dialplan/dialer.xml` | Static fallback only — inbound leg, echo test, and refuse everything else |
 | `sip_profiles/external/trunk-*.xml` | Primary carrier and the Telnyx failover leg |
 | `nginx/fs-wss.conf` | TLS termination on 443 for agent signalling |
-| `bin/provision-agent.sh` | Issues one agent's SIP credential |
+| `bin/provision-agent.sh` | Creates one agent's durable SIP identity |
+| `bin/verto-shim.ts` | Translates the Telnyx SDK's method prefix to Verto's |
+| `systemd/verto-shim.service` | Runs the shim; a dead shim means every agent offline |
+| `test/reprefix.test.mjs` | 35 checks on the shim's rewrite. `node test/reprefix.test.mjs bin/verto-shim.ts` |
 
 ## Secrets
 
@@ -39,7 +42,7 @@ contain a real secret** — it is a public GitHub repository.
 | Placeholder | Value |
 |---|---|
 | `__FS_XML_SECRET__` | Shared secret; must equal the `FS_XML_SECRET` set on the Supabase functions |
-| `__FS_DOMAIN__` | e.g. `fs.staffportal.proptechnologyai.com` |
+| `__FS_DOMAIN__` | e.g. `fs.staffportal.proptechnologyai.com` — **must equal `FS_DOMAIN`** below |
 | `__PUBLIC_IP__` | The host's public IPv4 |
 | `__TRUNK_PRIMARY_HOST__` | The carrier's SIP proxy hostname |
 
@@ -52,11 +55,61 @@ Set the matching Supabase secrets before the switch will get any answer but
 ```bash
 supabase secrets set FS_XML_SECRET="$(head -c 32 /dev/urandom | base64)"
 supabase secrets set FS_BILLING_INCREMENT=6
+supabase secrets set FS_DOMAIN=fs.staffportal.proptechnologyai.com
+supabase secrets set FS_WS_URL=wss://fs.staffportal.proptechnologyai.com/verto
+supabase secrets set FS_SECRET_TTL_HOURS=12
 ```
+
+**`FS_DOMAIN` must exactly equal `force-register-domain` in
+`verto.conf.xml`.** It is the SIP digest realm, so if the two disagree every
+a1-hash we compute is wrong and registration fails as *"bad password"* —
+sending whoever debugs it to look in entirely the wrong place.
 
 `FS_BILLING_INCREMENT` is the trunk's billing increment and belongs in
 config, not code — it is a contract term, and contract terms get
 renegotiated. Set it to what the carrier's rate sheet actually says.
+
+## The console keeps its existing softphone
+
+`@telnyx/webrtc` is FreeSWITCH's Verto protocol with the method prefix
+renamed. Verified against the published bundle at 2.21.1: JSON-RPC 2.0 over
+WebSocket, call methods `telnyx_rtc.invite/.answer/.bye/.attach/.subscribe/
+.broadcast/.modify/.media/.info/.display/.ping/.punt/.clientReady` matching
+Verto's set one for one, internal symbols still named `vertoSubscribe`,
+`vertoBroadcast` and `Verto.newCall`, and `host` a plain option defaulting to
+`wss://rtc.telnyx.com`.
+
+**`login` is not prefixed on either side** — both use the bare method with
+`{login, passwd, sessid, userVariables}` — so authentication passes straight
+through and only the call methods need rewriting. `bin/verto-shim.ts` does
+that in about sixty lines, and `test/reprefix.test.mjs` covers it.
+
+So the console change is a host and a credential, not a rewrite. The call
+state machine, DTMF, hold, mute, the keypad, the synthesised ringtone and the
+identity-based inbound detection are all shared between both transports —
+which matters, because each of those was debugged against real calls and
+would have to be rediscovered in an unfamiliar library.
+
+The shim carries signalling only; media (SRTP) goes browser ↔ FreeSWITCH RTP
+ports directly, so it is not on the audio path and cannot degrade call
+quality.
+
+## Credentials are ephemeral
+
+mod_verto authenticates with SIP digest, so the browser must present a
+plaintext password. A long-lived one would therefore have to be recoverable
+from somewhere — which is exactly what we refused to store.
+
+Instead `dialer-fs-token` mints a password per sign-in, stores only its md5
+with an expiry, and hands the plaintext to the browser once.
+`dialer-fs-directory` serves that hash until `a1_expires_at` passes, and that
+check is **the only place expiry is enforced** — without it the "ephemeral"
+secret would be permanent and nothing would look wrong.
+
+`provision-agent.sh` therefore creates the durable *identity* only. The
+`sip_username` outlives every secret, because the static dialplan routes
+inbound legs to `agent_*` and `dialer_agent_sip_uri()` hands that name to
+Telnyx.
 
 ## The security model, in one paragraph
 

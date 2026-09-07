@@ -14,7 +14,7 @@ so you can re-run it rather than trusting this file's date.
 
 | | |
 |---|---|
-| Migrations v523–v553 | all applied live |
+| Migrations v523–v555 | all applied live |
 | `dialer/index.html`, `dialer/admin.html` | live copies identical to the repo |
 | Dialer edge functions | 11 deployed and ACTIVE |
 | Uncommitted dialer work | none |
@@ -151,6 +151,40 @@ waiting-call poll has never worked. Nobody noticed because inbound has not
 completed a call end to end. It is `SECURITY DEFINER` now; its visibility rule
 was never RLS but the `dialer_queue_agents` join — active membership of the
 queue the call is waiting in.
+
+### Phase 9 — FreeSWITCH outbound gateway, groundwork (v554–v555)
+
+Telnyx bills **60/60** and our outbound calls average **18 seconds**, so we
+pay for 60 and use 18 — an effective `$0.0167/min` against a `$0.005`
+sticker. Switching CPaaS vendors does not help; Plivo's Voice API is 60/60
+too, at double the rate. The saving is in changing *product class*, to a SIP
+trunk billing 6/6 or per-second, and a SIP trunk comes with no browser SDK —
+hence owning a switch.
+
+Built and deployed, all of it **inert**: `transport` defaults to `telnyx`
+and the switch-facing functions refuse everything until `FS_XML_SECRET` is
+set. Five functions (`dialer-fs-token`, `-directory`, `-route`, `-cdr`, plus
+the unchanged Telnyx path), and `freeswitch/` carries the switch config.
+
+Two findings shaped it:
+
+- **`@telnyx/webrtc` is Verto with the method prefix renamed.** Telnyx was
+  built on FreeSWITCH. `login` is unprefixed on both sides, so only the call
+  methods differ, and a ~60-line shim (`freeswitch/bin/verto-shim.ts`, 35
+  tests) lets the console keep the softphone we already debugged in
+  production rather than re-learning an unfamiliar library.
+- **The password could not be long-lived.** mod_verto uses SIP digest, so
+  the browser must present plaintext — meaning a durable password would have
+  to be recoverable, contradicting v554's claim that it was stored nowhere.
+  v555 mints one per sign-in and keeps only its md5 with an expiry.
+
+The security model is that **the browser never names a phone number**: it
+dials `atmpt-<uuid>` and `dialer-fs-route` resolves it server-side, once.
+See `freeswitch/README.md`.
+
+**Not started:** the host itself. No VPS, no trunk, no certificate — and the
+Phase 0 gates (confirmed volume, Telnyx's answer on increments, A-level
+attestation in writing, a named owner) are all still open.
 
 ---
 
