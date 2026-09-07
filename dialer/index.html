@@ -767,9 +767,12 @@ let statusSince = Date.now();
 let statusUsage = [];        // dialer_status_usage_today()
 
 async function loadAgentStatuses() {
-  const { data } = await sb.from('dialer_agent_statuses')
+  const { data, error } = await sb.from('dialer_agent_statuses')
     .select('code, label, allows_dialing, counts_as, daily_limit_minutes')
     .eq('is_active', true).order('sort_order');
+  // Without this the dropdown is simply empty and the agent cannot go Ready,
+  // with nothing on screen saying why.
+  if (error) banner('Could not load agent statuses: ' + error.message, 'err');
   agentStatuses = data || [];
   $('statusSel').innerHTML = agentStatuses.map((s) =>
     `<option value="${s.code}">${s.label}</option>`).join('');
@@ -1031,11 +1034,24 @@ function stopAmdWatch() {
 // assignment — there is no client-side filter to get wrong, and no request
 // that could return a queue they are not meant to work.
 async function loadCampaigns() {
-  const { data } = await sb.from('dialer_campaigns')
+  const { data, error } = await sb.from('dialer_campaigns')
     .select('id, name, script, dial_mode, status, sms_fallback_enabled, sms_fallback_template')
     .eq('status', 'active').order('name');
   campaigns = data || [];
   const sel = $('campaignSel');
+
+  // "No queue assigned yet" is an ACCUSATION -- it tells the agent an admin
+  // has not done something. When the query FAILED, that is a lie, and it
+  // sends them to chase a manager about a problem that does not exist. A
+  // failure and an empty result must not read the same here.
+  if (error) {
+    $('queueName').textContent = 'Could not load your queues — this is a fault, not a missing assignment.';
+    $('queueName').className = 'queue-name none';
+    banner('Could not load campaigns: ' + error.message, 'err');
+    show($('queueLabel'), false); show(sel, false);
+    campaign = null;
+    return;
+  }
 
   if (!campaigns.length) {
     $('queueName').textContent = 'No queue assigned yet. An admin assigns queues — ask the floor.';
@@ -1200,7 +1216,15 @@ async function loadContactPhones() {
     .eq('contact_id', contact.id).order('rank');
   contactPhones = all || [];
 
-  const { data: next } = await sb.rpc('dialer_next_number', { p_contact: contact.id });
+  const { data: next, error } = await sb.rpc('dialer_next_number', { p_contact: contact.id });
+  // A failure here is indistinguishable from "no number is due", and the
+  // caller acts on that by resting or skipping the contact -- so a fault
+  // silently costs somebody their turn in the queue. Say so instead.
+  if (error) {
+    banner('Could not work out which number to dial: ' + error.message, 'err');
+    activePhone = null;
+    return;
+  }
   const n = Array.isArray(next) ? next[0] : next;
   activePhone = n ? (contactPhones.find((p) => p.id === n.phone_id) || null) : null;
 }
@@ -1918,9 +1942,12 @@ async function maybeSmsFallback() {
 // --------------------------------------------------------- dispositions ---
 let dispositions = [];
 async function loadDispositions() {
-  const { data } = await sb.from('dialer_dispositions')
+  const { data, error } = await sb.from('dialer_dispositions')
     .select('code, label, category, schedules_callback')
     .eq('is_active', true).order('sort_order');
+  // An empty list means the agent cannot wrap up the call they just had, and
+  // an unwrapped call is the one thing this screen must never do quietly.
+  if (error) banner('Could not load dispositions: ' + error.message, 'err');
   dispositions = data || [];
 }
 

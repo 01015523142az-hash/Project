@@ -14,7 +14,7 @@ so you can re-run it rather than trusting this file's date.
 
 | | |
 |---|---|
-| Migrations v523–v565 | all applied live |
+| Migrations v523–v567 | all applied live |
 | `dialer/index.html`, `dialer/admin.html` | live copies identical to the repo |
 | Dialer edge functions | 16 deployed and ACTIVE |
 | Uncommitted dialer work | none |
@@ -402,28 +402,61 @@ and permanent.
 The invariant to re-run after any catalogue change is in the v565 header: no
 disposition meaning CONTACTED may be flagless.
 
-### 8. Three SQL functions exist with nothing calling them
+### 8. ~~Three SQL functions exist with nothing calling them~~ — RESOLVED 2026-09-07
 
-Found in the 2026-09-07 audit and deliberately left, because each needs a
-decision rather than a fix:
+All three turned out differently, which is the argument for auditing rather
+than assuming an uncalled function is harmless.
 
-- **`dialer_live_floor()`** — returns agent, status, pause reason, campaign,
-  seconds in state, heartbeat age and staleness. A supervisor live-floor view
-  with no screen in front of it. Either build the screen or drop the function.
-- **`dialer_timezone_for_number()`** — v563 created it so SQL would have one
-  authoritative copy of the NPA table instead of a hand-placed copy per
-  migration. The argument was right and the wiring never happened; the import
-  paths still carry their own copy on purpose.
-- **`dialer_agent_sip_uri()`** — was in this list; **fixed 2026-09-07**, see
+- **`dialer_agent_sip_uri()`** was a latent break in the FreeSWITCH work. See
   item 10.
+- **`dialer_live_floor()`** was worse than uncalled: it read `status`,
+  `pause_reason` and `started_at` — the pause model **v537 replaced**. Those
+  columns still exist, so it did not fail, it returned plausible *wrong*
+  answers. **v566** rewrites it on `agent_status` / `agent_status_since`,
+  resolves names and campaign server-side (the old client-side join handed
+  raw uuids to any manager who could not see through the `profiles` policy),
+  and `loadShift()` in the admin Agents tab now calls it.
 
-### 9. 43 Supabase calls discard their error
+  It also surfaced the real bug underneath: **sessions never end.** A session
+  is closed by a `sendBeacon` on tab close, best-effort, never fired on a
+  crash or a closed laptop, and nothing else ever closes one. There were
+  **133 open from 3 agents, all with a dead heartbeat, 100 over a day old** —
+  and the tab was calling the newest 50 of them "Live sessions". v566 reaped
+  the day-old backlog and the function now excludes anything with no
+  heartbeat for 15 minutes. **Not fixed: nothing stops the backlog rebuilding
+  — that wants a reaper on a schedule.**
+- **`dialer_timezone_for_number()`** is correctly uncalled, and **v567** says
+  so on the function itself so the next audit does not "fix" it by inventing a
+  caller. Wiring it into the dial path would be a no-op: import already
+  resolves the zone from the area code, so a null timezone is one this table
+  could not place, and the function reads the same table. It is the right tool
+  for a repair query or a future third import path — including the trigger
+  that still does not exist for `dialer_contact_phones`.
 
-14 in `dialer/index.html`, 29 in `dialer/admin.html`, all destructuring only
-`data`. This is the exact shape that hid the blank Property line for months: a
-failure and a legitimately-empty result render identically. Not all of them
-matter — the ones behind visible UI do, and `loadProperty()` was fixed in v559
-to report `unavailable` rather than the em dash that means "no property".
+### 9. Supabase calls that discard their error — the misleading ones fixed, 37 left
+
+Was 43. Now **37** (10 agent, 27 admin). The six removed are the ones where a
+failure did not merely vanish but produced a **wrong** UI state:
+
+- **the campaign list** — the worst of them. A failed query rendered *"No
+  queue assigned yet. An admin assigns queues — ask the floor."* That is an
+  accusation: it tells the agent somebody else has not done their job, and
+  sends them to chase a manager about a problem that does not exist. It now
+  says plainly that this is a fault, not a missing assignment.
+- **`dialer_next_number`** — a failure read as "no number is due", and the
+  caller acts on that by resting or skipping the contact, so a fault silently
+  cost somebody their turn in the queue.
+- **the status catalogue** — an empty dropdown means the agent cannot go
+  Ready, with nothing on screen saying why.
+- **the disposition catalogue** — an empty list means they cannot wrap up the
+  call they just had.
+- **`loadShift()`** — two calls, replaced wholesale by the RPC in v566.
+
+The remaining 37 are ones where an empty result and a failure look the same
+*and it does not matter* — lookup caches, name maps, secondary counts. Worth
+tidying, not worth a risky sweep through two large files. The rule for new
+code: **if the empty state says anything more than "nothing here", it has to
+distinguish a failure from an emptiness.**
 
 ### 10. ~~`dialer-inbound` hard-coded the Telnyx SIP domain~~ — FIXED 2026-09-07
 

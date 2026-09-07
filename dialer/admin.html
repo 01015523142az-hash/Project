@@ -2348,34 +2348,40 @@ $('statusSave').onclick = async () => {
   loadStatusEditor();
 };
 
-// Live sessions. A stale heartbeat means a crashed tab rather than a logout,
-// which is why the age of the heartbeat is shown rather than hidden.
+// Who is on the floor right now. One RPC rather than three reads: it resolves
+// the name, the status label and the campaign server-side, and it decides
+// what counts as "on the floor" in one place instead of here.
+//
+// That last part is why this was rewritten. It used to select every session
+// with no ended_at, newest 50 first -- and sessions are ended by a sendBeacon
+// on tab close, which is best-effort and never fires on a crash or a closed
+// laptop. They accumulate: at the 2026-09-07 audit there were 133 open, ALL
+// with a dead heartbeat and 100 of them over a day old, from three agents. So
+// this table showed fifty dead tabs and called them live sessions.
+// dialer_live_floor() excludes anything with no heartbeat for 15 minutes, and
+// v566 closed the day-old backlog.
+//
+// A stale heartbeat inside that window still means a crashed tab rather than
+// a logout, so it is flagged rather than hidden.
 async function loadShift() {
-  const { data } = await sb.from('dialer_agent_sessions')
-    .select('agent_id, agent_status, agent_status_since, campaign_id, last_heartbeat_at, status')
-    .is('ended_at', null).order('agent_status_since', { ascending: false }).limit(50);
+  const { data, error } = await sb.rpc('dialer_live_floor');
+  if (error) {
+    $('shiftRows').innerHTML =
+      `<tr><td colspan="4">Could not load the floor: ${esc(error.message)}</td></tr>`;
+    return;
+  }
   const rows = data || [];
   if (!rows.length) {
-    $('shiftRows').innerHTML = '<tr><td colspan="4">Nobody signed in.</td></tr>'; return;
+    $('shiftRows').innerHTML = '<tr><td colspan="4">Nobody on the floor.</td></tr>'; return;
   }
-  const { data: people } = await sb.from('profiles').select('id, full_name');
-  const nameOf = {}; (people || []).forEach((p) => { nameOf[p.id] = p.full_name; });
-  const labelOf = {}; statusCatalogue.forEach((s) => { labelOf[s.code] = s.label; });
-  const campOf = {}; campaigns.forEach((c) => { campOf[c.id] = c.name; });
 
-  $('shiftRows').innerHTML = rows.map((r) => {
-    const since = r.agent_status_since ? new Date(r.agent_status_since) : null;
-    const mins = since ? Math.floor((Date.now() - since.getTime()) / 60000) : null;
-    const stale = r.last_heartbeat_at
-      && (Date.now() - new Date(r.last_heartbeat_at).getTime()) > 120000;
-    return `<tr>
-      <td>${esc(nameOf[r.agent_id] || r.agent_id)}${stale
+  $('shiftRows').innerHTML = rows.map((r) => `<tr>
+      <td>${esc(r.agent_name || r.agent_id)}${r.is_stale
           ? ' <span class="tag t-resting">no heartbeat</span>' : ''}</td>
-      <td>${esc(labelOf[r.agent_status] || r.agent_status || '—')}</td>
-      <td>${esc(campOf[r.campaign_id] || '—')}</td>
-      <td>${mins === null ? '—' : mins + 'm'}</td>
-    </tr>`;
-  }).join('');
+      <td>${esc(r.status_label || r.agent_status || '—')}</td>
+      <td>${esc(r.campaign_name || '—')}</td>
+      <td>${r.seconds_in_state === null ? '—' : Math.floor(r.seconds_in_state / 60) + 'm'}</td>
+    </tr>`).join('');
 }
 
 $('cCreate').onclick = async () => {
