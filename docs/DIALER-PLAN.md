@@ -14,7 +14,7 @@ so you can re-run it rather than trusting this file's date.
 
 | | |
 |---|---|
-| Migrations v523–v567 | all applied live |
+| Migrations v523–v568 | all applied live |
 | `dialer/index.html`, `dialer/admin.html` | live copies identical to the repo |
 | Dialer edge functions | 16 deployed and ACTIVE |
 | Uncommitted dialer work | none |
@@ -423,8 +423,15 @@ than assuming an uncalled function is harmless.
   **133 open from 3 agents, all with a dead heartbeat, 100 over a day old** —
   and the tab was calling the newest 50 of them "Live sessions". v566 reaped
   the day-old backlog and the function now excludes anything with no
-  heartbeat for 15 minutes. **Not fixed: nothing stops the backlog rebuilding
-  — that wants a reaper on a schedule.**
+  heartbeat for 15 minutes. **v568 adds the reaper** — `pg_cron` job 38, every
+  10 minutes, closing anything with no heartbeat for 30 minutes (sixty
+  consecutive misses), with `ended_at` set to the last known-alive moment
+  rather than `now()` so shift lengths stay honest. Its safety counterpart is
+  in the console: the heartbeat now clears `ended_at`, so a session reaped in
+  error repairs itself within 30 seconds. That matters because the heartbeat
+  does not filter on `ended_at` — a wrongly-closed session would keep beating
+  into a row both `dialer_live_floor()` and `dialer_available_agents()`
+  ignore, and the agent would silently stop being offered inbound calls.
 - **`dialer_timezone_for_number()`** is correctly uncalled, and **v567** says
   so on the function itself so the next audit does not "fix" it by inventing a
   caller. Wiring it into the dial path would be a no-op: import already

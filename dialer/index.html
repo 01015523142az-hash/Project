@@ -744,9 +744,25 @@ async function startSession() {
     .insert({ agent_id: me.id, status: 'ready' }).select('id').single();
   if (error) { banner('Could not start a dialer session: ' + error.message, 'err'); return; }
   sessionId = data.id;
+  // The heartbeat also CLEARS ended_at, which makes it self-healing.
+  //
+  // v568 added a reaper that closes sessions with no heartbeat for 30
+  // minutes, because nothing else ever closed them -- sendBeacon on tab close
+  // is best-effort and never fires on a crash or a closed laptop. Thirty
+  // minutes is sixty consecutive misses, so a live tab should never be
+  // touched. But if one ever were, this update does not filter on ended_at,
+  // so the console would carry on heartbeating into a closed row that
+  // dialer_live_floor() and dialer_available_agents() both ignore -- and the
+  // agent would quietly stop being offered inbound calls for the rest of
+  // their shift, with nothing on screen to explain it.
+  //
+  // Clearing ended_at costs nothing and repairs that within 30 seconds. It
+  // cannot resurrect a properly closed session: the tab is gone by then, so
+  // this timer is gone with it.
   heartbeatTimer = setInterval(() => {
     sb.from('dialer_agent_sessions')
-      .update({ last_heartbeat_at: new Date().toISOString() }).eq('id', sessionId).then(() => {});
+      .update({ last_heartbeat_at: new Date().toISOString(), ended_at: null })
+      .eq('id', sessionId).then(() => {});
   }, 30000);
 }
 
