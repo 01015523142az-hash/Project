@@ -864,9 +864,19 @@ function onTelnyxNotification(n) {
   const state = call.state;
 
   // An inbound queue call arrives as a DIFFERENT call object from the one this
-  // console placed. Without this branch it fell straight into the outbound
-  // state machine, and a ringing customer read as our own call changing state.
-  if (call !== activeCall && String(call.direction || '').toLowerCase() === 'inbound') {
+  // console placed. Without this branch it falls straight into the outbound
+  // state machine, and a ringing customer reads as our own call changing state
+  // -- which is exactly what happened on the first live test: the header said
+  // "Ringing…" and no incoming panel ever appeared.
+  //
+  // DO NOT test call.direction here. The SDK's invite handler runs
+  //     e.playRingtone(); e.setState(Ringing); e.direction = Inbound;
+  // and setState is what dispatches this notification -- so direction is still
+  // undefined at the moment we are called, one line too early. Identity is the
+  // reliable signal instead: a call object this console did not create is an
+  // incoming invite. placingCall covers the gap between rtc.newCall() firing
+  // its first notification and activeCall being assigned from its return value.
+  if (call !== activeCall && !placingCall) {
     if (state === 'new' || state === 'trying' || state === 'ringing') {
       showIncoming(call);
     } else if (state === 'hangup' || state === 'destroy') {
@@ -1318,6 +1328,9 @@ $('dialBtn').onclick = async () => {
   banner('', null);
 
   try {
+    // See placingCall's declaration: newCall fires notifications before it
+    // returns, and they must not be mistaken for an incoming invite.
+    placingCall = true;
     activeCall = rtc.newCall({
       destinationNumber: auth.to_number,
       callerNumber: auth.from_number,
@@ -1326,7 +1339,9 @@ $('dialBtn').onclick = async () => {
       // Where the far end is heard. See #remoteAudio.
       remoteElement: 'remoteAudio',
     });
+    placingCall = false;
   } catch (e) {
+    placingCall = false;
     banner('Could not place the call: ' + (e?.message || e), 'err');
     $('dialBtn').disabled = false;
     return;
@@ -1408,13 +1423,18 @@ async function manualDial() {
   banner('', null);
 
   try {
+    // See placingCall's declaration: newCall fires notifications before it
+    // returns, and they must not be mistaken for an incoming invite.
+    placingCall = true;
     activeCall = rtc.newCall({
       destinationNumber: auth.to_number,
       callerNumber: auth.from_number,
       audio: true, video: false,
       remoteElement: 'remoteAudio',
     });
+    placingCall = false;
   } catch (e) {
+    placingCall = false;
     banner('Could not place the call: ' + (e?.message || e), 'err');
     return;
   }
@@ -1453,6 +1473,11 @@ $('muteBtn').onclick = () => {
 // the console's job here is small -- recognise the invite, show who it is, and
 // answer it. Everything about queueing, hold music and voicemail happens
 // server-side and never needs to be reimplemented in the browser.
+// True only while rtc.newCall() is running. Our own outbound call fires its
+// first notifications from inside that call, before its return value has been
+// assigned to activeCall -- without this flag those few events would look like
+// a call we did not create, i.e. an incoming one.
+let placingCall = false;
 let incomingCall = null;   // the ringing invite, before it is accepted
 let incomingCtx = null;    // { attempt_id, queue_name } matched from the queue
 let inboundAttemptId = null; // set once answered; what Transfer acts on
