@@ -464,20 +464,27 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
     <div class="panel">
       <h2>Lists</h2>
       <p class="hint">
-        Imported contacts are <strong>not dialable until validated</strong> — the
-        calling-hours gate needs each number's own time zone, which only Number Lookup
-        can resolve. Validation also drops disconnected numbers before you spend a dial
-        on them, and ranks mobiles ahead of landlines.
+        <strong>Imported contacts are dialable immediately, at no cost.</strong> The
+        calling-hours gate needs each number's own time zone, and the area code carries
+        it — a ported US number keeps its area code and its state, so the first three
+        digits answer the question a paid lookup used to answer for $0.0015. Import also
+        drops undialable numbers on the digits alone, and takes mobile-versus-landline
+        from your file's phone-type column to rank the queue.
         <br><br>
-        <strong>Validate in batches, not whole lists.</strong> At $0.0015 a number, a
-        100,000-contact import costs $150 to validate up front — mostly on numbers that
-        will not be dialled for a year. Validating 500 at a time costs 75¢ and keeps
-        agents supplied; top it up as the Unvalidated count falls.
+        <strong>No time zone</strong> counts the rows that still cannot be dialled —
+        an area code this build's table does not carry. It reads zero on an ordinary
+        US list. When it does not, the button on that row resolves just those numbers.
+        <br><br>
+        <strong>Carrier check is optional now.</strong> The one thing free cannot see is
+        a number that is well-formed and correctly zoned but dead; a carrier check finds
+        those before the first dial, at $0.0015 each. Skipping it costs one wasted dial
+        per dead number — the call log retires them automatically when the carrier
+        answers "unallocated".
       </p>
       <div class="scroll">
         <table>
           <thead><tr><th>List</th><th>Campaign</th><th>Status</th><th class="num">Loaded</th>
-            <th class="num">Unvalidated</th><th>Scrubbed</th><th></th></tr></thead>
+            <th class="num">No time zone</th><th>Scrubbed</th><th></th></tr></thead>
           <tbody id="listRows"><tr><td colspan="7">Loading…</td></tr></tbody>
         </table>
       </div>
@@ -2297,12 +2304,17 @@ async function loadLists() {
     .select('id, name, campaign_id, status, loaded_rows, readymode_scrubbed_at')
     .order('created_at', { ascending: false }).limit(50);
 
+  // The column that matters is no longer "has this been paid for" but "can
+  // this be dialled" -- which is one question: does the number have a time
+  // zone. Import resolves that from the area code for nothing, so this
+  // count reads zero on an ordinary list and only lifts off zero for an
+  // area code the table does not carry.
   const rows = [];
   for (const l of (data || [])) {
     const { count } = await sb.from('dialer_contacts')
       .select('id', { count: 'exact', head: true })
-      .eq('list_id', l.id).is('phone_validated_at', null).in('status', ['new', 'queued']);
-    rows.push({ ...l, unvalidated: count ?? 0 });
+      .eq('list_id', l.id).is('timezone', null).in('status', ['new', 'queued']);
+    rows.push({ ...l, blocked: count ?? 0 });
   }
 
   $('listRows').innerHTML = rows.length
@@ -2311,43 +2323,61 @@ async function loadLists() {
         <td>${esc(campaigns.find((c) => c.id === l.campaign_id)?.name || '—')}</td>
         <td><span class="tag ${l.status === 'ready' ? 't-active' : 't-resting'}">${esc(l.status)}</span></td>
         <td class="num">${(l.loaded_rows ?? 0).toLocaleString()}</td>
-        <td class="num ${l.unvalidated ? 'gap' : ''}">${l.unvalidated.toLocaleString()}</td>
+        <td class="num ${l.blocked ? 'gap' : ''}">${l.blocked.toLocaleString()}</td>
         <td>${l.readymode_scrubbed_at ? esc(l.readymode_scrubbed_at.slice(0, 10)) : '—'}</td>
-        <td>${l.unvalidated && canManage ? `<button class="sm" data-val="${esc(l.id)}">Validate</button>` : ''}</td>
+        <td>${canManage ? (l.blocked
+            ? `<button class="sm" data-val="${esc(l.id)}" data-tz="1">Resolve ${l.blocked.toLocaleString()} time zones</button>`
+            : `<button class="sm" data-val="${esc(l.id)}">Carrier check</button>`) : ''}</td>
       </tr>`).join('')
     : '<tr><td colspan="7">No lists yet.</td></tr>';
 
   $('listRows').querySelectorAll('button[data-val]').forEach((b) => {
-    b.onclick = () => validateList(b.dataset.val, b);
+    b.onclick = () => validateList(b.dataset.val, b, b.dataset.tz === '1');
   });
 }
 
-// Validates a BOUNDED BATCH from the front of the queue, not the whole list.
+// THE PAID PATH, WHICH IS NOW OPTIONAL.
 //
-// This used to loop until the list was clear, which meant a 100k-contact
-// import cost ~$150 up front to look up numbers that would not be dialled
-// for a year, if ever. At ~3,000 dials a month you only ever need a few
-// thousand contacts validated ahead of the agents -- roughly $4.50 -- and
-// the rest can wait until they are actually near the front.
+// Import resolves time zone from the area code and drops undialable numbers
+// on the digits alone, both for nothing, so a list is dialable without this
+// ever running. What money still buys is the one thing free cannot see: a
+// number that is properly formed and correctly zoned but dead. Without a
+// carrier check you find that out on the first dial instead -- which the
+// webhook now retires automatically, at the cost of one wasted dial.
 //
-// Same accuracy, same disconnected-number detection, same time-zone source;
-// only the timing of the spend changes. Top it up when Unvalidated gets low.
+// So there are exactly two reasons to press a button here:
+//   - Resolve time zones: an area code this build's table does not carry.
+//     Small, bounded, and worth the cents because those rows cannot be
+//     dialled at all until something resolves them.
+//   - Carrier check: pre-screening the dead numbers out of a batch before
+//     agents reach it. Real money on a large list, and genuinely optional.
+//
+// Still bounded per press either way. An unbounded run over a 100k import
+// is $150 spent mostly on numbers that will not be dialled for a year.
 const VALIDATE_BATCH = 500;
 
-async function validateList(listId, btn) {
+async function validateList(listId, btn, timezonesOnly) {
   const est = (VALIDATE_BATCH * 0.0015).toFixed(2);
-  if (!confirm(`Validate the next ${VALIDATE_BATCH} numbers in this list?\n\n`
-    + `Costs about $${est}. Only validated contacts are dialable, so top this `
-    + `up as agents work through the list rather than validating everything now.`)) return;
+  const prompt = timezonesOnly
+    ? `Look up the next ${VALIDATE_BATCH} numbers that have no time zone?\n\n`
+      + `Costs about $${est}, and it is the only way these particular rows become `
+      + `dialable — their area code is not in this build's table.`
+    : `Carrier-check the next ${VALIDATE_BATCH} numbers in this list?\n\n`
+      + `Costs about $${est}. This is optional: these contacts are already dialable. `
+      + `It buys pre-dial detection of numbers that are dead but well-formed, which `
+      + `otherwise costs one wasted dial each.`;
+  if (!confirm(prompt)) return;
 
   btn.disabled = true;
-  say($('valMsg'), 'Validating…', 'ok');
+  say($('valMsg'), 'Looking up…', 'ok');
 
   // Two passes of the function's own 300 cap covers one batch.
   let total = 0, remaining = 0;
   for (let pass = 0; pass < Math.ceil(VALIDATE_BATCH / 300); pass++) {
-    const r = await callFn('dialer-validate-numbers', { list_id: listId, max_lookups: 300 });
-    if (!r?.ok) { say($('valMsg'), r?.error || 'Validation failed', 'err'); btn.disabled = false; return; }
+    const r = await callFn('dialer-validate-numbers', {
+      list_id: listId, max_lookups: 300, only_missing_timezone: !!timezonesOnly,
+    });
+    if (!r?.ok) { say($('valMsg'), r?.error || 'Lookup failed', 'err'); btn.disabled = false; return; }
     total += r.checked || 0;
     remaining = r.remaining ?? 0;
     if (!r.remaining || !r.checked) break;
@@ -2355,9 +2385,9 @@ async function validateList(listId, btn) {
 
   btn.disabled = false;
   say($('valMsg'),
-    `Validated ${total} (~$${(total * 0.0015).toFixed(2)}). `
-    + (remaining ? `${remaining.toLocaleString()} still unvalidated — validate more when agents get close.`
-                 : 'This list is fully validated.'),
+    `Checked ${total} (~$${(total * 0.0015).toFixed(2)}). `
+    + (remaining ? `${remaining.toLocaleString()} left in this list.`
+                 : 'Nothing left to check on this list.'),
     'ok');
   loadLists();
 }
@@ -2394,6 +2424,175 @@ function toE164(raw) {
   return null;
 }
 
+// ---- free pre-dial resolution --------------------------------------------
+// NANP area code -> IANA time zone. Free, offline, and the reason an
+// imported list is dialable the moment it lands.
+//
+// WHY THIS IS AS GOOD AS THE PAID LOOKUP: US number portability is confined
+// to the same rate centre, so a ported number keeps its area code and its
+// state. Telnyx's portability.state and the NPA therefore agree except in
+// edge cases -- we were paying $0.0015 a number for an answer already
+// carried in the first three digits.
+//
+// AND BETTER THAN WHAT PRECEDED IT: validation mapped whole STATES, so
+// every Florida number resolved to Central and its 9am window opened at
+// the seller's 10am. Half the state's dialable morning, gone. Same for
+// El Paso (Mountain, not Central) and Boise (Mountain, not Pacific).
+//
+// SPLIT AREA CODES take the zone of the majority of the population, except
+// where the split is close enough to matter, where they take the WESTERN
+// zone -- the error direction that is safe. Assuming Central for a number
+// that is really Eastern opens the window at their 10am: late, harmless.
+// The reverse opens it at their 8am: a complaint. Conservative by choice:
+//   448/850 Florida panhandle -> Central (Pensacola)
+//   906     Michigan UP       -> Central
+//   812/930 southwest Indiana -> Central (Evansville)
+//   308     western Nebraska  -> Mountain
+//   208/986 Idaho             -> Mountain (Boise; the panhandle is Pacific)
+// 574 is the deliberate exception: South Bend is Eastern and carries the
+// area code, so the two Central counties lose rather than the other 95%.
+const NPA_TZ_GROUPS = {
+  'America/New_York': [
+    203, 475, 860, 959,                                        // CT
+    302, 202,                                                  // DE, DC
+    239, 305, 321, 352, 386, 407, 561, 656, 689, 727, 728,     // FL, eastern
+    754, 772, 786, 813, 863, 904, 941, 954,
+    229, 404, 470, 478, 678, 706, 762, 770, 912, 943,          // GA
+    260, 317, 463, 574, 765,                                   // IN, eastern
+    502, 606, 859,                                             // KY, eastern
+    207,                                                       // ME
+    227, 240, 301, 410, 443, 667,                              // MD
+    339, 351, 413, 508, 617, 774, 781, 857, 978,               // MA
+    231, 248, 269, 313, 517, 586, 616, 679, 734, 810, 947, 989,// MI
+    603,                                                       // NH
+    201, 551, 609, 640, 732, 848, 856, 862, 908, 973,          // NJ
+    212, 315, 332, 347, 363, 516, 518, 585, 607, 631, 646,     // NY
+    680, 716, 718, 838, 845, 914, 917, 929, 934,
+    252, 336, 472, 704, 743, 828, 910, 919, 980, 984,          // NC
+    216, 220, 234, 283, 326, 330, 380, 419, 436, 440, 513,     // OH
+    567, 614, 740, 937,
+    215, 223, 267, 272, 412, 445, 484, 570, 582, 610, 717,     // PA
+    724, 814, 835, 878,
+    401,                                                       // RI
+    803, 839, 843, 854, 864,                                   // SC
+    423, 865,                                                  // TN, eastern
+    802,                                                       // VT
+    276, 434, 540, 571, 703, 757, 804, 826, 948,               // VA
+    304, 681,                                                  // WV
+  ],
+  'America/Chicago': [
+    205, 251, 256, 334, 659, 938,                              // AL
+    327, 479, 501, 870,                                        // AR
+    448, 850,                                                  // FL panhandle
+    217, 224, 309, 312, 331, 447, 464, 618, 630, 708, 730,     // IL
+    773, 779, 815, 847, 861, 872,
+    219, 812, 930,                                             // IN, west/south
+    319, 515, 563, 641, 712,                                   // IA
+    316, 620, 785, 913,                                        // KS
+    270, 364,                                                  // KY, western
+    225, 318, 337, 504, 985,                                   // LA
+    906,                                                       // MI, upper
+    218, 320, 507, 612, 651, 763, 924, 952,                    // MN
+    228, 601, 662, 769,                                        // MS
+    314, 417, 557, 573, 636, 660, 816, 975,                    // MO
+    402, 531,                                                  // NE, eastern
+    701,                                                       // ND
+    405, 539, 572, 580, 918,                                   // OK
+    605,                                                       // SD
+    615, 629, 731, 901, 931,                                   // TN, central
+    210, 214, 254, 281, 325, 346, 361, 409, 430, 432, 469,     // TX
+    512, 682, 713, 726, 737, 806, 817, 830, 832, 903, 936,
+    940, 945, 956, 972, 979,
+    262, 274, 353, 414, 534, 608, 715, 920,                    // WI
+  ],
+  'America/Denver': [
+    303, 719, 720, 970, 983,                                   // CO
+    208, 986,                                                  // ID
+    406,                                                       // MT
+    308,                                                       // NE, western
+    505, 575,                                                  // NM
+    915,                                                       // TX, El Paso
+    385, 435, 801,                                             // UT
+    307,                                                       // WY
+  ],
+  'America/Phoenix': [480, 520, 602, 623, 928],                // AZ, no DST
+  'America/Los_Angeles': [
+    209, 213, 279, 310, 323, 341, 350, 408, 415, 424, 442,     // CA
+    510, 530, 559, 562, 619, 626, 628, 650, 657, 661, 669,
+    707, 714, 738, 747, 760, 764, 805, 818, 820, 831, 840,
+    858, 909, 916, 925, 949, 951,
+    702, 725, 775,                                             // NV
+    458, 503, 541, 971,                                        // OR
+    206, 253, 360, 425, 509, 564,                              // WA
+  ],
+  'America/Anchorage': [907],
+  'Pacific/Honolulu': [808],
+  'America/Puerto_Rico': [787, 939],
+  'America/St_Thomas': [340],
+};
+
+// Area codes that can never be a seller's line: toll-free, premium rate,
+// and personal-communications ranges. A file carrying these is carrying a
+// business switchboard or a typo, and either way a dial is wasted on it.
+const NPA_NOT_DIALABLE = new Set([
+  800, 833, 844, 855, 866, 877, 888,                           // toll-free
+  900, 976,                                                    // premium rate
+  500, 521, 522, 523, 524, 525, 526, 527, 528, 529,            // personal comms
+  533, 544, 566, 577, 588, 622, 710,
+]);
+const NPA_TZ = {};
+for (const [tz, list] of Object.entries(NPA_TZ_GROUPS)) for (const n of list) NPA_TZ[n] = tz;
+
+function npaOf(e164) {
+  const d = String(e164 || '').replace(/\D/g, '');
+  return d.length === 11 && d[0] === '1' ? Number(d.slice(1, 4)) : null;
+}
+
+// The calling-hours gate's only requirement, answered for nothing.
+function timezoneForNumber(e164) {
+  const npa = npaOf(e164);
+  return npa ? (NPA_TZ[npa] || null) : null;
+}
+
+// Structural screen. Catches what a paid lookup would also catch, on the
+// numbers where the answer is knowable from the digits alone: service
+// codes, toll-free switchboards, and the placeholder rows every skip-trace
+// file carries. Anything it cannot rule out is left alone -- a number that
+// is merely dead still looks perfectly well-formed, and that one is caught
+// on the first dial instead (see dialer-telnyx-webhook, unallocated_number).
+function numberProblem(e164) {
+  const d = String(e164 || '').replace(/\D/g, '');
+  if (d.length !== 11 || d[0] !== '1') return 'not a US number';
+  const npa = d.slice(1, 4), nxx = d.slice(4, 7), line = d.slice(7);
+  if (npa[0] < '2') return 'impossible area code';
+  if (npa[1] === '1' && npa[2] === '1') return 'service code, not a phone number';
+  if (NPA_NOT_DIALABLE.has(Number(npa))) return 'toll-free or premium-rate';
+  if (nxx[0] < '2') return 'impossible exchange';
+  if (nxx[1] === '1' && nxx[2] === '1') return 'service code, not a phone number';
+  if (nxx === '555' && line >= '0100' && line <= '0199') return 'reserved fictional number';
+  if (/^(\d)\1{9}$/.test(d.slice(1))) return 'placeholder digits';
+  return null;
+}
+
+// Mobiles answer at materially higher rates than landlines, VOIP worst, and
+// every skip-trace export (DealMachine, PropStream, BatchLeads) already says
+// which is which. Writes the same phone_rank the paid lookup wrote, off a
+// column the file gave us.
+//
+// A FILE WITHOUT A PHONE-TYPE COLUMN LOSES NOTHING, because line type does
+// not currently order anything: dialer_next_number picks a contact's next
+// number with `order by rank`, and that rank is the file's own Ph# position,
+// not a quality score. Skip-trace vendors list numbers best-first, so file
+// order is already the ranking. Unknown scores 3, which is where every
+// contact sat before this existed.
+function rankForPhoneType(raw) {
+  const v = String(raw || '').toLowerCase();
+  if (v.includes('mobile') || v.includes('wireless') || v.includes('cell')) return 0;
+  if (v.includes('landline') || v.includes('fixed line') || v.includes('wireline')) return 1;
+  if (v.includes('voip')) return 2;
+  return 3;
+}
+
 // ---- column mapping -------------------------------------------------------
 // Mapping happens here, at import, because this is the only moment anyone is
 // looking at the file and can say which column is which. Before this, imports
@@ -2417,6 +2616,10 @@ const FIELD_ALIASES = {
   zip:        ['zip', 'zipcode', 'postalcode', 'propertyzip', 'mailingzip'],
   email:      ['email', 'emailaddress', 'email1', 'owneremail'],
   county:     ['county', 'propertycounty'],
+  // Mobile-or-landline, which DealMachine, PropStream and BatchLeads all
+  // export. Mapped for the queue ranking that used to come off a paid lookup.
+  phone_type: ['phonetype', 'phone1type', 'phonenumbertype', 'linetype',
+               'numbertype', 'phonestatus', 'type'],
 };
 for (let i = 2; i <= 10; i++) {
   FIELD_ALIASES['phone_' + i] = ['phone' + i, 'ph' + i, 'phone' + i + 'number', 'mobile' + i];
@@ -2566,12 +2769,18 @@ $('impBtn').onclick = async () => {
   // profile screen reads one shape whatever the file called the column.
   const optional = fieldDefs.filter((f) => !f.is_required && !f.column_name);
   const seen = new Set(); const contacts = []; let bad = 0;
+  let unusable = 0, noZone = 0;
 
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
     const phone = toE164(at(row, 'phone'));
     if (!phone || seen.has(phone)) { bad++; continue; }
     seen.add(phone);
+
+    // Screened here rather than loaded and screened later: a service code
+    // or a toll-free switchboard is knowable from the digits, and letting
+    // one in costs a dial and a mark against the DID that placed it.
+    if (numberProblem(phone)) { unusable++; continue; }
 
     const first = at(row, 'first_name'), last = at(row, 'last_name');
     const extra = {};
@@ -2580,6 +2789,12 @@ $('impBtn').onclick = async () => {
     // source_row stays the untouched original: mapping is lossy, and this is
     // the only record of what the file actually contained.
     const src = {}; csvHeaders.forEach((h, i) => { if (h) src[h] = row[i] ?? ''; });
+
+    // The two answers that used to cost $0.0015 each, taken from the number
+    // itself and from a column the file already had. A contact leaves this
+    // loop dialable; nothing has to run afterwards.
+    const tz = timezoneForNumber(phone);
+    if (!tz) noZone++;
 
     contacts.push({
       list_id: list.id, campaign_id: campaignId, phone_e164: phone,
@@ -2590,6 +2805,8 @@ $('impBtn').onclick = async () => {
       state: at(row, 'state') || null,
       zip: at(row, 'zip') || null,
       email: at(row, 'email') || null,
+      timezone: tz,
+      phone_rank: rankForPhoneType(at(row, 'phone_type')),
       status: 'new', source_row: src, contact_fields: extra,
     });
   }
@@ -2606,12 +2823,16 @@ $('impBtn').onclick = async () => {
   }
 
   await sb.from('dialer_lists').update({
-    status: 'ready', loaded_rows: done, skipped_rows: bad,
+    status: 'ready', loaded_rows: done, skipped_rows: bad + unusable,
   }).eq('id', list.id);
 
   $('impBtn').disabled = false;
-  say($('impMsg'), 'Imported ' + done + ' contacts (' + bad + ' skipped - no usable phone, or a '
-    + 'duplicate of a row already in this list). Now run Validate below - they are not dialable until then.', 'ok');
+  say($('impMsg'), 'Imported ' + done + ' contacts, dialable now. '
+    + bad + ' skipped (no usable phone, or a duplicate of a row already in this list)'
+    + (unusable ? ', ' + unusable + ' skipped as undialable numbers (service codes, '
+      + 'toll-free or placeholder digits)' : '')
+    + (noZone ? '. ' + noZone + ' have an area code this build does not know, so they have no '
+      + 'time zone and cannot be dialled until a carrier check resolves them' : '') + '.', 'ok');
   $('impCsv').value = ''; $('impName').value = ''; $('impScrubbed').checked = false;
   csvHeaders = []; csvFirstRow = []; show($('impMapWrap'), false);
   loadLists();

@@ -1,15 +1,27 @@
 // supabase/functions/dialer-validate-numbers/index.ts
 //
-// Pre-dial validation. Resolves every imported contact's number through
-// Telnyx Number Lookup before it can be dialled, and is what makes an
-// imported list dialable at all.
+// Pre-dial validation through Telnyx Number Lookup. OPTIONAL since v560:
+// import resolves the time zone from the area code for nothing, so a list is
+// dialable without this ever running.
 //
-// WHY THIS IS A BLOCKER, NOT AN OPTIMISATION:
-//   dialer-call-control's calling-hours gate needs the time zone of the
-//   NUMBER. dialer-list-import deliberately leaves timezone null, because
-//   the only honest source is the number itself -- an Illinois property
-//   routinely has an owner with a Florida mobile, and the rule follows the
-//   number. Until this runs, every dial is refused with 'no_timezone'.
+// WHAT IT IS STILL FOR (v560):
+//   1. The residue. An area code the import table does not carry leaves
+//      timezone null, and dialer-call-control refuses those with
+//      'no_timezone'. Pass only_missing_timezone to buy exactly those rows
+//      rather than re-checking a whole list that is already dialable.
+//   2. Pre-dial detection of numbers that are well-formed, correctly zoned
+//      and dead. That is the one thing the free path cannot see. Without it
+//      you learn on the first dial instead -- dialer-telnyx-webhook and
+//      dialer-fs-cdr retire a contact the moment a carrier answers
+//      'unallocated', so the cost of skipping this is one wasted dial per
+//      dead number, not a dead number dialled six times.
+//
+// IT MUST NOT UNDO THE FREE ANSWER. The STATE_TZ map below is per-state and
+// therefore coarser than the area code: it puts all of Florida in Central,
+// which is right for Pensacola and an hour wrong for Miami. So timezone is
+// only ever FILLED here, never overwritten. Same for phone_rank, which a
+// file's phone-type column may already have set better than a carrier reply
+// of 'unknown' would.
 //
 // WHAT IT BUYS, beyond unblocking:
 //   - Disconnected/invalid numbers are dropped BEFORE they are dialled.
@@ -155,17 +167,24 @@ Deno.serve(async (req) => {
 
     const body = await req.json().catch(() => ({}));
     const listId = body?.list_id ? String(body.list_id) : null;
+    // Import now resolves time zone from the area code for nothing, so the
+    // usual reason to spend money here is the residue: an area code the
+    // table does not carry. Those rows cannot be dialled at all until
+    // something resolves them, and there are rarely many, so the caller can
+    // ask for exactly them rather than paying to re-check a whole list.
+    const onlyMissingTimezone = Boolean(body?.only_missing_timezone);
     // Hard ceiling per invocation. Edge functions have a wall-clock limit and
     // each lookup costs $0.0015 -- an unbounded run could spend real money on
     // a mistake.
     const maxLookups = Math.min(Number(body?.max_lookups) || 300, 1000);
 
     let q = admin.from('dialer_contacts')
-      .select('id, phone_e164')
+      .select('id, phone_e164, timezone')
       .is('phone_validated_at', null)
       .in('status', ['new', 'queued'])
       .limit(maxLookups);
     if (listId) q = q.eq('list_id', listId);
+    if (onlyMissingTimezone) q = q.is('timezone', null);
 
     const { data: pending, error: qErr } = await q;
     if (qErr) return json(req, { ok: false, error: qErr.message }, 500);
@@ -215,18 +234,26 @@ Deno.serve(async (req) => {
       }
 
       const tz = state ? STATE_TZ[String(state).toUpperCase()] ?? null : null;
-      if (!tz) stats.no_timezone++;
+      if (!tz && !c.timezone) stats.no_timezone++;
 
       const update: Record<string, unknown> = {
         phone_validated_at: new Date().toISOString(),
         phone_valid: valid,
         phone_line_type: lineType,
         phone_carrier: carrier,
-        phone_rank: rankForLineType(lineType),
-        timezone: tz,
         state: state,
         updated_at: new Date().toISOString(),
       };
+      // NEVER overwrite a zone the area code already gave us. This map is
+      // per-STATE and therefore coarser: it puts all of Florida in Central,
+      // which is right for Pensacola and an hour wrong for Miami. Import's
+      // per-area-code answer is the better one, so this only fills a gap.
+      if (!c.timezone && tz) update.timezone = tz;
+      // Same rule for the queue ranking. The carrier knows better than the
+      // file's phone-type column when it actually says something, and says
+      // nothing when it returns 'unknown' -- which must not demote a row the
+      // file already told us was a mobile.
+      if (lineType !== 'unknown') update.phone_rank = rankForLineType(lineType);
       // An invalid number should never surface in the queue again. The dial
       // gate would refuse it anyway, but retiring it here stops it consuming
       // a queue slot on every load.
@@ -253,6 +280,9 @@ Deno.serve(async (req) => {
       .is('phone_validated_at', null)
       .in('status', ['new', 'queued']);
     if (listId) remainingQ = remainingQ.eq('list_id', listId);
+    // Must mirror the selection above, or a timezone-only run reports every
+    // unchecked contact in the list as still to do and the caller keeps going.
+    if (onlyMissingTimezone) remainingQ = remainingQ.is('timezone', null);
     const { count: remaining } = await remainingQ;
 
     return json(req, {

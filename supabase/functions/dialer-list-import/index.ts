@@ -35,13 +35,16 @@
 // stored, because "we didn't dial this because ReadyMode marked it DNC" is
 // the evidence a compliance review asks for.
 //
-// TIMEZONE IS DELIBERATELY LEFT NULL. dialer-call-control's calling-hours
+// TIMEZONE IS RESOLVED HERE, FOR NOTHING. dialer-call-control's calling-hours
 // gate needs the zone of the NUMBER, not of any address in the file -- an
-// Illinois property routinely has an owner with a Florida mobile. Deriving
-// it needs an NPA lookup, which pre-dial validation (Telnyx Number Lookup)
-// does properly. Until that runs, the gate refuses with 'no_timezone', which
-// is the correct conservative behaviour: unvalidated contacts are not
-// dialable.
+// Illinois property routinely has an owner with a Florida mobile, and the
+// rule follows the number. That zone is carried in the area code: US
+// portability is confined to the same rate centre, so a ported number keeps
+// its area code and its state. This used to be left null and filled in later
+// by Telnyx Number Lookup at $0.0015 a number, which meant an imported list
+// sat undialable until somebody paid for it. Now a list is dialable the
+// moment it lands, and the paid lookup is what you reach for when an area
+// code is not in the table.
 //
 // Deploy WITHOUT JWT verification -- Mailgun cannot send a Supabase token;
 // this function authenticates via Mailgun's HMAC, exactly as
@@ -160,6 +163,153 @@ function toE164(raw: string): string | null {
   if (d.length === 10) return `+1${d}`;
   if (d.length === 11 && d.startsWith('1')) return `+${d}`;
   return null; // not NANP -- do not guess
+}
+
+// ---- free pre-dial resolution --------------------------------------------
+// NANP area code -> IANA time zone. Free, offline, and the reason an
+// imported list is dialable the moment it lands.
+//
+// WHY THIS IS AS GOOD AS THE PAID LOOKUP: US number portability is confined
+// to the same rate centre, so a ported number keeps its area code and its
+// state. Telnyx's portability.state and the NPA therefore agree except in
+// edge cases -- we were paying $0.0015 a number for an answer already
+// carried in the first three digits.
+//
+// AND BETTER THAN WHAT PRECEDED IT: validation mapped whole STATES, so
+// every Florida number resolved to Central and its 9am window opened at
+// the seller's 10am. Half the state's dialable morning, gone. Same for
+// El Paso (Mountain, not Central) and Boise (Mountain, not Pacific).
+//
+// SPLIT AREA CODES take the zone of the majority of the population, except
+// where the split is close enough to matter, where they take the WESTERN
+// zone -- the error direction that is safe. Assuming Central for a number
+// that is really Eastern opens the window at their 10am: late, harmless.
+// The reverse opens it at their 8am: a complaint. Conservative by choice:
+//   448/850 Florida panhandle -> Central (Pensacola)
+//   906     Michigan UP       -> Central
+//   812/930 southwest Indiana -> Central (Evansville)
+//   308     western Nebraska  -> Mountain
+//   208/986 Idaho             -> Mountain (Boise; the panhandle is Pacific)
+// 574 is the deliberate exception: South Bend is Eastern and carries the
+// area code, so the two Central counties lose rather than the other 95%.
+const NPA_TZ_GROUPS: Record<string, number[]> = {
+  'America/New_York': [
+    203, 475, 860, 959,                                        // CT
+    302, 202,                                                  // DE, DC
+    239, 305, 321, 352, 386, 407, 561, 656, 689, 727, 728,     // FL, eastern
+    754, 772, 786, 813, 863, 904, 941, 954,
+    229, 404, 470, 478, 678, 706, 762, 770, 912, 943,          // GA
+    260, 317, 463, 574, 765,                                   // IN, eastern
+    502, 606, 859,                                             // KY, eastern
+    207,                                                       // ME
+    227, 240, 301, 410, 443, 667,                              // MD
+    339, 351, 413, 508, 617, 774, 781, 857, 978,               // MA
+    231, 248, 269, 313, 517, 586, 616, 679, 734, 810, 947, 989,// MI
+    603,                                                       // NH
+    201, 551, 609, 640, 732, 848, 856, 862, 908, 973,          // NJ
+    212, 315, 332, 347, 363, 516, 518, 585, 607, 631, 646,     // NY
+    680, 716, 718, 838, 845, 914, 917, 929, 934,
+    252, 336, 472, 704, 743, 828, 910, 919, 980, 984,          // NC
+    216, 220, 234, 283, 326, 330, 380, 419, 436, 440, 513,     // OH
+    567, 614, 740, 937,
+    215, 223, 267, 272, 412, 445, 484, 570, 582, 610, 717,     // PA
+    724, 814, 835, 878,
+    401,                                                       // RI
+    803, 839, 843, 854, 864,                                   // SC
+    423, 865,                                                  // TN, eastern
+    802,                                                       // VT
+    276, 434, 540, 571, 703, 757, 804, 826, 948,               // VA
+    304, 681,                                                  // WV
+  ],
+  'America/Chicago': [
+    205, 251, 256, 334, 659, 938,                              // AL
+    327, 479, 501, 870,                                        // AR
+    448, 850,                                                  // FL panhandle
+    217, 224, 309, 312, 331, 447, 464, 618, 630, 708, 730,     // IL
+    773, 779, 815, 847, 861, 872,
+    219, 812, 930,                                             // IN, west/south
+    319, 515, 563, 641, 712,                                   // IA
+    316, 620, 785, 913,                                        // KS
+    270, 364,                                                  // KY, western
+    225, 318, 337, 504, 985,                                   // LA
+    906,                                                       // MI, upper
+    218, 320, 507, 612, 651, 763, 924, 952,                    // MN
+    228, 601, 662, 769,                                        // MS
+    314, 417, 557, 573, 636, 660, 816, 975,                    // MO
+    402, 531,                                                  // NE, eastern
+    701,                                                       // ND
+    405, 539, 572, 580, 918,                                   // OK
+    605,                                                       // SD
+    615, 629, 731, 901, 931,                                   // TN, central
+    210, 214, 254, 281, 325, 346, 361, 409, 430, 432, 469,     // TX
+    512, 682, 713, 726, 737, 806, 817, 830, 832, 903, 936,
+    940, 945, 956, 972, 979,
+    262, 274, 353, 414, 534, 608, 715, 920,                    // WI
+  ],
+  'America/Denver': [
+    303, 719, 720, 970, 983,                                   // CO
+    208, 986,                                                  // ID
+    406,                                                       // MT
+    308,                                                       // NE, western
+    505, 575,                                                  // NM
+    915,                                                       // TX, El Paso
+    385, 435, 801,                                             // UT
+    307,                                                       // WY
+  ],
+  'America/Phoenix': [480, 520, 602, 623, 928],                // AZ, no DST
+  'America/Los_Angeles': [
+    209, 213, 279, 310, 323, 341, 350, 408, 415, 424, 442,     // CA
+    510, 530, 559, 562, 619, 626, 628, 650, 657, 661, 669,
+    707, 714, 738, 747, 760, 764, 805, 818, 820, 831, 840,
+    858, 909, 916, 925, 949, 951,
+    702, 725, 775,                                             // NV
+    458, 503, 541, 971,                                        // OR
+    206, 253, 360, 425, 509, 564,                              // WA
+  ],
+  'America/Anchorage': [907],
+  'Pacific/Honolulu': [808],
+  'America/Puerto_Rico': [787, 939],
+  'America/St_Thomas': [340],
+};
+
+// Area codes that can never be a seller's line: toll-free, premium rate,
+// and personal-communications ranges. A file carrying these is carrying a
+// business switchboard or a typo, and either way a dial is wasted on it.
+const NPA_NOT_DIALABLE = new Set([
+  800, 833, 844, 855, 866, 877, 888,                           // toll-free
+  900, 976,                                                    // premium rate
+  500, 521, 522, 523, 524, 525, 526, 527, 528, 529,            // personal comms
+  533, 544, 566, 577, 588, 622, 710,
+]);
+
+const NPA_TZ: Record<number, string> = {};
+for (const [tz, list] of Object.entries(NPA_TZ_GROUPS)) for (const n of list) NPA_TZ[n] = tz;
+
+// The calling-hours gate's only requirement, answered for nothing.
+function timezoneForNumber(e164: string): string | null {
+  const d = String(e164 || '').replace(/\D/g, '');
+  if (d.length !== 11 || d[0] !== '1') return null;
+  return NPA_TZ[Number(d.slice(1, 4))] ?? null;
+}
+
+// Structural screen. Catches what a paid lookup would also catch, on the
+// numbers where the answer is knowable from the digits alone: service codes,
+// toll-free switchboards, and the placeholder rows every skip-trace file
+// carries. A number that is merely dead still looks perfectly well-formed,
+// and that one is caught on the first dial instead -- see
+// dialer-telnyx-webhook, unallocated_number.
+function numberProblem(e164: string): string | null {
+  const d = String(e164 || '').replace(/\D/g, '');
+  if (d.length !== 11 || d[0] !== '1') return 'not a US number';
+  const npa = d.slice(1, 4), nxx = d.slice(4, 7), line = d.slice(7);
+  if (npa[0] < '2') return 'impossible area code';
+  if (npa[1] === '1' && npa[2] === '1') return 'service code, not a phone number';
+  if (NPA_NOT_DIALABLE.has(Number(npa))) return 'toll-free or premium-rate';
+  if (nxx[0] < '2') return 'impossible exchange';
+  if (nxx[1] === '1' && nxx[2] === '1') return 'service code, not a phone number';
+  if (nxx === '555' && line >= '0100' && line <= '0199') return 'reserved fictional number';
+  if (/^(\d)\1{9}$/.test(d.slice(1))) return 'placeholder digits';
+  return null;
 }
 
 const yes = (v: string | undefined) => String(v || '').trim().toLowerCase() === 'yes';
@@ -304,7 +454,13 @@ Deno.serve(async (req) => {
     }
 
     // --- build contacts --------------------------------------------------
-    const stats = { total: 0, dnc: 0, rejected: 0, dupe: 0, bad_phone: 0, loaded: 0 };
+    const stats = {
+      total: 0, dnc: 0, rejected: 0, dupe: 0, bad_phone: 0, loaded: 0,
+      // Screened on the digits alone, and the residue the area-code table
+      // could not place. Both were previously invisible until somebody paid
+      // to look the numbers up.
+      undialable: 0, no_timezone: 0,
+    };
     const contacts: Record<string, unknown>[] = [];
     const seen = new Set<string>();
 
@@ -322,6 +478,11 @@ Deno.serve(async (req) => {
       const phone = toE164(row[iPhone] || '');
       if (!phone) { stats.bad_phone++; continue; }
       if (seen.has(phone)) { stats.dupe++; continue; }
+      // A service code or a toll-free switchboard is knowable from the
+      // digits. Letting one in costs a dial and a mark against the DID that
+      // placed it, so it is dropped here rather than loaded and screened
+      // later at a cost per number.
+      if (numberProblem(phone)) { stats.undialable++; continue; }
       seen.add(phone);
 
       const name = iName >= 0 && row[iName]
@@ -343,6 +504,9 @@ Deno.serve(async (req) => {
 
       const cell = (i: number) => (i >= 0 && row[i] ? String(row[i]).trim() || null : null);
 
+      const tz = timezoneForNumber(phone);
+      if (!tz) stats.no_timezone++;
+
       contacts.push({
         list_id: listId,
         campaign_id: campaign.id,
@@ -360,8 +524,11 @@ Deno.serve(async (req) => {
         state: cell(iState),
         zip: cell(iZip),
         contact_fields: contactFields,
-        // timezone deliberately null -- see this file's header. Pre-dial
-        // validation resolves it from the NUMBER, not from any address here.
+        // From the NUMBER's area code, never from an address in this file --
+        // see the header. Null only for an area code the table does not
+        // carry, and those rows stay undialable until a lookup resolves them,
+        // which is the correct conservative behaviour.
+        timezone: tz,
         status: 'new',
         readymode_dnc: iDnc >= 0 ? row[iDnc] : null,
         readymode_status: iStatus >= 0 ? row[iStatus] : null,
@@ -389,9 +556,9 @@ Deno.serve(async (req) => {
       inserted += slice.length;
     }
 
-    // Ready only once rows are in. Note contacts still are not dialable
-    // until pre-dial validation fills timezone -- the calling-hours gate
-    // refuses without it, which is the intended conservative default.
+    // Ready only once rows are in. Contacts are dialable from this point:
+    // the calling-hours gate has the zone it needs, resolved above at no
+    // cost. stats.no_timezone counts the residue that still is not.
     await admin.from('dialer_lists').update({
       status: 'ready',
       loaded_rows: inserted,

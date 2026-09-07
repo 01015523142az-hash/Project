@@ -161,7 +161,7 @@ Deno.serve(async (req) => {
       })
       .eq('provider_call_id', uuid)
       .is('ended_at', null)          // idempotency: a retry finds nothing
-      .select('id')
+      .select('id, contact_id, to_number')
       .maybeSingle();
 
     if (error) {
@@ -174,6 +174,35 @@ Deno.serve(async (req) => {
       // Both are terminal; do not make FreeSWITCH keep trying.
       console.log(`dialer-fs-cdr: no open row for ${uuid} (already closed or unknown)`);
       return new Response('ok', { status: 200 });
+    }
+
+    // A dead number, told to us by the carrier, for free. The same retirement
+    // dialer-telnyx-webhook does on its own path -- this is what pre-dial
+    // validation was mostly being paid for, learned one dial later instead of
+    // one dial earlier. Retire the LINE where the contact has several, the
+    // contact where it does not.
+    if ((cause === 'UNALLOCATED_NUMBER' || cause === 'INVALID_NUMBER_FORMAT')
+        && data.contact_id && data.to_number) {
+      const nowIso = new Date().toISOString();
+      const { data: line } = await admin.from('dialer_contact_phones')
+        .update({
+          status: 'invalid', phone_valid: false,
+          next_attempt_at: null, last_outcome: cause.toLowerCase(),
+          updated_at: nowIso,
+        })
+        .eq('contact_id', data.contact_id)
+        .eq('phone_e164', data.to_number)
+        .select('id');
+      if (!line?.length) {
+        await admin.from('dialer_contacts')
+          .update({
+            status: 'invalid', phone_valid: false,
+            retired_reason: cause.toLowerCase(),
+            next_attempt_at: null, updated_at: nowIso,
+          })
+          .eq('id', data.contact_id)
+          .eq('phone_e164', data.to_number);
+      }
     }
 
     console.log(`dialer-fs-cdr: closed ${data.id} ${status} billsec=${billsec} -> ${Math.ceil(billsec / INCREMENT) * INCREMENT}s`);

@@ -175,7 +175,7 @@ Deno.serve(async (req) => {
     // half-populated CDR.
     let { data: attempt } = await admin
       .from('dialer_attempts')
-      .select('id, from_did_id, answered_at, initiated_at')
+      .select('id, from_did_id, answered_at, initiated_at, contact_id, to_number')
       .eq('provider_call_id', callControlId)
       .maybeSingle();
 
@@ -205,7 +205,7 @@ Deno.serve(async (req) => {
         // compliance record, it just gets corrected here.
         const { data: candidates } = await admin
           .from('dialer_attempts')
-          .select('id, from_did_id, answered_at, initiated_at')
+          .select('id, from_did_id, answered_at, initiated_at, contact_id, to_number')
           .eq('to_number', candidateNumber)
           .or('provider_call_id.is.null,provider_call_id.not.like.v3:*')
           .gte('initiated_at', since)
@@ -296,6 +296,43 @@ Deno.serve(async (req) => {
         update.status = statusFromHangupCause(p.hangup_cause);
         update.ended_at = endedAtIso;
         update.hangup_cause = p.hangup_cause ?? null;
+
+        // A DEAD NUMBER, TOLD TO US BY THE CARRIER, FOR FREE.
+        //
+        // This is what pre-dial validation was mostly being paid for. The
+        // difference is only when you learn it: $0.0015 to know before the
+        // first dial, or nothing to know immediately after it. Learning it
+        // here costs exactly one wasted dial -- but only if it is acted on.
+        // It previously was not: 'unallocated_number' mapped to 'no_answer',
+        // so a disconnected number went back in the queue and was redialled
+        // up to max_attempts. Six dials into a number the carrier had
+        // already said does not exist, each one a mark against the DID that
+        // placed it.
+        if ((p.hangup_cause || '').toLowerCase() === 'unallocated_number'
+            && attempt.contact_id && attempt.to_number) {
+          // Retire the LINE where the contact has several, the contact where
+          // it does not -- the same rule the DNC gate follows. One dead
+          // number says nothing about the seller's other nine.
+          const { data: line } = await admin.from('dialer_contact_phones')
+            .update({
+              status: 'invalid', phone_valid: false,
+              next_attempt_at: null, last_outcome: 'unallocated_number',
+              updated_at: nowIso,
+            })
+            .eq('contact_id', attempt.contact_id)
+            .eq('phone_e164', attempt.to_number)
+            .select('id');
+          if (!line?.length) {
+            await admin.from('dialer_contacts')
+              .update({
+                status: 'invalid', phone_valid: false,
+                retired_reason: 'unallocated_number',
+                next_attempt_at: null, updated_at: nowIso,
+              })
+              .eq('id', attempt.contact_id)
+              .eq('phone_e164', attempt.to_number);
+          }
+        }
 
         // Talk time is answer -> hangup. Billed time is what the carrier
         // charges: whole minutes rounded UP, minimum one, and only on calls
