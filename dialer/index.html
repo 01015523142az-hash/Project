@@ -1468,8 +1468,49 @@ function callerNumberOf(call) {
 
 function normDigits(v) { return String(v || '').replace(/\D/g, '').slice(-10); }
 
+// An incoming call was SILENT. The Telnyx SDK only rings if the client is
+// constructed with a ringtoneFile, and ours is not -- so the panel appeared
+// and nothing else happened. An agent not staring at the tab had no idea a
+// caller was on the line, and the offer timed out after 20 seconds.
+//
+// Synthesised rather than hosted: the DTMF tones already use WebAudio, and an
+// audio file would be one more asset to serve, cache and get wrong.
+let ringTimer = null;
+function startRinging() {
+  stopRinging();
+  try {
+    toneCtx = toneCtx || new (window.AudioContext || window.webkitAudioContext)();
+    // A tab that has not been clicked since load starts suspended. Worth
+    // trying, and worth not caring if it fails: a silent ring is still better
+    // than a thrown error that stops the panel appearing at all.
+    if (toneCtx.state === 'suspended') toneCtx.resume().catch(() => {});
+
+    const burst = () => {
+      if (!incomingCall) { stopRinging(); return; }
+      const gain = toneCtx.createGain();
+      gain.gain.value = 0.11;          // audible across a room, not startling
+      gain.connect(toneCtx.destination);
+      // 440 + 480 Hz is the North American ring pair, so it reads as a phone
+      // rather than as an alert from some other application.
+      [440, 480].forEach((f) => {
+        const o = toneCtx.createOscillator();
+        o.frequency.value = f;
+        o.connect(gain);
+        o.start();
+        o.stop(toneCtx.currentTime + 0.9);
+      });
+    };
+    burst();
+    ringTimer = setInterval(burst, 2400);
+  } catch (_) { /* never let the ring stop the call being answerable */ }
+}
+function stopRinging() {
+  if (ringTimer) { clearInterval(ringTimer); ringTimer = null; }
+}
+
 async function showIncoming(call) {
   incomingCall = call;
+  startRinging();
   const from = callerNumberOf(call);
   $('incFrom').textContent = from || 'Unknown number';
 
@@ -1495,6 +1536,7 @@ async function showIncoming(call) {
 
 function hideIncoming() {
   incomingCall = null; incomingCtx = null;
+  stopRinging();
   show($('incomingPanel'), false);
 }
 
