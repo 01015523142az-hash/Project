@@ -947,17 +947,32 @@ function applyReadOnly() {
     if (ob) { ob.disabled = true; ob.title = 'Ordering numbers is owner/admin only.'; }
   }
 }
+// Refuse the page without ever revealing it. The signed-out card is the only
+// thing outside .app-body, so it is the only place a refusal can be SEEN --
+// #gate lives inside the console, which is display:none until .authed.
+function refuse(detail) {
+  const card = $('signedOut');
+  if (card) {
+    const h = card.querySelector('h2');
+    const lead = card.querySelector('p');
+    if (h) h.textContent = 'Not available to your role';
+    if (lead) lead.textContent = 'The dialer admin screens are for owners, admins '
+      + 'and team leaders. Your dialer console has everything your role needs.';
+    const link = card.querySelector('.so-btn');
+    if (link) { link.setAttribute('href', '/dialer/'); link.textContent = 'Open the dialer'; }
+  }
+  $('signedOutDetail').textContent = detail || '';
+}
+
 (async function boot() {
   // No session: the signed-out card is already on screen (the console is
   // hidden by default and revealed only below), so stop before any query.
   const { data: { session } } = await sb.auth.getSession();
   if (!session) return;
-  // Identity established -- reveal the console.
-  document.body.classList.add('authed');
   meId = session.user.id;
   const { data: p } = await sb.from('profiles')
     .select('full_name, role').eq('id', session.user.id).maybeSingle();
-  if (!p) { say($('gate'), 'No staff profile found for this account.', 'err'); return; }
+  if (!p) { refuse('Signed in, but no staff profile is linked to this account.'); return; }
 
   // Three tiers, not two (v529). Owner/admin get everything including
   // number ordering, which charges a live carrier account. can_manage_dialer
@@ -974,10 +989,17 @@ function applyReadOnly() {
   canManage = isOwnerAdmin || !!roleRow?.can_manage_dialer;
   canReview = canManage || !!roleRow?.can_review_calls;
 
+  // THE REVEAL HAPPENS HERE, not the moment a session exists. It used to run
+  // several awaits earlier, so an agent who typed this url in got the entire
+  // console -- every tab, every button, the tab handlers all still live --
+  // next to a message telling them they had no access. What they could
+  // actually READ is RLS's job (v553); this stops them being shown a screen
+  // that was never meant for them.
   if (!canReview) {
-    say($('gate'), 'You do not have access to the dialer admin screens.', 'err');
+    refuse('Signed in as ' + (p.full_name || 'you') + ' · ' + p.role + '.');
     return;
   }
+  document.body.classList.add('authed');
   $('who').textContent = `${p.full_name || ''} · ${p.role}`
     + (canManage ? '' : ' · read-only');
   applyReadOnly();

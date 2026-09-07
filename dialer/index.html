@@ -347,7 +347,10 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
 
       <div class="side-nav-group side-nav-group-bottom">
         <div class="side-nav-label">Go to</div>
-        <a class="tab-btn" href="/dialer/admin.html">
+        <!-- Hidden until boot confirms the role may actually open it. Agents
+             were being shown a door they are refused at, and following it is
+             how they found out the admin console rendered for them at all. -->
+        <a class="tab-btn hide" id="adminLink" href="/dialer/admin.html">
           <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2.8l5.5 2.3v4.4c0 3.7-2.3 6-5.5 6.9-3.2-.9-5.5-3.2-5.5-6.9V5.1z"/></svg>
           <span>Dialer Admin</span>
         </a>
@@ -698,6 +701,17 @@ async function callFn(name, body) {
   document.body.classList.add('authed');
   me = profile;
   $('agentName').textContent = profile.full_name || '';
+
+  // Same test the admin console applies to itself, kept deliberately
+  // identical: owner/admin outright, otherwise the role's can_manage_dialer
+  // (runs the floor) or can_review_calls (Quality, read-only). A plain agent
+  // holds neither, so for them the link simply is not there.
+  const { data: adminRole } = await sb.from('roles')
+    .select('can_manage_dialer, can_review_calls').eq('name', profile.role).maybeSingle();
+  if (profile.role === 'owner' || profile.role === 'admin'
+      || adminRole?.can_manage_dialer || adminRole?.can_review_calls) {
+    show($('adminLink'), true);
+  }
 
   buildKeypad();
   await loadProfileDefs();

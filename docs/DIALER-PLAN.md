@@ -14,7 +14,7 @@ so you can re-run it rather than trusting this file's date.
 
 | | |
 |---|---|
-| Migrations v523–v552 | all applied live |
+| Migrations v523–v553 | all applied live |
 | `dialer/index.html`, `dialer/admin.html` | live copies identical to the repo |
 | Dialer edge functions | 11 deployed and ACTIVE |
 | Uncommitted dialer work | none |
@@ -112,6 +112,45 @@ the queues; the console answers, rings audibly and transfers.
 browser over a Credential Connection and is not under Call Control — the SDK's
 own `Call.transfer()` says "not currently implemented". Changing that is Stage B
 below.
+
+### Phase 8 — the admin screens are not for agents (v553)
+
+Reported by the floor: an agent could open the dialer admin console and see it.
+Three separate things had to be true for that, and all three were.
+
+1. **`dialer/index.html` linked them to it.** The side nav's *Go to → Dialer
+   Admin* was unconditional. It is now hidden unless the role passes the same
+   test the admin page applies to itself, so a plain agent is not shown a door
+   they get refused at. The staff portal was never part of this — its
+   `dialer_admin` tab key is correctly granted to Quality and team leaders only.
+2. **`dialer/admin.html` revealed itself before checking.**
+   `document.body.classList.add('authed')` ran the moment a session existed,
+   several awaits before the `canReview` test, so the whole console rendered —
+   every tab, every button, tab handlers live — beside a message saying they had
+   no access. The reveal now happens after the check, and a refusal is shown on
+   the signed-out card, which is the only element outside `.app-body`.
+3. **Three RLS policies were wider than the screens they fed** — a page
+   rendering for the wrong person is a good moment to ask whether the reads
+   underneath it were ever right:
+
+   | table | was | now |
+   |---|---|---|
+   | `dialer_lists` | every list, to anyone who can dial | scoped to assigned campaigns, like `dialer_campaigns` and `dialer_contacts` |
+   | `dialer_inbound_queues` | every queue's config | admin / manager / reviewer |
+   | `dialer_dnc` | every number on the register | admin / manager / reviewer |
+
+   With one campaign and one list on the account, "every list" and "their list"
+   return the same row — which is exactly why it went unnoticed.
+
+`dialer_inbound_waiting()` had to change with them, and the change found a real
+bug. It was `SECURITY INVOKER` and joins two tables the caller cannot see
+through: `dialer_attempts` (own calls only — and a call still waiting in a queue
+has no `agent_id`, so it is nobody's) and `dialer_inbound_queues`. **It was
+returning an empty set to every agent it exists for**, so the console's
+waiting-call poll has never worked. Nobody noticed because inbound has not
+completed a call end to end. It is `SECURITY DEFINER` now; its visibility rule
+was never RLS but the `dialer_queue_agents` join — active membership of the
+queue the call is waiting in.
 
 ---
 
@@ -213,6 +252,12 @@ ringtone if the client is given a `ringtoneFile`, so the ring is synthesised in
 WebAudio like the DTMF tones); dispositioning an inbound call failed because
 `attemptId` was only ever set on the outbound dial paths; and queue hours were
 being evaluated in UTC.
+
+A fifth was found by inspection rather than by a call: `dialer_inbound_waiting()`
+was `SECURITY INVOKER` over two tables the agent cannot read, so the console's
+"calls waiting" poll returned nothing to anybody, ever. Fixed in v553 — see
+Phase 8. It is untested against a real queued call for the same reason
+everything else here is.
 
 **Watch the 10-minute cache when retesting.** `dialer/index.html` is served
 with `Cache-Control: max-age=600`, so a soft refresh can run code up to ten
