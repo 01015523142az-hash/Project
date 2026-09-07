@@ -193,6 +193,24 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
 .keypad.idle{opacity:.45}
 .keypad-hint{font-size:11px;color:var(--text-dim);margin:10px 0 0;line-height:1.5}
 
+/* ---------- incoming queue call ---------- */
+/* Loud on purpose: this is a person waiting on the line, and it has to win
+   against whatever the agent was reading. */
+.incoming{border:1px solid var(--focus);background:var(--focus-dim);border-radius:12px;
+  padding:16px 18px;margin-bottom:14px}
+.incoming-head{display:flex;align-items:center;gap:8px;font-family:var(--mono);
+  font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--focus)}
+.incoming-dot{width:8px;height:8px;border-radius:50%;background:var(--focus);
+  animation:incPulse 1s ease-in-out infinite}
+@keyframes incPulse{0%,100%{opacity:1}50%{opacity:.25}}
+/* Respect a reduced-motion preference rather than pulsing at someone for the
+   whole time a call is ringing. */
+@media (prefers-reduced-motion: reduce){.incoming-dot{animation:none}}
+.incoming-num{font-family:var(--mono);font-size:22px;font-weight:600;color:var(--text);
+  margin:8px 0 2px}
+.incoming-who{margin:0 0 12px;font-size:13px}
+.incoming-actions{display:flex;gap:10px}
+
 /* ---------- the contact's numbers ---------- */
 .phone-list{display:flex;flex-direction:column;gap:4px;margin:0 0 16px}
 .phone-row{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:4px 8px;
@@ -343,6 +361,28 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
     <main class="main-content">
       <div id="banner" class="msg info hide"></div>
 
+      <!-- Incoming queue call (v549). Deliberately ABOVE the view sections and
+           outside them, so it is on screen whichever tab the agent is looking
+           at -- a ringing customer must not be hidden behind a nav choice. -->
+      <div id="incomingPanel" class="incoming hide">
+        <div class="incoming-head">
+          <span class="incoming-dot"></span>
+          <span id="incQueue">Incoming call</span>
+        </div>
+        <p class="incoming-num" id="incFrom">—</p>
+        <p class="incoming-who muted" id="incWho"></p>
+        <div class="incoming-actions">
+          <button class="primary" id="incAnswer">Answer</button>
+          <button class="danger" id="incDecline">Decline</button>
+        </div>
+      </div>
+
+      <!-- Waiting callers, shown to an agent who is idle and takes inbound.
+           Nobody is dialled from here: it is a signal that work is queued, so
+           an agent does not sit in Ready while a caller holds. -->
+      <div id="waitingBar" class="msg info hide"
+           style="display:flex;align-items:center;gap:12px"></div>
+
       <!-- ============================================== CONSOLE ========== -->
       <section class="view active" id="view-console">
         <div class="console-grid">
@@ -405,6 +445,12 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
                   <button class="primary" id="dialBtn">Dial</button>
                   <button class="danger hide" id="hangupBtn">Hang up</button>
                   <button id="muteBtn" disabled>Mute</button>
+                  <!-- Only ever enabled on an INBOUND call. An outbound leg is
+                       placed by this browser and is not under server-side call
+                       control, so there is nothing to transfer -- offering the
+                       button anyway would be a control that silently fails on
+                       a live customer. -->
+                  <button id="transferBtn" class="hide">Transfer</button>
                   <span class="timer" id="timer">00:00</span>
                   <div class="spacer"></div>
                   <button id="skipBtn">Skip</button>
@@ -420,6 +466,23 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
                      a click to reveal the thing that sends it. Between calls
                      the keys sit visibly disabled, which reads as "not yet"
                      rather than as missing. -->
+                <!-- Blind transfer. The agent drops out once it goes through,
+                     which is why the button says so rather than implying they
+                     can take the call back. -->
+                <div id="transferWrap" class="keypad hide" style="max-width:340px">
+                  <div class="fb-label" style="margin-bottom:8px">Hand this call to</div>
+                  <select id="transferAgent" style="width:100%"></select>
+                  <div style="display:flex;gap:8px;margin-top:8px">
+                    <input id="transferNumber" type="tel" inputmode="tel"
+                           placeholder="or a 10-digit number" style="flex:1">
+                  </div>
+                  <div style="display:flex;gap:8px;margin-top:10px">
+                    <button class="primary" id="transferGo">Transfer and drop</button>
+                    <button id="transferCancel">Cancel</button>
+                  </div>
+                  <p class="keypad-hint" id="transferMsg">You leave the call as soon as it connects.</p>
+                </div>
+
                 <div id="keypadWrap" class="keypad idle">
                   <div class="keypad-sent" id="keypadSent"></div>
                   <div class="keypad-grid" id="keypadGrid"></div>
@@ -799,6 +862,20 @@ function onTelnyxNotification(n) {
   if (n.type !== 'callUpdate' || !n.call) return;
   const call = n.call;
   const state = call.state;
+
+  // An inbound queue call arrives as a DIFFERENT call object from the one this
+  // console placed. Without this branch it fell straight into the outbound
+  // state machine, and a ringing customer read as our own call changing state.
+  if (call !== activeCall && String(call.direction || '').toLowerCase() === 'inbound') {
+    if (state === 'new' || state === 'trying' || state === 'ringing') {
+      showIncoming(call);
+    } else if (state === 'hangup' || state === 'destroy') {
+      // Either the caller gave up, or dialer-inbound's ring timeout moved them
+      // on to the next agent. Both mean: stop showing it to this one.
+      if (incomingCall === call) hideIncoming();
+    }
+    return;
+  }
 
   // The console used to react only to 'active' and 'hangup', so everything
   // between pressing Dial and someone picking up looked identical to nothing
@@ -1370,6 +1447,140 @@ $('muteBtn').onclick = () => {
   else { activeCall.muteAudio(); $('muteBtn').textContent = 'Unmute'; $('muteBtn').dataset.muted = '1'; }
 };
 
+// ------------------------------------------------------------- inbound ----
+// Queue calls reach the agent as an ordinary WebRTC invite: dialer-inbound
+// dials their SIP credential and bridges the caller in once they answer. So
+// the console's job here is small -- recognise the invite, show who it is, and
+// answer it. Everything about queueing, hold music and voicemail happens
+// server-side and never needs to be reimplemented in the browser.
+let incomingCall = null;   // the ringing invite, before it is accepted
+let incomingCtx = null;    // { attempt_id, queue_name } matched from the queue
+let inboundAttemptId = null; // set once answered; what Transfer acts on
+let inboundWaiting = [];
+
+// The SDK does not put the caller's number in one predictable place across
+// versions, so try the ones it actually uses rather than trusting one.
+function callerNumberOf(call) {
+  const o = call?.options || {};
+  return o.remoteCallerNumber || o.callerNumber || o.remoteCallerName
+      || call?.remoteCallerNumber || '';
+}
+
+function normDigits(v) { return String(v || '').replace(/\D/g, '').slice(-10); }
+
+async function showIncoming(call) {
+  incomingCall = call;
+  const from = callerNumberOf(call);
+  $('incFrom').textContent = from || 'Unknown number';
+
+  // Match the ringing invite to the queue row it came from. The waiting list
+  // is already being polled, so this needs no extra round trip -- and it is
+  // the only moment the mapping is available, because answering the call
+  // removes it from the waiting list.
+  const digits = normDigits(from);
+  const match = inboundWaiting.find((w) => normDigits(w.from_number) === digits);
+  incomingCtx = match ? { attempt_id: match.attempt_id, queue_name: match.queue_name } : null;
+  $('incQueue').textContent = match ? `Incoming — ${match.queue_name}` : 'Incoming call';
+
+  $('incWho').textContent = '';
+  show($('incomingPanel'), true);
+
+  // Who is this? Worth knowing before saying hello.
+  if (digits.length === 10) {
+    const { data } = await sb.rpc('dialer_research_number', { p_phone: '+1' + digits });
+    const r = Array.isArray(data) ? data[0] : data;
+    if (r?.contact_name) $('incWho').textContent = r.contact_name;
+  }
+}
+
+function hideIncoming() {
+  incomingCall = null; incomingCtx = null;
+  show($('incomingPanel'), false);
+}
+
+$('incAnswer').onclick = () => {
+  if (!incomingCall) return;
+  const call = incomingCall;
+  inboundAttemptId = incomingCtx?.attempt_id || null;
+  hideIncoming();
+  activeCall = call;
+  try { call.answer(); } catch (e) { banner('Could not answer: ' + (e?.message || e), 'err'); return; }
+  setSessionStatus('on_call');
+  sipState('busy', 'On call');
+  syncCallControls();
+  show($('hangupBtn'), true);
+  show($('dialBtn'), false);
+  $('muteBtn').disabled = false;
+  // Transfer is only meaningful on a call the server controls, which is
+  // exactly the inbound case.
+  show($('transferBtn'), true);
+};
+
+$('incDecline').onclick = () => {
+  // Declining is not "nobody answered": dialer-inbound sees the leg end and
+  // offers the caller to the next agent immediately.
+  try { incomingCall?.hangup(); } catch (_) {}
+  hideIncoming();
+};
+
+// Waiting callers. Polled rather than pushed: presence already lives in this
+// tab and heartbeats from it, so there is nothing a server-side scheduler
+// would know that the console does not.
+async function pollWaiting() {
+  if (!sessionId || !agentStatus?.takes_inbound) {
+    inboundWaiting = []; show($('waitingBar'), false); return;
+  }
+  const { data } = await sb.rpc('dialer_inbound_waiting');
+  inboundWaiting = data || [];
+  if (!inboundWaiting.length || activeCall) { show($('waitingBar'), false); return; }
+  const longest = Math.max(...inboundWaiting.map((w) => w.waiting_seconds || 0));
+  $('waitingBar').textContent = inboundWaiting.length === 1
+    ? `1 caller waiting (${mmss(longest)})`
+    : `${inboundWaiting.length} callers waiting, longest ${mmss(longest)}`;
+  show($('waitingBar'), true);
+}
+setInterval(pollWaiting, 5000);
+
+// ------------------------------------------------------------ transfer ----
+$('transferBtn').onclick = async () => {
+  const open = $('transferWrap').classList.contains('hide');
+  show($('transferWrap'), open);
+  if (!open || !inboundAttemptId) return;
+
+  $('transferMsg').textContent = 'You leave the call as soon as it connects.';
+  const { data } = await sb.rpc('dialer_transfer_targets', { p_attempt: inboundAttemptId });
+  const targets = data || [];
+  $('transferAgent').innerHTML = '<option value="">— pick an agent —</option>'
+    + targets.map((t) =>
+        `<option value="${t.agent_id}"${t.is_available ? '' : ' disabled'}>`
+        + `${esc(t.full_name || t.agent_id)}${t.is_available ? '' : ' (unavailable)'}</option>`).join('');
+};
+
+$('transferCancel').onclick = () => show($('transferWrap'), false);
+
+$('transferGo').onclick = async () => {
+  if (!inboundAttemptId) { $('transferMsg').textContent = 'Only inbound queue calls can be transferred.'; return; }
+  const toAgent = $('transferAgent').value || null;
+  const toNumber = $('transferNumber').value.trim() || null;
+  if (!toAgent && !toNumber) { $('transferMsg').textContent = 'Pick an agent or enter a number.'; return; }
+
+  $('transferGo').disabled = true;
+  $('transferMsg').textContent = 'Transferring…';
+  const res = await callFn('dialer-transfer', {
+    attempt_id: inboundAttemptId, to_agent_id: toAgent, to_number: toNumber,
+  });
+  $('transferGo').disabled = false;
+
+  if (!res?.ok) { $('transferMsg').textContent = res?.error || 'Transfer failed.'; return; }
+  if (!res.transferred) { $('transferMsg').textContent = res.detail || 'Transfer refused.'; return; }
+
+  // The far end is gone from our leg the moment Telnyx accepts, so do not
+  // leave the agent looking at a call bar for a call they are no longer on.
+  $('transferNumber').value = '';
+  show($('transferWrap'), false);
+  banner('Call transferred.', 'info');
+};
+
 // ---------------------------------------------------------------- DTMF ----
 const DTMF_KEYS = [
   ['1', ''],   ['2', 'ABC'], ['3', 'DEF'],
@@ -1478,6 +1689,11 @@ function endCallUi() {
   // reading it as this call's.
   dtmfSent = ''; $('keypadSent').textContent = '';
   setKeypadLive(false);
+  // Inbound state is per-call too: leaving Transfer on screen after the call
+  // ends would offer to hand over a call that no longer exists.
+  inboundAttemptId = null;
+  show($('transferBtn'), false);
+  show($('transferWrap'), false);
   syncCallControls();   // a manual call with no contact takes the bar away again
   sipState('on', 'Ready');
   setSessionStatus('wrap_up');
