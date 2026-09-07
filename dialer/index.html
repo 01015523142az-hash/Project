@@ -1252,7 +1252,8 @@ function renderContact() {
     : (contact.attempt_count ?? 0);
   $('cLast').textContent = activePhone?.last_outcome || contact.last_outcome || '—';
   renderPhoneList();
-  $('cProperty').textContent = contact.property_id ? 'loading…' : '—';
+  $('cProperty').textContent =
+    (contact.address || contact.property_id) ? 'loading…' : '—';
 
   // Calling hours are enforced server-side by dialer-call-control; this is
   // just so the agent can see why a dial might be refused.
@@ -1269,7 +1270,7 @@ function renderContact() {
   renderProfile();
 
   $('dialBtn').disabled = paused || Boolean(activeCall);
-  if (contact.property_id) loadProperty(contact.property_id);
+  loadProperty(contact);
 }
 
 // ------------------------------------------------------------- profile ----
@@ -1359,11 +1360,42 @@ function renderProfile() {
     || '<span class="muted">No profile fields were mapped for this list.</span>';
 }
 
-async function loadProperty(propertyId) {
-  const { data } = await sb.from('properties')
-    .select('address, city, state, zip').eq('id', propertyId).maybeSingle();
-  $('cProperty').textContent = data
-    ? [data.address, data.city, data.state, data.zip].filter(Boolean).join(', ')
+// The Property line. This had never once displayed an address, for three
+// independent reasons, and each was invisible on its own:
+//
+//   1. it selected a column called `address`. properties has address_line1.
+//   2. properties has RLS enabled with NO policies, so a user JWT could
+//      never read it anyway -- and v557 revoked the direct grant on top.
+//   3. it only ran when contact.property_id was set, and nothing populates
+//      that column, so it never ran at all.
+//
+// Nothing surfaced because the result was destructured without checking
+// `error`, so all three failures rendered as the same em dash as "this
+// contact has no property". Now: the contact's own address first (cheap and
+// needs no lookup), then the property via a definer RPC that takes the
+// CONTACT id -- an agent may see the property behind work they are assigned,
+// not look up arbitrary rows in a 2.4M-row table.
+async function loadProperty(contact) {
+  // QUEUE_COLS already carries address/city/state/zip on the contact row, so
+  // when the list had them there is nothing to fetch at all.
+  if (contact.address) {
+    $('cProperty').textContent =
+      [contact.address, contact.city, contact.state, contact.zip].filter(Boolean).join(', ');
+    return;
+  }
+  if (!contact.property_id) { $('cProperty').textContent = '—'; return; }
+
+  const { data, error } = await sb.rpc('dialer_property_for_contact', { p_contact: contact.id });
+  // Say so, rather than showing the same dash that means "no property". A
+  // silent failure here is exactly how this went unnoticed for so long.
+  if (error) {
+    console.warn('loadProperty failed:', error.message);
+    $('cProperty').textContent = 'unavailable';
+    return;
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  $('cProperty').textContent = row
+    ? [row.address_line1, row.city, row.state, row.zip].filter(Boolean).join(', ')
     : '—';
 }
 
