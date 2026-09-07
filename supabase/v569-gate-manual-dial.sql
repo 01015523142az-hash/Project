@@ -129,6 +129,15 @@ grant execute on function dialer_manual_dial_allowed(uuid) to authenticated, ser
 -- The fourth case is the one worth having: it proves the refusal comes from
 -- COUNTING the CDR, not merely from reading the configured number.
 --
+-- DEPLOYED 2026-09-07 as dialer-call-control v10, verify_jwt=true preserved.
+-- Verified three ways, because that file is 809 lines and authorises every
+-- dial: the deployed source was fetched back and compared against local; a
+-- POST carrying a valid JWT reached OUR code and returned {"ok":false,
+-- "error":"Not signed in"}, which only happens after the module has loaded,
+-- the import resolved and auth.getUser() run; and local fingerprints matched
+-- (809 lines, 20 refuse() calls, 6 gate markers, 4 action branches, 5 rpc
+-- calls, 1 console.warn).
+--
 -- dialer-call-control calls this first in the manual_dial branch, before the
 -- DNC lookup -- cheapest refusal, and somebody who may not manual-dial should
 -- not be able to use the endpoint to probe whether a number is on our DNC
