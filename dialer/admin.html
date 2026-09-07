@@ -1841,7 +1841,9 @@ async function loadQueues() {
     ? queues.map((q) => `<tr data-qrow="${esc(q.id)}">
         <td>${esc(q.name)}</td>
         <td class="mono">${esc((q.open_time || '').slice(0, 5))}–${esc((q.close_time || '').slice(0, 5))}
-            <span class="muted">${(q.open_days || []).map((d) => DAY_LABEL[d] || d).join(' ')}</span></td>
+            <span class="muted">${(q.open_days || []).map((d) => DAY_LABEL[d] || d).join(' ')}</span>
+            <span class="${q.timezone === 'UTC' ? 'tag t-resting' : 'muted'}"
+                  title="The zone these hours are read in">${esc(q.timezone || 'UTC')}</span></td>
         <td>${q.strategy === 'rank' ? 'By rank' : 'Longest idle'}</td>
         <td class="num">${q.ring_timeout_seconds}</td>
         <td class="num">${q.queue_timeout_seconds}</td>
@@ -1866,6 +1868,25 @@ async function loadQueues() {
 // silently means "never Sunday".
 const QUEUE_DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'],
                     [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
+
+// The office's own zone. UTC is the column default only so v552 changed no
+// behaviour on the way in -- it is the right answer for nobody, which is why
+// this is a visible field rather than an assumption. Whatever is stored is
+// appended if it is not on this list, so an unusual zone set by hand survives
+// a save instead of being quietly rewritten to the first option.
+const QUEUE_ZONES = [
+  ['UTC', 'UTC — not a real office'],
+  ['America/New_York', 'US Eastern'],
+  ['America/Chicago', 'US Central'],
+  ['America/Denver', 'US Mountain'],
+  ['America/Phoenix', 'US Arizona (no DST)'],
+  ['America/Los_Angeles', 'US Pacific'],
+  ['Africa/Cairo', 'Cairo'],
+  ['Europe/London', 'London'],
+  ['Asia/Dubai', 'Dubai'],
+  ['Asia/Karachi', 'Karachi'],
+  ['Asia/Manila', 'Manila'],
+];
 const DAY_LABEL = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat', 7: 'Sun' };
 
 async function toggleQueueEditor(id, allNumbers) {
@@ -1897,6 +1918,11 @@ async function toggleQueueEditor(id, allNumbers) {
         <input type="time" data-q="open_time" value="${esc((q.open_time || '').slice(0, 5))}"></div>
       <div class="field"><label>Closes</label>
         <input type="time" data-q="close_time" value="${esc((q.close_time || '').slice(0, 5))}"></div>
+      <div class="field" style="min-width:190px"><label>Hours are in</label>
+        <select data-q="timezone">${QUEUE_ZONES.concat(
+            QUEUE_ZONES.some(([v]) => v === q.timezone) ? [] : [[q.timezone, q.timezone]])
+          .map(([v, l]) => `<option value="${esc(v)}"${q.timezone === v ? ' selected' : ''}>${esc(l)}</option>`)
+          .join('')}</select></div>
       ${QUEUE_LIMITS.map((f) => `
       <div class="field"><label>${esc(f.label)}</label>
         <input type="number" data-q="${f.key}" min="${f.min}" max="${f.max}" value="${q[f.key]}"></div>`).join('')}
@@ -2026,6 +2052,7 @@ async function saveQueue(id, td, tr) {
     strategy: val('strategy').value,
     open_time: val('open_time').value,
     close_time: val('close_time').value,
+    timezone: val('timezone').value,
     is_active: val('is_active').checked,
     greeting_text: val('greeting_text').value.trim(),
     voicemail_prompt_text: val('voicemail_prompt_text').value.trim(),
