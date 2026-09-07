@@ -191,3 +191,12 @@ grant execute on function dialer_agent_sip_uri(uuid) to service_role;
 -- And the secret stays secret. Impersonating the agent who OWNS the row:
 --   select a1_hash from dialer_fs_credentials where agent_id = <self>
 --     -> no rows visible
+--
+-- CORRECTED BY v556. That check passed, but on one layer rather than two.
+-- The table's PRIVILEGES were left to schema defaults, and the defaults came
+-- out backwards: authenticated held SELECT/INSERT/UPDATE/DELETE while
+-- service_role held no SELECT at all. RLS-with-no-policies was the only
+-- thing making the line above true, and the claim above it -- "only the
+-- service role reaches it" -- was simply wrong. v556 states the grants
+-- explicitly; the same probe now returns a hard permission error instead of
+-- an empty result.
