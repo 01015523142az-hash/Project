@@ -864,7 +864,20 @@ setInterval(renderStatusMeta, 30000);
 async function initSoftphone() {
   // Ask which switch we are on FIRST. This call is also what mints the
   // ephemeral session secret, so it has to happen before we connect.
-  const fs = await callFn('dialer-fs-token', {});
+  //
+  // WRAPPED, because this put a SECOND network dependency in front of every
+  // agent's softphone. callFn does not check res.ok before res.json(), so a
+  // gateway error page or a dropped connection throws rather than returning
+  // {ok:false} -- and an uncaught throw here would abort boot() and leave
+  // the whole floor with no softphone at all. Any failure means Telnyx,
+  // which is the same answer the function itself gives when anything is
+  // missing.
+  let fs = null;
+  try {
+    fs = await callFn('dialer-fs-token', {});
+  } catch (e) {
+    console.warn('dialer-fs-token unreachable, staying on Telnyx:', e?.message || e);
+  }
   let options;
 
   if (fs?.ok && fs.transport === 'freeswitch') {
