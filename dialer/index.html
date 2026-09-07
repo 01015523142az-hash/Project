@@ -1569,6 +1569,13 @@ $('incAnswer').onclick = () => {
   if (!incomingCall) return;
   const call = incomingCall;
   inboundAttemptId = incomingCtx?.attempt_id || null;
+  // attemptId is what the REST of the console works from -- dispositions, the
+  // wrap-up panel, everything. It was only ever set on the two outbound dial
+  // paths, so an inbound call reached the disposition buttons with it still
+  // null and dialer-call-control refused with "attempt_id and code are
+  // required". inboundAttemptId stays as well, because Transfer keys off it to
+  // know this is a call the server actually controls.
+  attemptId = inboundAttemptId;
   hideIncoming();
   activeCall = call;
   try { call.answer(); } catch (e) { banner('Could not answer: ' + (e?.message || e), 'err'); return; }
@@ -1832,6 +1839,15 @@ function showDispositions() {
 }
 
 async function applyDisposition(code) {
+  // Nothing to attach the outcome to. Say so plainly rather than passing null
+  // and letting the function answer with its own argument-validation message,
+  // which tells an agent nothing they can act on.
+  if (!attemptId) {
+    banner('That call has no record to disposition — it may have already been '
+         + 'saved, or the call ended before it was answered.', 'err');
+    show($('dispPanel'), false);
+    return;
+  }
   const cbInput = $('callbackAt').value;
   const res = await callFn('dialer-call-control', {
     action: 'disposition',
