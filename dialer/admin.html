@@ -296,6 +296,10 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
             <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="7" r="2.8"/><path d="M2.8 16c0-2.6 2.1-4.2 4.7-4.2s4.7 1.6 4.7 4.2"/><path d="M13.5 5.5a2.5 2.5 0 010 5"/><path d="M15 16c0-2 .8-3.4 2.2-4"/></svg>
             <span>Agents</span>
           </button>
+          <button data-tab="inbound">
+            <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M13 3.5h4v4"/><path d="M17 3.5l-5.5 5.5"/><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg>
+            <span>Inbound</span>
+          </button>
           <button data-tab="calllog">
             <svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="7.5" y="2.5" width="5" height="9" rx="2.5"/><path d="M4.5 9.5a5.5 5.5 0 0011 0"/><path d="M10 15v2.5"/></svg>
             <span>Call log</span>
@@ -558,6 +562,59 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
           <tbody id="shiftRows"><tr><td colspan="4">Loading…</td></tr></tbody>
         </table>
       </div>
+    </div>
+  </section>
+
+  <!-- ================================================ INBOUND ========== -->
+  <section id="tab-inbound" class="hide">
+    <div class="panel">
+      <h2>New queue</h2>
+      <p class="hint">
+        A queue answers a number, greets the caller, rings whoever is available
+        and takes a message if nobody is. Agents only ring when their status
+        allows inbound — <b>Ready</b> and <b>Inbound only</b> by default, which
+        is set on the Agents tab.
+      </p>
+      <div class="row">
+        <div class="field" style="min-width:240px"><label for="qName">Name</label>
+          <input id="qName" placeholder="Seller inbound"></div>
+        <div class="field"><label for="qOpen">Opens</label>
+          <input type="time" id="qOpen" value="09:00"></div>
+        <div class="field"><label for="qClose">Closes</label>
+          <input type="time" id="qClose" value="19:00"></div>
+        <button id="qCreate" class="primary">Create</button>
+      </div>
+      <div id="qMsg"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Queues</h2>
+      <p class="hint">
+        Edit opens the greeting, timeouts, hours, the agents who answer it and
+        the numbers that reach it. A queue with no number routed to it can
+        never receive a call.
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Name</th><th>Hours</th><th>Strategy</th>
+            <th class="num">Ring</th><th class="num">Wait</th>
+            <th class="num">Agents</th><th class="num">Numbers</th>
+            <th>Status</th><th></th></tr></thead>
+          <tbody id="queueRows"><tr><td colspan="9">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>On the line now</h2>
+      <p class="hint">Callers currently waiting, and who is free to take them.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Queue</th><th>From</th><th>Waiting</th><th>Offered to</th></tr></thead>
+          <tbody id="waitingRows"><tr><td colspan="4">Nobody waiting.</td></tr></tbody>
+        </table>
+      </div>
+      <div id="availableNow" class="hint" style="margin-top:12px"></div>
     </div>
   </section>
 
@@ -872,9 +929,11 @@ function applyReadOnly() {
   if (!canManage) {
     ['searchBtn', 'orderBtn', 'syncBtn', 'impBtn', 'cCreate', 'searchNpa',
      'searchLimit', 'impCampaign', 'impName', 'impFile', 'impCsv',
-     'impScrubbed', 'impScrubDate', 'cName', 'cMode', 'cStart', 'cEnd']
+     'impScrubbed', 'impScrubDate', 'cName', 'cMode', 'cStart', 'cEnd',
+     'qCreate', 'qName', 'qOpen', 'qClose']
       .forEach((id) => { const el = $(id); if (el) el.disabled = true; });
-    document.querySelectorAll('#tab-lists .panel:first-child, #tab-campaigns .panel:first-child')
+    document.querySelectorAll('#tab-lists .panel:first-child, #tab-campaigns .panel:first-child, '
+                            + '#tab-inbound .panel:first-child')
       .forEach((el) => el.classList.add('hide'));
     const note = document.createElement('div');
     note.className = 'msg warn';
@@ -931,7 +990,7 @@ function applyReadOnly() {
 document.querySelectorAll('nav button').forEach((b) => {
   b.onclick = () => {
     document.querySelectorAll('nav button').forEach((x) => x.classList.toggle('on', x === b));
-    ['numbers', 'lists', 'campaigns', 'agents', 'calllog', 'research', 'reports', 'inbox'].forEach((t) =>
+    ['numbers', 'lists', 'campaigns', 'agents', 'inbound', 'calllog', 'research', 'reports', 'inbox'].forEach((t) =>
       $('tab-' + t).classList.toggle('hide', t !== b.dataset.tab));
     // Loaded on first open rather than at boot: most sessions never look at
     // the call log, and the query reads the whole CDR table.
@@ -941,6 +1000,7 @@ document.querySelectorAll('nav button').forEach((b) => {
     // of whenever the page loaded.
     if (b.dataset.tab === 'inbox') loadInbox();
     if (b.dataset.tab === 'agents') loadStatusEditor();
+    if (b.dataset.tab === 'inbound') loadQueues();
   };
 });
 
@@ -1754,6 +1814,330 @@ async function saveCampaign(id, td, tr) {
   say(msg, 'Saved.', 'ok');
   tr.remove();
   loadCampaigns();
+}
+
+// ------------------------------------------------------- inbound queues --
+// Numeric queue settings, with the same ranges the database CHECKs enforce, so
+// a bad value is refused here with a sentence instead of a constraint name.
+const QUEUE_LIMITS = [
+  { key: 'ring_timeout_seconds',  label: 'Ring each agent (s)', min: 5,  max: 120 },
+  { key: 'queue_timeout_seconds', label: 'Wait before voicemail (s)', min: 10, max: 900 },
+];
+
+async function loadQueues() {
+  const { data } = await sb.from('dialer_inbound_queues').select('*').order('name');
+  const queues = data || [];
+
+  // Counts in one pass rather than a query per queue.
+  const { data: members } = await sb.from('dialer_queue_agents')
+    .select('queue_id, is_active');
+  const { data: numbers } = await sb.from('dialer_dids')
+    .select('id, phone_e164, status, inbound_queue_id');
+  const agentCount = {}; const numCount = {};
+  (members || []).forEach((m) => { if (m.is_active) agentCount[m.queue_id] = (agentCount[m.queue_id] || 0) + 1; });
+  (numbers || []).forEach((n) => { if (n.inbound_queue_id) numCount[n.inbound_queue_id] = (numCount[n.inbound_queue_id] || 0) + 1; });
+
+  $('queueRows').innerHTML = queues.length
+    ? queues.map((q) => `<tr data-qrow="${esc(q.id)}">
+        <td>${esc(q.name)}</td>
+        <td class="mono">${esc((q.open_time || '').slice(0, 5))}–${esc((q.close_time || '').slice(0, 5))}
+            <span class="muted">${(q.open_days || []).map((d) => DAY_LABEL[d] || d).join(' ')}</span></td>
+        <td>${q.strategy === 'rank' ? 'By rank' : 'Longest idle'}</td>
+        <td class="num">${q.ring_timeout_seconds}</td>
+        <td class="num">${q.queue_timeout_seconds}</td>
+        <td class="num">${agentCount[q.id] ? agentCount[q.id]
+            : '<span style="color:var(--away)">0</span>'}</td>
+        <td class="num">${numCount[q.id] ? numCount[q.id]
+            : '<span style="color:var(--away)">0</span>'}</td>
+        <td><span class="tag ${q.is_active ? 't-active' : 't-resting'}">${q.is_active ? 'active' : 'off'}</span></td>
+        <td>${canManage ? `<button class="sm" data-qedit="${esc(q.id)}">Edit</button>` : ''}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="9">No queues yet. Create one above.</td></tr>';
+
+  $('queueRows').querySelectorAll('button[data-qedit]').forEach((b) => {
+    b.onclick = () => toggleQueueEditor(b.dataset.qedit, numbers || []);
+  });
+
+  loadWaiting();
+}
+
+// calling_days / open_days are ISO: Monday is 1 and SUNDAY IS 7, never 0.
+// Same convention as dialer_campaigns, and the same trap -- a getDay()-style 0
+// silently means "never Sunday".
+const QUEUE_DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'],
+                    [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
+const DAY_LABEL = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat', 7: 'Sun' };
+
+async function toggleQueueEditor(id, allNumbers) {
+  const existing = document.querySelector(`tr[data-qeditor="${id}"]`);
+  if (existing) { existing.remove(); return; }
+  document.querySelectorAll('tr[data-qeditor]').forEach((r) => r.remove());
+
+  const row = document.querySelector(`tr[data-qrow="${id}"]`);
+  if (!row) return;
+  const { data: q } = await sb.from('dialer_inbound_queues')
+    .select('*').eq('id', id).maybeSingle();
+  if (!q) return;
+
+  const tr = document.createElement('tr');
+  tr.dataset.qeditor = id;
+  const td = document.createElement('td');
+  td.colSpan = 9;
+  td.style.cssText = 'background:var(--inset);padding:18px';
+  td.innerHTML = `
+    <div class="row">
+      <div class="field" style="min-width:220px"><label>Name</label>
+        <input data-q="name" value="${esc(q.name)}"></div>
+      <div class="field"><label>Strategy</label>
+        <select data-q="strategy">
+          <option value="longest_idle"${q.strategy === 'longest_idle' ? ' selected' : ''}>Longest idle</option>
+          <option value="rank"${q.strategy === 'rank' ? ' selected' : ''}>By rank</option>
+        </select></div>
+      <div class="field"><label>Opens</label>
+        <input type="time" data-q="open_time" value="${esc((q.open_time || '').slice(0, 5))}"></div>
+      <div class="field"><label>Closes</label>
+        <input type="time" data-q="close_time" value="${esc((q.close_time || '').slice(0, 5))}"></div>
+      ${QUEUE_LIMITS.map((f) => `
+      <div class="field"><label>${esc(f.label)}</label>
+        <input type="number" data-q="${f.key}" min="${f.min}" max="${f.max}" value="${q[f.key]}"></div>`).join('')}
+    </div>
+
+    <div class="row" style="margin-top:10px;align-items:center">
+      <span class="fb-label">Open days</span>
+      ${QUEUE_DAYS.map(([v, d]) => `<label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" data-qday="${v}"${(q.open_days || []).includes(v) ? ' checked' : ''}>${d}</label>`).join('')}
+      <label style="display:flex;align-items:center;gap:5px;margin-left:14px">
+        <input type="checkbox" data-q="is_active"${q.is_active ? ' checked' : ''}>Active</label>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <div class="field" style="flex:1;min-width:280px"><label>Greeting</label>
+        <input data-q="greeting_text" value="${esc(q.greeting_text)}"></div>
+      <div class="field" style="flex:1;min-width:280px"><label>Voicemail prompt</label>
+        <input data-q="voicemail_prompt_text" value="${esc(q.voicemail_prompt_text)}"></div>
+    </div>
+    <div class="row">
+      <div class="field" style="flex:1;min-width:280px"><label>Closed message</label>
+        <input data-q="closed_message" value="${esc(q.closed_message)}"></div>
+      <div class="field" style="flex:1;min-width:280px"><label>Hold music URL (optional)</label>
+        <input data-q="hold_music_url" placeholder="https://…mp3" value="${esc(q.hold_music_url || '')}"></div>
+    </div>
+    <p class="hint" style="margin:10px 0 0">
+      Hours are this office's clock, not the caller's — inbound is the reverse
+      of outbound calling hours, because the caller chose when to ring.
+      With no hold music the caller hears a short spoken line on the same loop.
+    </p>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="fb-label" style="margin-bottom:8px">Agents who answer this queue</div>
+      <div class="scroll"><table><thead><tr>
+        <th>Agent</th><th>Answers</th><th class="num">Rank</th><th>Takes inbound now</th>
+      </tr></thead><tbody data-qassign></tbody></table></div>
+      <p class="hint" style="margin:10px 0 0">Rank is only used when the strategy is “By rank”; lower goes first.</p>
+    </div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="fb-label" style="margin-bottom:8px">Numbers that reach this queue</div>
+      <div id="qNums-${esc(id)}" class="row" style="gap:14px"></div>
+      <p class="hint" style="margin:10px 0 0">
+        Point the number at the Call Control application in Telnyx as well —
+        ticking it here only tells us which queue it belongs to.
+      </p>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <button class="primary" data-qsave>Save queue</button>
+      <button data-qcancel>Cancel</button>
+      <span data-qmsg></span>
+    </div>`;
+  tr.appendChild(td);
+  row.after(tr);
+
+  // ---- agents ------------------------------------------------------------
+  const { data: roles } = await sb.from('roles').select('name, can_use_dialer');
+  const dialerRoles = new Set((roles || []).filter((r) => r.can_use_dialer).map((r) => r.name));
+  const { data: people } = await sb.from('profiles').select('id, full_name, role').order('full_name');
+  const eligible = (people || []).filter((p) => dialerRoles.has(p.role));
+
+  const { data: assigned } = await sb.from('dialer_queue_agents')
+    .select('agent_id, priority, is_active').eq('queue_id', id);
+  const byAgent = {}; (assigned || []).forEach((a) => { byAgent[a.agent_id] = a; });
+
+  // Who could actually take a call right now, so a queue with three names but
+  // nobody on shift is visible as such rather than looking staffed.
+  const { data: sessions } = await sb.from('dialer_agent_sessions')
+    .select('agent_id, agent_status, status, last_heartbeat_at, ended_at');
+  const { data: statuses } = await sb.from('dialer_agent_statuses')
+    .select('code, takes_inbound, label');
+  const inboundOk = new Set((statuses || []).filter((s) => s.takes_inbound).map((s) => s.code));
+  const liveNow = {};
+  (sessions || []).forEach((s) => {
+    if (s.ended_at) return;
+    if (new Date(s.last_heartbeat_at).getTime() < Date.now() - 120000) return;
+    liveNow[s.agent_id] = { ok: inboundOk.has(s.agent_status) && s.status !== 'on_call', st: s.agent_status };
+  });
+
+  td.querySelector('[data-qassign]').innerHTML = eligible.length
+    ? eligible.map((p) => {
+        const a = byAgent[p.id];
+        const live = liveNow[p.id];
+        return `<tr>
+          <td>${esc(p.full_name || p.id)} <span class="muted">${esc(p.role)}</span></td>
+          <td><input type="checkbox" data-qa="${esc(p.id)}"${a && a.is_active ? ' checked' : ''}></td>
+          <td class="num"><input type="number" min="1" style="width:80px"
+              data-qp="${esc(p.id)}" value="${a?.priority ?? 100}"></td>
+          <td>${live
+            ? (live.ok ? '<span class="tag t-active">yes</span>'
+                       : `<span class="tag t-resting">${esc(live.st)}</span>`)
+            : '<span class="muted">not signed in</span>'}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="4">No profiles hold a role with dialer access.</td></tr>';
+
+  // ---- numbers -----------------------------------------------------------
+  const usable = (allNumbers || []).filter((n) => n.status === 'active' || n.inbound_queue_id === id);
+  document.getElementById(`qNums-${id}`).innerHTML = usable.length
+    ? usable.map((n) => `<label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" data-qnum="${esc(n.id)}"${n.inbound_queue_id === id ? ' checked' : ''}>
+        <span class="mono">${esc(n.phone_e164)}</span></label>`).join('')
+    : '<span class="muted">No active numbers in the pool.</span>';
+
+  td.querySelector('[data-qcancel]').onclick = () => tr.remove();
+  td.querySelector('[data-qsave]').onclick = () => saveQueue(id, td, tr);
+}
+
+async function saveQueue(id, td, tr) {
+  const msg = td.querySelector('[data-qmsg]');
+  const val = (k) => td.querySelector(`[data-q="${k}"]`);
+
+  const patch = {
+    name: val('name').value.trim(),
+    strategy: val('strategy').value,
+    open_time: val('open_time').value,
+    close_time: val('close_time').value,
+    is_active: val('is_active').checked,
+    greeting_text: val('greeting_text').value.trim(),
+    voicemail_prompt_text: val('voicemail_prompt_text').value.trim(),
+    closed_message: val('closed_message').value.trim(),
+    hold_music_url: val('hold_music_url').value.trim() || null,
+    open_days: [...td.querySelectorAll('[data-qday]')]
+      .filter((c) => c.checked).map((c) => Number(c.dataset.qday)),
+    updated_at: new Date().toISOString(),
+  };
+
+  if (!patch.name) { say(msg, 'Give the queue a name.', 'err'); return; }
+  for (const f of QUEUE_LIMITS) {
+    const n = Number(val(f.key).value);
+    if (!Number.isInteger(n) || n < f.min || n > f.max) {
+      say(msg, `${f.label} must be a whole number between ${f.min} and ${f.max}.`, 'err'); return;
+    }
+    patch[f.key] = n;
+  }
+  if (!patch.open_days.length) {
+    say(msg, 'Pick at least one open day, or the queue is closed every day.', 'err'); return;
+  }
+  if (!patch.greeting_text || !patch.voicemail_prompt_text || !patch.closed_message) {
+    say(msg, 'The greeting, voicemail prompt and closed message are all spoken to callers — none can be blank.', 'err');
+    return;
+  }
+
+  td.querySelector('[data-qsave]').disabled = true;
+  say(msg, 'Saving…', 'ok');
+
+  const { error } = await sb.from('dialer_inbound_queues').update(patch).eq('id', id);
+  if (error) { say(msg, error.message, 'err'); td.querySelector('[data-qsave]').disabled = false; return; }
+
+  // Membership: upsert the ticked ones, deactivate the rest rather than
+  // deleting, so assigned_by/assigned_at survives as a record of who staffed
+  // the queue.
+  const ups = []; const off = [];
+  td.querySelectorAll('[data-qa]').forEach((cb) => {
+    const aid = cb.dataset.qa;
+    const pr = Number(td.querySelector(`[data-qp="${aid}"]`).value) || 100;
+    if (cb.checked) ups.push({ queue_id: id, agent_id: aid, priority: pr, is_active: true, assigned_by: meId });
+    else off.push(aid);
+  });
+  if (ups.length) {
+    const { error: e2 } = await sb.from('dialer_queue_agents')
+      .upsert(ups, { onConflict: 'queue_id,agent_id' });
+    if (e2) { say(msg, e2.message, 'err'); td.querySelector('[data-qsave]').disabled = false; return; }
+  }
+  if (off.length) {
+    await sb.from('dialer_queue_agents').update({ is_active: false })
+      .eq('queue_id', id).in('agent_id', off);
+  }
+
+  // Numbers: a DID belongs to at most one queue, so ticking here clears it
+  // from wherever it was.
+  const on = []; const clear = [];
+  td.querySelectorAll('[data-qnum]').forEach((cb) => {
+    (cb.checked ? on : clear).push(cb.dataset.qnum);
+  });
+  if (on.length) await sb.from('dialer_dids').update({ inbound_queue_id: id }).in('id', on);
+  if (clear.length) {
+    await sb.from('dialer_dids').update({ inbound_queue_id: null })
+      .in('id', clear).eq('inbound_queue_id', id);
+  }
+
+  say(msg, 'Saved.', 'ok');
+  tr.remove();
+  loadQueues();
+}
+
+$('qCreate').onclick = async () => {
+  const name = $('qName').value.trim();
+  if (!name) { say($('qMsg'), 'Give the queue a name.', 'err'); return; }
+  const { error } = await sb.from('dialer_inbound_queues').insert({
+    name, open_time: $('qOpen').value, close_time: $('qClose').value,
+  });
+  if (error) { say($('qMsg'), error.message, 'err'); return; }
+  say($('qMsg'), 'Created. Open Edit to add agents and a number — it cannot take calls until it has both.', 'ok');
+  $('qName').value = '';
+  loadQueues();
+};
+
+// Who is waiting right now, and who could take them.
+async function loadWaiting() {
+  const { data: waiting } = await sb.from('dialer_attempts')
+    .select('id, queue_id, from_number, enqueued_at')
+    .eq('direction', 'inbound').is('answered_at', null).is('ended_at', null)
+    .not('enqueued_at', 'is', null).order('enqueued_at');
+  const rows = waiting || [];
+
+  if (!rows.length) {
+    $('waitingRows').innerHTML = '<tr><td colspan="4">Nobody waiting.</td></tr>';
+  } else {
+    const { data: queues } = await sb.from('dialer_inbound_queues').select('id, name');
+    const qName = {}; (queues || []).forEach((q) => { qName[q.id] = q.name; });
+    const { data: offers } = await sb.from('dialer_inbound_offers')
+      .select('attempt_id, agent_id, result')
+      .in('attempt_id', rows.map((r) => r.id));
+    const { data: people } = await sb.from('profiles').select('id, full_name');
+    const pName = {}; (people || []).forEach((p) => { pName[p.id] = p.full_name; });
+
+    $('waitingRows').innerHTML = rows.map((r) => {
+      const secs = Math.round((Date.now() - new Date(r.enqueued_at).getTime()) / 1000);
+      const tried = (offers || []).filter((o) => o.attempt_id === r.id)
+        .map((o) => `${esc(pName[o.agent_id] || o.agent_id)}${o.result ? ' (' + esc(o.result) + ')' : ''}`);
+      return `<tr>
+        <td>${esc(qName[r.queue_id] || '—')}</td>
+        <td class="mono">${esc(r.from_number)}</td>
+        <td>${Math.floor(secs / 60)}m ${secs % 60}s</td>
+        <td>${tried.length ? tried.join(', ') : '<span class="muted">nobody yet</span>'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const { data: sessions } = await sb.from('dialer_agent_sessions')
+    .select('agent_id, agent_status, status, last_heartbeat_at, ended_at');
+  const { data: statuses } = await sb.from('dialer_agent_statuses').select('code, takes_inbound');
+  const ok = new Set((statuses || []).filter((s) => s.takes_inbound).map((s) => s.code));
+  const free = (sessions || []).filter((s) => !s.ended_at
+    && new Date(s.last_heartbeat_at).getTime() > Date.now() - 120000
+    && ok.has(s.agent_status) && s.status !== 'on_call').length;
+  $('availableNow').textContent = free === 1
+    ? '1 agent is free to take an inbound call.'
+    : `${free} agents are free to take an inbound call.`;
 }
 
 // ------------------------------------------------------- status catalogue --
