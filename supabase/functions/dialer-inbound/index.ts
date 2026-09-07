@@ -277,15 +277,36 @@ Deno.serve(async (req) => {
           break;
         }
 
-        const { data: attempt } = await admin.from('dialer_attempts').insert({
-          direction: 'inbound',
-          queue_id: queueId,
-          from_number: p.from,
-          to_number: p.to,
-          provider_call_id: ccId,
-          status: 'ringing',
-        }).select('id').single();
-        if (!attempt) { console.error('dialer-inbound: could not open attempt row'); break; }
+        // IDEMPOTENT ON PURPOSE. Telnyx retries any delivery it does not get a
+        // 2xx for within the webhook timeout, and a cold start can outrun a
+        // short one. Inserting unconditionally would then open a SECOND CDR row
+        // for the same call, answer it twice, and -- worse -- hand the retry's
+        // attempt id to every later event, orphaning the first row with the
+        // call's real history on it. call_control_id is unique per leg, so it
+        // is the natural key to check, and v551 makes that a database rule so
+        // two simultaneous retries cannot both pass this check.
+        const { data: existing } = await admin.from('dialer_attempts')
+          .select('id').eq('provider_call_id', ccId).maybeSingle();
+
+        let attemptId: string;
+        if (existing) {
+          attemptId = existing.id;
+        } else {
+          const { data: created, error: insErr } = await admin.from('dialer_attempts').insert({
+            direction: 'inbound',
+            queue_id: queueId,
+            from_number: p.from,
+            to_number: p.to,
+            provider_call_id: ccId,
+            status: 'ringing',
+          }).select('id').single();
+          if (!created) {
+            console.error('dialer-inbound: could not open attempt row', insErr?.message);
+            break;
+          }
+          attemptId = created.id;
+        }
+        const attempt = { id: attemptId };
 
         await cmd(TELNYX_API_KEY, ccId, 'answer', {
           client_state: encodeState({ r: 'caller', a: attempt.id, q: queueId }),
@@ -432,6 +453,32 @@ Deno.serve(async (req) => {
           status: attempt?.answered_at ? 'completed' : 'no_answer',
           was_abandoned: !attempt?.answered_at,
         }).eq('id', state.a);
+        break;
+      }
+
+      // ---------------------------------------------------------------------
+      // Sent because "Enable Call Cost" is on for the Call Control
+      // application. Without this case an inbound call would have no cost on
+      // it at all, while every outbound call does -- and the two sit in one
+      // Call log, so the gap would read as "inbound is free".
+      //
+      // Field names read defensively across the shapes Telnyx has used, the
+      // same way dialer-telnyx-webhook does, rather than assuming one and
+      // silently storing null forever.
+      case 'call.cost': {
+        if (!state) break;
+        const c = p.total_cost ?? p.cost ?? p.call_cost ?? null;
+        const amount = (c && typeof c === 'object') ? (c.amount ?? c.total ?? null) : c;
+        if (amount != null && Number.isFinite(Number(amount))) {
+          await admin.from('dialer_attempts').update({
+            provider_cost_usd: Number(amount),
+            provider_cost_currency:
+              (c && typeof c === 'object' ? c.currency : null) ?? p.currency ?? 'USD',
+          }).eq('id', state.a);
+        } else {
+          console.warn('dialer-inbound: call.cost with no recognised amount:',
+                       JSON.stringify(p).slice(0, 300));
+        }
         break;
       }
 
