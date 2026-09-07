@@ -1,0 +1,20 @@
+<configuration name="acl.conf" description="Who may send us SIP">
+  <network-lists>
+    <!--
+      The trunk list is the ONLY thing allowed to send SIP to this host.
+      Agents do not appear here at all: they arrive over WSS on 443 and are
+      authenticated per-user by mod_verto against dialer_fs_credentials.
+
+      Port 5060 is never opened. The external profile listens on 5061/TLS
+      with this ACL applied, so automated SIP scanners find nothing.
+
+      Fill in the carrier's signalling ranges from their documentation, and
+      Telnyx's if trunk-backup is in use. default="deny" is what makes an
+      unfinished list safe rather than dangerous.
+    -->
+    <list name="trunks" default="deny">
+      <!-- <node type="allow" cidr="0.0.0.0/32"/>  carrier signalling -->
+      <!-- <node type="allow" cidr="0.0.0.0/32"/>  telnyx signalling  -->
+    </list>
+  </network-lists>
+</configuration>

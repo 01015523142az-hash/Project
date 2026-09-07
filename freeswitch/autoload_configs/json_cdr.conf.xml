@@ -1,0 +1,21 @@
+<configuration name="json_cdr.conf" description="CDR to Supabase">
+  <settings>
+    <param name="url" value="https://kqfoniinytvuddxiwvkc.supabase.co/functions/v1/dialer-fs-cdr"/>
+    <param name="cred" value="fs:__FS_XML_SECRET__"/>
+    <param name="encode" value="false"/>
+    <param name="log-b-leg" value="false"/>
+    <param name="prefix-a-leg" value="true"/>
+
+    <!--
+      Retry hard, then keep the file. A CDR is the only record that a call
+      happened and what it cost, so losing one means a call that silently
+      never appears in the Call log or in any report. err-log-dir is the
+      safety net: anything undeliverable lands there as a file, and that
+      directory should be alerted on rather than quietly accumulating.
+    -->
+    <param name="retries" value="4"/>
+    <param name="delay" value="5"/>
+    <param name="err-log-dir" value="/var/log/freeswitch/cdr-failed"/>
+    <param name="timeout" value="10"/>
+  </settings>
+</configuration>

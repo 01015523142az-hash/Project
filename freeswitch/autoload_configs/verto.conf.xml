@@ -1,0 +1,26 @@
+<configuration name="verto.conf" description="Agent browsers">
+  <settings>
+    <param name="debug" value="0"/>
+  </settings>
+  <profiles>
+    <!--
+      Bound to LOCALHOST on purpose. nginx terminates TLS on 443 and proxies
+      here, because agents sit behind corporate and home firewalls where 443
+      is the only port that reliably passes. Binding this profile to a public
+      interface would expose it directly as well, defeating that.
+    -->
+    <profile name="dialer">
+      <param name="bind-local" value="127.0.0.1:8081"/>
+      <param name="force-register-domain" value="__FS_DOMAIN__"/>
+      <param name="userauth" value="true"/>
+      <param name="context" value="dialer"/>
+      <param name="dialplan" value="XML"/>
+      <param name="rtp-ip" value="__PUBLIC_IP__"/>
+      <param name="ext-rtp-ip" value="__PUBLIC_IP__"/>
+      <param name="local-network" value="localnet.auto"/>
+      <param name="outbound-codec-string" value="opus"/>
+      <param name="inbound-codec-string" value="opus"/>
+      <param name="apply-candidate-acl" value="wan_v4.auto"/>
+    </profile>
+  </profiles>
+</configuration>

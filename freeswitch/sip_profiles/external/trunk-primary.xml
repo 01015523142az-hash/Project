@@ -1,0 +1,13 @@
+<!--
+  Outbound termination. IP authentication rather than registration: one less
+  credential that can leak, and no re-registration storm after a restart.
+  Whitelist this host's public IP with the carrier AND put their signalling
+  IPs in acl.conf.xml -- both halves are needed, neither is sufficient.
+-->
+<gateway name="trunk-primary">
+  <param name="proxy" value="__TRUNK_PRIMARY_HOST__"/>
+  <param name="register" value="false"/>
+  <param name="transport" value="tls"/>
+  <param name="caller-id-in-from" value="true"/>
+  <param name="ping" value="30"/>
+</gateway>

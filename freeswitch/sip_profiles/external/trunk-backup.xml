@@ -1,0 +1,14 @@
+<!--
+  Telnyx Elastic SIP, kept configured as the failover leg in the bridge
+  string dialer-fs-route emits. Expensive per minute at 60/60 -- which is
+  the entire reason for this project -- but only while it is actually
+  carrying traffic, and a carrier outage that stops the floor dialling costs
+  far more than a few hours of 60/60.
+-->
+<gateway name="trunk-backup">
+  <param name="proxy" value="sip.telnyx.com"/>
+  <param name="register" value="false"/>
+  <param name="transport" value="tls"/>
+  <param name="caller-id-in-from" value="true"/>
+  <param name="ping" value="30"/>
+</gateway>
