@@ -193,6 +193,18 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
 .keypad.idle{opacity:.45}
 .keypad-hint{font-size:11px;color:var(--text-dim);margin:10px 0 0;line-height:1.5}
 
+/* ---------- the contact's numbers ---------- */
+.phone-list{display:flex;flex-direction:column;gap:4px;margin:0 0 16px}
+.phone-row{display:flex;align-items:center;gap:9px;font-size:12.5px;padding:4px 8px;
+  border-radius:7px;border:1px solid transparent}
+.phone-row.active{background:var(--focus-dim);border-color:var(--focus)}
+.phone-row.spent{opacity:.5}
+.phone-row .pl{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;
+  letter-spacing:.8px;color:var(--text-dim);flex:0 0 52px}
+.phone-row .pn{font-family:var(--mono);color:var(--text)}
+.phone-row.active .pn{color:var(--focus);font-weight:600}
+.phone-row .ps{margin-left:auto;font-size:11px;color:var(--text-dim)}
+
 /* ---------- queue / status ---------- */
 .queue-name{font-size:15px;font-weight:600;color:var(--text);line-height:1.4}
 .queue-name.none{font-size:13px;font-weight:400;color:var(--text-2)}
@@ -349,6 +361,13 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
                   <button id="textBtn" style="font-size:12px;padding:3px 10px"
                           title="Text this contact from +1 307-441-5766">Text</button>
                 </p>
+
+                <!-- Every number skip-tracing found for this seller. The agent
+                     needs to see that there ARE others and which one is up, or
+                     "no answer" on line 1 reads as a dead lead. Ranks and
+                     labels mirror ReadyMode's Phone Number / Ph#2..Ph#10. -->
+                <div id="phoneList" class="phone-list"></div>
+
                 <dl class="kv">
                   <dt>Local time</dt><dd id="cLocal">—</dd>
                   <dt>Line type</dt><dd id="cLine">—</dd>
@@ -905,7 +924,8 @@ const QUEUE_COLS = 'id, phone_e164, contact_name, first_name, last_name, email, 
 
 // next_attempt_at plus the partial index from v524 IS the queue — a contact
 // is due when it is new (never attempted) or its next_attempt_at has passed.
-async function loadNextContact() {
+async function loadNextContact(isNewScan = true) {
+  if (isNewScan) skipsThisScan = 0;
   contact = null; attemptId = null;
   show($('dispPanel'), false);
   if (!campaign) {
@@ -966,7 +986,94 @@ async function loadNextContact() {
     }
     contact.__list_name = listNameCache[contact.list_id];
   }
+
+  // v548: the unit of work is a NUMBER, not a person. A skip-traced seller
+  // arrives with up to ten, and dialling only the first was leaving most of
+  // what we paid for on the table. The RPC applies the per-number rules --
+  // rank order, DNC, validity, and the alt-phone delay -- so this screen never
+  // has to reimplement them.
+  await loadContactPhones();
+  if (!activePhone) {
+    // Every number on this contact is spent or resting. Not an error; the
+    // contact simply is not workable right now.
+    await retireContactForNow();
+    return;
+  }
   renderContact();
+}
+
+// -------------------------------------------------------- contact numbers --
+let contactPhones = [];    // every number on the contact, for display
+let activePhone = null;    // the one the Dial button will ring
+
+function renderPhoneList() {
+  const wrap = $('phoneList');
+  // One number is the ordinary case and needs no list -- it is already on the
+  // line above.
+  if (contactPhones.length < 2) { wrap.innerHTML = ''; return; }
+
+  wrap.innerHTML = contactPhones.map((p) => {
+    const isActive = activePhone && p.id === activePhone.id;
+    const spent = p.status === 'exhausted' || p.status === 'dnc'
+               || p.status === 'invalid' || p.status === 'wrong_person';
+    let note = '';
+    if (isActive) note = 'up next';
+    else if (spent) note = p.last_outcome || p.status;
+    else if (p.next_attempt_at && new Date(p.next_attempt_at) > new Date()) {
+      const mins = Math.round((new Date(p.next_attempt_at) - Date.now()) / 60000);
+      note = mins > 90 ? `in ${Math.round(mins / 60)}h` : `in ${mins}m`;
+    } else if (p.attempt_count) note = `${p.attempt_count} tried`;
+
+    return '<div class="phone-row' + (isActive ? ' active' : '') + (spent ? ' spent' : '') + '">'
+      + '<span class="pl">' + esc(p.label) + '</span>'
+      + '<span class="pn">' + esc(p.phone_e164) + '</span>'
+      + '<span class="ps">' + esc(note) + '</span></div>';
+  }).join('');
+}
+
+async function loadContactPhones() {
+  contactPhones = []; activePhone = null;
+  if (!contact) return;
+
+  const { data: all } = await sb.from('dialer_contact_phones')
+    .select('id, rank, label, phone_e164, status, attempt_count, last_outcome, '
+          + 'phone_line_type, timezone, next_attempt_at')
+    .eq('contact_id', contact.id).order('rank');
+  contactPhones = all || [];
+
+  const { data: next } = await sb.rpc('dialer_next_number', { p_contact: contact.id });
+  const n = Array.isArray(next) ? next[0] : next;
+  activePhone = n ? (contactPhones.find((p) => p.id === n.phone_id) || null) : null;
+}
+
+// Nothing dialable on this contact right now. Push it past the soonest number
+// that comes back, so the queue moves on instead of returning the same person
+// on the next pass.
+// How many contacts in a row may be skipped this way before the console stops
+// and says so. Without a ceiling, a campaign whose numbers are all resting
+// would walk the entire list in a tight loop of two writes per contact.
+const MAX_SKIPS_PER_SCAN = 25;
+let skipsThisScan = 0;
+
+async function retireContactForNow() {
+  const soonest = contactPhones
+    .map((p) => p.next_attempt_at).filter(Boolean).sort()[0];
+  await sb.from('dialer_contacts').update({
+    status: soonest ? 'queued' : 'retired',
+    next_attempt_at: soonest || null,
+    retired_reason: soonest ? null : 'all_numbers_exhausted',
+  }).eq('id', contact.id);
+
+  if (++skipsThisScan >= MAX_SKIPS_PER_SCAN) {
+    contact = null;
+    show($('contactBody'), false);
+    show($('contactEmpty'), true);
+    $('contactEmpty').textContent =
+      'Every contact checked so far is waiting on its next number. Try again shortly.';
+    syncCallControls();
+    return;
+  }
+  await loadNextContact(false);   // same scan, so the ceiling still applies
 }
 
 function renderContact() {
@@ -976,20 +1083,29 @@ function renderContact() {
   banner('', null);
 
   $('cName').textContent = contact.contact_name || 'Unknown contact';
-  $('cNumber').textContent = contact.phone_e164;
-  $('cLine').textContent = contact.phone_line_type || 'not validated';
-  $('cAttempts').textContent = contact.attempt_count ?? 0;
-  $('cLast').textContent = contact.last_outcome || '—';
+  // The number about to be dialled, which is NOT always the contact's primary
+  // once alternates are in play.
+  $('cNumber').textContent = activePhone ? activePhone.phone_e164 : contact.phone_e164;
+  $('cLine').textContent =
+    (activePhone?.phone_line_type || contact.phone_line_type) || 'not validated';
+  $('cAttempts').textContent = activePhone
+    ? `${activePhone.attempt_count ?? 0} on this number, ${contact.attempt_count ?? 0} on the contact`
+    : (contact.attempt_count ?? 0);
+  $('cLast').textContent = activePhone?.last_outcome || contact.last_outcome || '—';
+  renderPhoneList();
   $('cProperty').textContent = contact.property_id ? 'loading…' : '—';
 
   // Calling hours are enforced server-side by dialer-call-control; this is
   // just so the agent can see why a dial might be refused.
+  // Read from the NUMBER being dialled, not the contact: an Illinois seller
+  // routinely has a Florida mobile, and calling hours follow the number.
+  const tz = activePhone?.timezone || contact.timezone;
   try {
-    $('cLocal').textContent = contact.timezone
-      ? new Intl.DateTimeFormat('en-US', { timeZone: contact.timezone, hour: '2-digit', minute: '2-digit' })
-          .format(new Date()) + ' (' + contact.timezone + ')'
+    $('cLocal').textContent = tz
+      ? new Intl.DateTimeFormat('en-US', { timeZone: tz, hour: '2-digit', minute: '2-digit' })
+          .format(new Date()) + ' (' + tz + ')'
       : 'unknown';
-  } catch { $('cLocal').textContent = contact.timezone || 'unknown'; }
+  } catch { $('cLocal').textContent = tz || 'unknown'; }
 
   renderProfile();
 
@@ -1108,7 +1224,12 @@ $('dialBtn').onclick = async () => {
 
   // Every gate lives server-side. A refusal is a normal outcome, not an
   // error — show the reason and move on.
-  const auth = await callFn('dialer-call-control', { action: 'authorize_dial', contact_id: contact.id });
+  // phone_id names WHICH of the contact's numbers to ring. The function still
+  // resolves it server-side and re-runs every gate against that number -- this
+  // is a choice being reported, not a number being trusted.
+  const auth = await callFn('dialer-call-control', {
+    action: 'authorize_dial', contact_id: contact.id, phone_id: activePhone?.id || null,
+  });
   if (!auth?.ok) { banner(auth?.error || 'Authorisation failed.', 'err'); $('dialBtn').disabled = false; return; }
   if (!auth.allowed) {
     banner(auth.detail || 'This contact cannot be dialled.', 'err');

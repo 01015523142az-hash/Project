@@ -40,6 +40,10 @@
 //   5. DID availability    — an active number, under its daily cap, matching
 //                            the called area code where possible
 //
+// v548: a contact can have up to ten numbers (dialer_contact_phones). Gates 1,
+// 3, 4 and 5 all apply to the NUMBER being dialled, not to the contact's
+// primary — DNC, time zone and area code are properties of a phone line.
+//
 // Deploy with:
 //   supabase functions deploy dialer-call-control
 // No Telnyx secrets needed — this function never talks to Telnyx.
@@ -169,6 +173,7 @@ Deno.serve(async (req) => {
     // =====================================================================
     if (action === 'authorize_dial') {
       const contactId = body?.contact_id ? String(body.contact_id) : null;
+      const phoneIdIn = body?.phone_id ? String(body.phone_id) : null;
       if (!contactId) return json(req, { ok: false, error: 'contact_id is required' }, 400);
 
       const { data: contact } = await admin
@@ -238,18 +243,71 @@ Deno.serve(async (req) => {
         }
       }
 
+      // ---- which NUMBER are we ringing? (v548) ---------------------------
+      // A skip-traced seller has up to ten. The console reports which one it
+      // means, but the choice is re-resolved here: a phone_id from the client
+      // is a claim, and it must belong to this contact and still be dialable.
+      // With no phone_id (an older console, or a contact with no phone rows)
+      // this falls back to the contact's own primary number, so the function
+      // keeps working exactly as it did before.
+      let phoneRow: any = null;
+      if (phoneIdIn) {
+        const { data: p } = await admin
+          .from('dialer_contact_phones')
+          .select('id, rank, label, phone_e164, status, timezone, phone_valid, contact_id')
+          .eq('id', phoneIdIn).eq('contact_id', contact.id).maybeSingle();
+        if (!p) return refuse(req, 'phone_not_on_contact', 'That number does not belong to this contact.');
+        phoneRow = p;
+      } else {
+        const { data: nx } = await admin
+          .rpc('dialer_next_number', { p_contact: contact.id });
+        const n = Array.isArray(nx) ? nx[0] : nx;
+        if (n) {
+          const { data: p } = await admin
+            .from('dialer_contact_phones')
+            .select('id, rank, label, phone_e164, status, timezone, phone_valid, contact_id')
+            .eq('id', n.phone_id).maybeSingle();
+          phoneRow = p ?? null;
+        }
+      }
+
+      // Everything downstream gates on the number actually being dialled.
+      const dialNumber: string = phoneRow?.phone_e164 ?? contact.phone_e164;
+      const dialTimezone: string | null = phoneRow?.timezone ?? contact.timezone;
+
+      if (phoneRow && ['exhausted', 'dnc', 'invalid', 'wrong_person'].includes(phoneRow.status)) {
+        return refuse(req, 'number_' + phoneRow.status,
+          `${phoneRow.label} is ${phoneRow.status.replace('_', ' ')}.`);
+      }
+      if (phoneRow && phoneRow.phone_valid === false) {
+        return refuse(req, 'invalid_number', `${phoneRow.label} was marked invalid by validation.`);
+      }
+
       // ---- gate 1: internal do-not-call ---------------------------------
       // Any row at all means suppressed. dialer_dnc is append-only evidence
       // and is the master list for both dialers — see v523's header.
+      //
+      // Checked against the NUMBER being dialled. Suppression attaches to a
+      // phone line, not to a person: one of a seller's ten numbers being on
+      // the list says nothing about the other nine, and blocking the contact
+      // outright would be as wrong as ignoring it.
       const { count: dncCount } = await admin
         .from('dialer_dnc')
         .select('id', { count: 'exact', head: true })
-        .eq('phone_e164', contact.phone_e164);
+        .eq('phone_e164', dialNumber);
       if ((dncCount ?? 0) > 0) {
-        await admin.from('dialer_contacts')
-          .update({ status: 'suppressed', retired_reason: 'internal_dnc', updated_at: nowIso })
-          .eq('id', contact.id);
-        return refuse(req, 'dnc', 'This number is on the internal do-not-call list.');
+        if (phoneRow) {
+          // Retire the LINE, not the person. The other numbers stay workable,
+          // and the console will move to the next rank on its own.
+          await admin.from('dialer_contact_phones')
+            .update({ status: 'dnc', next_attempt_at: null, updated_at: nowIso })
+            .eq('id', phoneRow.id);
+        } else {
+          await admin.from('dialer_contacts')
+            .update({ status: 'suppressed', retired_reason: 'internal_dnc', updated_at: nowIso })
+            .eq('id', contact.id);
+        }
+        return refuse(req, 'dnc', 'That number is on the internal do-not-call list.');
       }
 
       // ---- gate 2: the list must have been scrubbed in ReadyMode --------
@@ -267,13 +325,13 @@ Deno.serve(async (req) => {
       // Derived from the number's own zone. An Illinois property routinely
       // has an owner whose mobile is a Florida number, and the rule follows
       // the number.
-      if (!contact.timezone) {
+      if (!dialTimezone) {
         return refuse(req, 'no_timezone',
           'No time zone resolved for this number, so calling hours cannot be checked.');
       }
-      const local = localTimeParts(contact.timezone);
+      const local = localTimeParts(dialTimezone);
       if (!local) {
-        return refuse(req, 'bad_timezone', `Unrecognised time zone "${contact.timezone}".`);
+        return refuse(req, 'bad_timezone', `Unrecognised time zone "${dialTimezone}".`);
       }
       const days: number[] = Array.isArray(campaign.calling_days) ? campaign.calling_days : [];
       if (!days.includes(local.isoDow)) {
@@ -287,7 +345,11 @@ Deno.serve(async (req) => {
       }
 
       // ---- gate 4: the number itself ------------------------------------
-      if (contact.phone_valid === false) {
+      // contact.phone_valid describes the PRIMARY number only. Once a contact
+      // has alternates it must not gate them: a dead primary is the ordinary
+      // reason to be ringing Ph#2 in the first place. The number actually
+      // being dialled was validity-checked above, off phoneRow.
+      if (!phoneRow && contact.phone_valid === false) {
         return refuse(req, 'invalid_number', 'Pre-dial validation marked this number invalid.');
       }
       if (contact.status === 'retired' || contact.status === 'suppressed' || contact.status === 'invalid') {
@@ -305,7 +367,9 @@ Deno.serve(async (req) => {
       // enforced here rather than by a scheduled job, and dials_today is
       // reset lazily by comparing dials_today_date (v523).
       const today = nowIso.slice(0, 10);
-      const wantedAreaCode = areaCodeOf(contact.phone_e164);
+      // Local presence matches the number being dialled, not the contact's
+      // primary — a seller's second line is often in a different area code.
+      const wantedAreaCode = areaCodeOf(dialNumber);
 
       let didQuery = admin.from('dialer_dids')
         .select('id, phone_e164, area_code, state, daily_cap, dials_today, dials_today_date')
@@ -346,7 +410,8 @@ Deno.serve(async (req) => {
           property_id: contact.property_id,
           from_did_id: chosen.id,
           from_number: chosen.phone_e164,
-          to_number: contact.phone_e164,
+          to_number: dialNumber,
+          phone_id: phoneRow?.id ?? null,
           direction: 'outbound',
           status: 'initiated',
         })
@@ -374,12 +439,22 @@ Deno.serve(async (req) => {
         })
         .eq('id', contact.id);
 
+      // The number's own counter moves HERE, at the moment the call is
+      // authorised, for the same reason the contact's does: a call whose tab
+      // died before wrap-up still consumed an attempt on that line, and
+      // counting it at disposition time would silently miss exactly those.
+      if (phoneRow) {
+        await admin.rpc('dialer_bump_number_attempt', { p_phone: phoneRow.id });
+      }
+
       return json(req, {
         ok: true,
         allowed: true,
         attempt_id: attempt.id,
         from_number: chosen.phone_e164,
-        to_number: contact.phone_e164,
+        to_number: dialNumber,
+        phone_id: phoneRow?.id ?? null,
+        phone_label: phoneRow?.label ?? null,
       });
     }
 
@@ -533,7 +608,7 @@ Deno.serve(async (req) => {
 
       const { data: attempt } = await admin
         .from('dialer_attempts')
-        .select('id, contact_id, campaign_id, to_number, agent_id, recording_path, property_id')
+        .select('id, contact_id, campaign_id, to_number, agent_id, recording_path, property_id, phone_id')
         .eq('id', attemptId)
         .maybeSingle();
       if (!attempt) return json(req, { ok: false, error: 'Attempt not found' }, 404);
@@ -580,6 +655,23 @@ Deno.serve(async (req) => {
 
       if (attempt.contact_id) {
         await admin.from('dialer_contacts').update(contactUpdate).eq('id', attempt.contact_id);
+      }
+
+      // v548: record the outcome against the NUMBER, and open the next-ranked
+      // one. Which outcomes retire a line is deliberately narrower than which
+      // retire a contact: marks_invalid and adds_to_dnc are facts about this
+      // phone line, and 'wrong_person' means we reached someone else on it --
+      // all three are terminal for the line. A retires_contact outcome (not
+      // interested, do not call back) is a decision by the PERSON, so the
+      // contact is retired above and the line does not need its own verdict.
+      if (attempt.phone_id) {
+        const terminalForLine = Boolean(
+          disp.marks_invalid || disp.adds_to_dnc || disp.code === 'wrong_person');
+        await admin.rpc('dialer_advance_number', {
+          p_phone: attempt.phone_id,
+          p_outcome: disp.code,
+          p_terminal: terminalForLine,
+        });
       }
 
       // Suppression is permanent evidence and applies to EVERY campaign,
