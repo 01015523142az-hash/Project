@@ -1977,6 +1977,15 @@ async function toggleQueueEditor(id, allNumbers) {
     liveNow[s.agent_id] = { ok: inboundOk.has(s.agent_status) && s.status !== 'on_call', st: s.agent_status };
   });
 
+  // A SIP identity is created lazily, the first time an agent opens the
+  // console. dialer_available_agents requires one, so an agent without it is
+  // skipped silently no matter what their status says -- which is exactly the
+  // "looks staffed but nobody rings" failure this column exists to prevent.
+  const { data: creds } = await sb.from('dialer_agent_credentials')
+    .select('agent_id, sip_username, revoked_at');
+  const hasSip = new Set((creds || [])
+    .filter((c) => c.sip_username && !c.revoked_at).map((c) => c.agent_id));
+
   td.querySelector('[data-qassign]').innerHTML = eligible.length
     ? eligible.map((p) => {
         const a = byAgent[p.id];
@@ -1986,10 +1995,12 @@ async function toggleQueueEditor(id, allNumbers) {
           <td><input type="checkbox" data-qa="${esc(p.id)}"${a && a.is_active ? ' checked' : ''}></td>
           <td class="num"><input type="number" min="1" style="width:80px"
               data-qp="${esc(p.id)}" value="${a?.priority ?? 100}"></td>
-          <td>${live
-            ? (live.ok ? '<span class="tag t-active">yes</span>'
-                       : `<span class="tag t-resting">${esc(live.st)}</span>`)
-            : '<span class="muted">not signed in</span>'}</td>
+          <td>${!hasSip.has(p.id)
+            ? '<span class="tag t-resting">no softphone yet</span>'
+            : (live
+                ? (live.ok ? '<span class="tag t-active">yes</span>'
+                           : `<span class="tag t-resting">${esc(live.st)}</span>`)
+                : '<span class="muted">not signed in</span>')}</td>
         </tr>`;
       }).join('')
     : '<tr><td colspan="4">No profiles hold a role with dialer access.</td></tr>';
