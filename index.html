@@ -8017,6 +8017,50 @@ $('forcePasswordBtn').addEventListener('click', async () => {
   }
 });
 
+// ---- Time Management extension: session handover (extension v1.2.53) ----
+//
+// The extension keeps its OWN Supabase session, separate from this page's.
+// Changing a password — which v319's 30-day rotation forces on everyone —
+// makes GoTrue revoke every refresh token for the account, the extension's
+// included, and the extension then silently loses the ability to read or
+// write anything at all. One agent lost 28 hours to exactly that: a
+// backlog of unsynced writes and a task list that wouldn't load, with no
+// indication why. Since we have just authenticated this same person, hand
+// their extension a fresh single-use token so it can mint its own new
+// session and carry on without a re-login.
+//
+// Deliberately best-effort and non-blocking. No extension installed, a
+// different browser, an agent who has never signed into the extension, a
+// network blip — all normal, all silent, none of them may affect sign-in.
+//
+// The token is minted by the extension-session-handover Edge Function
+// strictly for the calling account (it accepts no parameters at all), and
+// it is the EXTENSION, not this page, that redeems it — so the tokens it
+// ends up holding are its own and never pass through the browser page.
+// It cannot sign anybody in and cannot switch which account the extension
+// tracks; it only re-tokenizes an existing session for the same user.
+const TIME_EXTENSION_ID = 'ejpaamckgoggmegolclnifbmdnbnlmei';
+async function handOverSessionToExtension(){
+  try{
+    // chrome.runtime is only exposed to a page when an installed extension
+    // names it in externally_connectable, so this doubles as the "is the
+    // extension even here" check.
+    if(!(window.chrome && chrome.runtime && chrome.runtime.sendMessage)) return;
+    const { data, error } = await sb.functions.invoke('extension-session-handover', { body: {} });
+    if(error || !data || !data.ok || !data.tokenHash) return;
+    chrome.runtime.sendMessage(TIME_EXTENSION_ID, {
+      type: 'SESSION_HANDOVER',
+      tokenHash: data.tokenHash,
+      userId: data.userId,
+    }, () => {
+      // Touching lastError is what suppresses Chrome's "Unchecked
+      // runtime.lastError" console noise when the extension isn't
+      // installed or is disabled. Nothing to do about it either way.
+      void chrome.runtime.lastError;
+    });
+  }catch(e){ /* never let this affect sign-in */ }
+}
+
 async function establishSession(user, { isNewLogin = true } = {}){
   const { data: profile } = await sb.from('profiles').select('role, full_name, avatar_url, chat_status, chat_status_manual, must_change_password, password_changed_at').eq('id', user.id).single();
   // v319: forced password rotation -- intercepted here, before any role/
@@ -8172,6 +8216,12 @@ async function establishSession(user, { isNewLogin = true } = {}){
   pollHandle = setInterval(refreshAll, 20000);
   startStatusTimerTicker();
   startPresenceHeartbeat(); // v1.2.9: begin auto-presence (writes active/away + last_seen)
+  // Runs on EVERY establishSession, not only fresh logins: the forced
+  // password-change screen finishes by calling this with isNewLogin, but a
+  // resumed session is just as good a moment to top the extension up, and
+  // the extension ignores a handover it doesn't need. Deliberately not
+  // awaited — sign-in must never wait on it.
+  handOverSessionToExtension();
 }
 
 async function doLogin(){
