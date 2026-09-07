@@ -114,6 +114,15 @@ comment on table readymode_channel_hours_adjustments is
 -- 42, list_builder_backfill_areas 43, client_delivered_properties 1000,
 -- public_endpoint_rate_limits 181, properties 2,376,449, and the rest 0-1.
 --
+-- CHECKED AFTERWARDS, and it should have been checked BEFORE applying:
+-- enabling RLS on the group 1 tables could have broken the cron jobs that
+-- write them. It did not -- pg_cron runs as a role that bypasses RLS -- and
+-- cron.job_run_details confirms it empirically: job 35
+-- (owner-portfolio-backfill-step, every 2 minutes) has 90 runs in the three
+-- hours spanning this migration, all succeeded, and job 30 succeeded at
+-- 18:00. Zero failures either side. See v558 for what those tables actually
+-- are; "leftover backfill scratch" in the note above was wrong.
+--
 -- SEPARATELY, and not fixed here: properties has RLS on with no policies, so
 -- dialer/index.html:1363 loadProperty() has never been able to read it and
 -- the console's property line always renders an em dash. That is a real bug
