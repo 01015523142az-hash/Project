@@ -471,9 +471,12 @@ td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
         drops undialable numbers on the digits alone, and takes mobile-versus-landline
         from your file's phone-type column to rank the queue.
         <br><br>
-        <strong>No time zone</strong> counts the rows that still cannot be dialled —
-        an area code this build's table does not carry. It reads zero on an ordinary
-        US list. When it does not, the button on that row resolves just those numbers.
+        <strong>No time zone</strong> counts the rows whose area code this build's table
+        does not carry. It reads zero on an ordinary US list. When it does not, you have
+        two ways out and neither needs a paid lookup for the whole list: set the
+        campaign's <strong>fallback time zone</strong> (Campaigns &rarr; Edit) so those
+        rows are gated on it instead of refused, or use the button on that row to
+        resolve just those numbers for real, at $0.0015 each.
         <br><br>
         <strong>Carrier check is optional now.</strong> The one thing free cannot see is
         a number that is well-formed and correctly zoned but dead; a carrier check finds
@@ -1664,6 +1667,21 @@ const CAMP_LIMITS = [
 const CALLING_DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'],
                       [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
 
+// v564 fallback zones. US only, and deliberately narrower than QUEUE_ZONES
+// below: that list is where an OFFICE sits, which can be Cairo or Manila.
+// This is where a SELLER might be, and every number in these lists is a NANP
+// number, so an office zone would be a category error here. Ordered west to
+// east because west is the safe end -- see the note under the picker.
+const FALLBACK_ZONES = [
+  ['America/Los_Angeles', 'US Pacific — safest for a nationwide list'],
+  ['America/Denver', 'US Mountain'],
+  ['America/Phoenix', 'US Arizona (no DST)'],
+  ['America/Chicago', 'US Central'],
+  ['America/New_York', 'US Eastern'],
+  ['America/Anchorage', 'Alaska'],
+  ['Pacific/Honolulu', 'Hawaii'],
+];
+
 async function toggleCampaignEditor(id) {
   const existing = document.querySelector(`tr[data-editor="${id}"]`);
   if (existing) { existing.remove(); return; }
@@ -1676,6 +1694,7 @@ async function toggleCampaignEditor(id) {
     .select('id, name, dial_mode, status, calling_window_start, calling_window_end, '
           + 'calling_days, max_attempts, min_hours_between_attempts, ring_seconds, '
           + 'attempts_per_number, recycle_enabled, recycle_after_days, max_recycles, '
+          + 'fallback_timezone, '
           + 'amd_enabled, recording_enabled, script, sms_fallback_enabled, sms_fallback_template')
     .eq('id', id).maybeSingle();
   if (!c) return;
@@ -1737,6 +1756,32 @@ async function toggleCampaignEditor(id) {
             + ((c.attempts_per_number ?? 3) * 3) + ' to work three numbers.'
           : 'across all of its numbers.'}
       </p>
+      <!-- v564. The last link of the calling-hours chain: this line's zone,
+           then the contact's, then this. Only reached by a number whose area
+           code the table cannot place, and left unset it refuses the dial,
+           which is the conservative default it has always been. -->
+      <div class="row" style="margin:0 0 12px">
+        <div class="field" style="min-width:260px">
+          <label>Fallback time zone <span class="muted">(numbers with no zone)</span></label>
+          <select data-f="fallback_timezone">
+            <option value="">Do not dial them (default)</option>
+            ${FALLBACK_ZONES.map(([v, d]) =>
+              `<option value="${esc(v)}"${c.fallback_timezone === v ? ' selected' : ''}>${esc(d)}</option>`).join('')}
+            ${c.fallback_timezone && !FALLBACK_ZONES.some(([v]) => v === c.fallback_timezone)
+              ? `<option value="${esc(c.fallback_timezone)}" selected>${esc(c.fallback_timezone)}</option>` : ''}
+          </select>
+        </div>
+      </div>
+      <p class="hint" style="margin:0 0 12px">
+        Used only when the area code is not one this build knows &mdash; the
+        <strong>No time zone</strong> count in Lists. <strong>Pick the westernmost zone
+        you call.</strong> Gating an unknown number on a zone west of its real one opens
+        the window late (Pacific 9am is Eastern noon &mdash; harmless); gating it on a
+        zone east of its real one opens it early (Eastern 9am is Pacific 6am &mdash; a
+        complaint). It is never written onto the contact, so a real zone resolved later
+        still wins.
+      </p>
+
       <label style="display:flex;align-items:center;gap:6px;font-weight:600">
         <input type="checkbox" data-f="recycle_enabled"${c.recycle_enabled !== false ? ' checked' : ''}>
         Recycle a contact once every number is spent</label>
@@ -1824,6 +1869,9 @@ async function saveCampaign(id, td, tr) {
     calling_window_end: val('calling_window_end').value,
     sms_fallback_enabled: val('sms_fallback_enabled').checked,
     recycle_enabled: val('recycle_enabled').checked,
+    // Empty means "refuse the dial", which is null in the column, not ''.
+    // The check constraint rejects '' outright, so this must not send it.
+    fallback_timezone: val('fallback_timezone').value || null,
     sms_fallback_template: val('sms_fallback_template').value.trim() || null,
     // amd_enabled / recording_enabled are intentionally NOT sent: their
     // controls are disabled above because nothing reads either column,

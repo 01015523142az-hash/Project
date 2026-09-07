@@ -189,7 +189,7 @@ Deno.serve(async (req) => {
 
       const { data: campaign } = await admin
         .from('dialer_campaigns')
-        .select('id, status, dial_mode, calling_window_start, calling_window_end, calling_days, caller_id_strategy, fixed_did_id, max_attempts')
+        .select('id, status, dial_mode, calling_window_start, calling_window_end, calling_days, caller_id_strategy, fixed_did_id, max_attempts, fallback_timezone')
         .eq('id', contact.campaign_id)
         .maybeSingle();
       if (!campaign) return json(req, { ok: false, error: 'Campaign not found' }, 404);
@@ -273,7 +273,15 @@ Deno.serve(async (req) => {
 
       // Everything downstream gates on the number actually being dialled.
       const dialNumber: string = phoneRow?.phone_e164 ?? contact.phone_e164;
-      const dialTimezone: string | null = phoneRow?.timezone ?? contact.timezone;
+      // The chain, most specific first: this line's own zone, then the
+      // contact's, then the campaign's fallback (v564) for an area code
+      // v560's table could not place. The fallback is a campaign POLICY and
+      // is never written onto the contact -- doing so would make a guess
+      // look like a resolved fact and would survive a later real lookup.
+      const resolvedTimezone: string | null = phoneRow?.timezone ?? contact.timezone;
+      const usingFallback = !resolvedTimezone && Boolean(campaign.fallback_timezone);
+      const dialTimezone: string | null =
+        resolvedTimezone ?? (campaign.fallback_timezone as string | null) ?? null;
 
       if (phoneRow && ['exhausted', 'dnc', 'invalid', 'wrong_person'].includes(phoneRow.status)) {
         return refuse(req, 'number_' + phoneRow.status,
@@ -327,7 +335,17 @@ Deno.serve(async (req) => {
       // the number.
       if (!dialTimezone) {
         return refuse(req, 'no_timezone',
-          'No time zone resolved for this number, so calling hours cannot be checked.');
+          'No time zone resolved for this number, and this campaign has no fallback '
+          + 'zone set, so calling hours cannot be checked.');
+      }
+      // Worth a log line rather than being silent: a campaign leaning on the
+      // fallback for a large share of its dials means the area-code table is
+      // missing something real, and that is a table to fix, not a setting to
+      // keep relying on.
+      if (usingFallback) {
+        console.warn('dialer-call-control: dialing', dialNumber,
+                     'on campaign fallback zone', dialTimezone,
+                     '- no zone resolved from the number itself');
       }
       const local = localTimeParts(dialTimezone);
       if (!local) {

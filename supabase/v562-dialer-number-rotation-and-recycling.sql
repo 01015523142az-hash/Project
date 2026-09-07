@@ -196,10 +196,17 @@ begin
     into v_delay, v_gap, v_per
     from dialer_campaigns where id = v_campaign;
 
-  -- The trial that just happened.
+  -- The trial that just happened. READ the count, never add to it.
+  --
+  -- dialer_bump_number_attempt already incremented it at AUTHORIZE time, and
+  -- that is the right place for it: a call whose tab died before wrap-up
+  -- still consumed an attempt on that line, and counting only at disposition
+  -- would silently miss exactly those. Incrementing here as well double-counts
+  -- every dial -- which did not matter while nothing compared the counter to
+  -- a threshold, and matters entirely now that attempts_per_number does. With
+  -- both increments a line asked for 3 tries would be spent after 2.
   update dialer_contact_phones
-     set attempt_count   = attempt_count + 1,
-         last_attempt_at = now(),
+     set last_attempt_at = now(),
          last_outcome    = p_outcome,
          updated_at      = now()
    where id = p_phone
