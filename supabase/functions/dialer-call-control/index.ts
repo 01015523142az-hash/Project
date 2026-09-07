@@ -508,6 +508,35 @@ Deno.serve(async (req) => {
       const to = toE164(raw);
       if (!to) return json(req, { ok: false, error: 'Enter a valid 10-digit US number.' }, 400);
 
+      // ---- may this agent manual-dial at all, and how much? (v569) --------
+      // FIRST, before the DNC lookup, for two reasons. It is the cheapest
+      // refusal, and somebody who may not manual-dial should not be able to
+      // use this endpoint to probe whether a given number is on our DNC list.
+      //
+      // Two controls, because they stop different things. can_manual_dial
+      // decides who holds the widest door in the dialer -- this action skips
+      // calling hours, the list scrub and campaign assignment by design, so a
+      // session that has it can reach any non-DNC US number. The daily cap is
+      // what bounds a STOLEN session, which a role check cannot: the thief
+      // holds the role.
+      const { data: gateRows, error: gateErr } = await admin
+        .rpc('dialer_manual_dial_allowed', { p_agent: caller.id });
+      const gate = Array.isArray(gateRows) ? gateRows[0] : gateRows;
+
+      // Fail CLOSED. If the gate itself cannot be evaluated we do not know
+      // whether this dial is allowed, and guessing "yes" on the one action
+      // that reaches arbitrary numbers is the wrong way to be wrong.
+      if (gateErr || !gate) {
+        console.error('manual_dial: gate check failed', gateErr?.message);
+        return json(req, { ok: false, error: 'Could not check your manual-dial permission.' }, 500);
+      }
+      if (!gate.allowed) {
+        return refuse(req, gate.reason === 'daily_cap' ? 'manual_dial_cap' : 'manual_dial_denied',
+          gate.reason === 'daily_cap'
+            ? `Manual dial limit reached: ${gate.used} of ${gate.cap} today.`
+            : 'Your role cannot dial numbers outside a queue.');
+      }
+
       // ---- internal DNC --------------------------------------------------
       const { count: dncCount } = await admin
         .from('dialer_dnc').select('id', { count: 'exact', head: true }).eq('phone_e164', to);
