@@ -33,7 +33,19 @@
 // and stays a human decision (dialer-pool, owner/admin). Autopilot manages
 // the pool it is given and says loudly when that pool is too small.
 //
-// Deploy with:
+// WHO MAY CALL IT: pg_cron, and nothing else. It runs as the service role
+// and moves DID statuses, and every threshold below is overridable per
+// request -- so an unauthenticated caller could pass min_active:0 with a
+// quarantine_ratio above 1 and take the entire pool out of rotation, which
+// stops every agent (gate 5 refuses the dial when no DID is available).
+// It shipped that way: verify_jwt was false and nothing checked the header.
+// Job 37 was already SENDING the service-role key; the function simply never
+// looked at it. It looks now, and the thresholds are clamped besides -- see
+// LIMITS -- because "only cron can call it" and "a typo in the cron entry
+// cannot stop the floor" are two different guarantees and both are cheap.
+//
+// Deploy WITH JWT verification (matches auto-close-stale-entries, the other
+// cron-driven function on this project):
 //   supabase functions deploy dialer-autopilot
 // No Telnyx secrets: this function reads the CDR and moves statuses. Number
 // reputation vendors would plug in here later, as CONFIRMATION of what the
@@ -75,15 +87,107 @@ const DEFAULTS = {
   dials_per_did_per_day: 80,
 };
 
+// ---- LIMITS --------------------------------------------------------------
+// Every threshold is overridable so it can be tuned from the cron entry
+// without a deploy. That is worth keeping and it is also the sharp edge, so
+// each one is bounded to a range in which the WORST outcome is a bad day
+// rather than a stopped floor.
+//
+// min_active is the load-bearing one: it is the guard that stops step 2
+// quarantining the last usable numbers, so its floor is 1 and 0 is not
+// expressible. quarantine_ratio is capped below 1 because a ratio of 1 or
+// more means "quarantine every number at or below the median", which is by
+// definition half the pool. min_dials has a floor because judging a DID on
+// four dials is judging noise.
+const LIMITS: Record<string, [number, number]> = {
+  window_days:          [1, 90],
+  min_dials:            [5, 5000],
+  quarantine_ratio:     [0.05, 0.95],
+  rotate_after_days:    [1, 365],
+  rest_days:            [1, 365],
+  min_active:           [1, 100],
+  dials_per_did_per_day:[1, 500],
+};
+
+function clampConfig(over: Record<string, unknown>): [Record<string, number>, string[]] {
+  const out: Record<string, number> = { ...DEFAULTS };
+  const notes: string[] = [];
+  for (const [k, raw] of Object.entries(over || {})) {
+    const range = LIMITS[k];
+    if (!range) { notes.push(`ignored unknown setting "${k}"`); continue; }
+    const n = Number(raw);
+    if (!Number.isFinite(n)) { notes.push(`ignored non-numeric "${k}"`); continue; }
+    const c = Math.min(range[1], Math.max(range[0], n));
+    if (c !== n) notes.push(`clamped ${k} ${n} -> ${c}`);
+    out[k] = c;
+  }
+  return [out, notes];
+}
+
+// Constant-time-ish comparison, same as the FreeSWITCH functions use for
+// FS_XML_SECRET. The key is long and random so a timing side channel is not
+// the realistic attack, but there is no reason to hand one over.
+function secretOk(given: string, expected: string): boolean {
+  if (!given || !expected || given.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < given.length; i++) diff |= given.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
+// The `role` claim out of a JWT payload.
+//
+// !! THIS DOES NOT VERIFY THE SIGNATURE, AND MUST NOT BE ASKED TO. !!
+// It is safe ONLY because this function is deployed with verify_jwt = true,
+// so the platform has already rejected anything not signed by this project
+// before a single line here runs. Reading a claim out of an already-verified
+// token is fine; reading one out of an unverified token is trusting the
+// attacker's own JSON. If verify_jwt is ever flipped back to false, this
+// check becomes forgeable by anyone who can base64 -- so the two settings
+// travel together, and that is why it is shouted about here.
+//
+// Claim rather than key equality, deliberately. The first version of this
+// gate compared the bearer against SUPABASE_SERVICE_ROLE_KEY byte for byte
+// and it REFUSED THE REAL CRON JOB: the key in the vault is a valid, current
+// service-role token that is simply not the same string as the one in the
+// function's environment. Equality was asserting something narrower than
+// what actually matters, which is "this caller holds service-role
+// authority", and it would have failed the nightly run silently at 05:10.
+function jwtRole(token: string): string | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const payload = JSON.parse(atob(b64 + '='.repeat((4 - b64.length % 4) % 4)));
+    return typeof payload?.role === 'string' ? payload.role : null;
+  } catch {
+    return null;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ ok: false, error: 'Method not allowed' }, 405);
 
   const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
   const SERVICE_ROLE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+
+  // A service-role caller, not merely "a valid JWT". verify_jwt on the
+  // platform proves the token is signed by this project; it does NOT prove
+  // who holds it. Every signed-in staff account has a validly signed JWT, and
+  // this endpoint hands its caller the whole DID pool -- so the claim has to
+  // be checked, not just the signature.
+  const bearer = (req.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim();
+  const authorised = jwtRole(bearer) === 'service_role'
+                  || (!!SERVICE_ROLE && secretOk(bearer, SERVICE_ROLE));
+  if (!authorised) {
+    console.warn('dialer-autopilot: refused a caller that is not service_role');
+    return json({ ok: false, error: 'unauthorized' }, 401);
+  }
+
   const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
   const body = await req.json().catch(() => ({}));
-  const cfg = { ...DEFAULTS, ...(body?.config ?? {}) };
+  const [cfg, cfgNotes] = clampConfig((body?.config ?? {}) as Record<string, unknown>);
+  if (cfgNotes.length) console.warn('dialer-autopilot: config adjusted -', cfgNotes.join('; '));
   // A dry run reports every decision without making one. Worth using the
   // first few times, and whenever a threshold changes.
   const dryRun = body?.dry_run === true;
@@ -212,9 +316,50 @@ Deno.serve(async (req) => {
     const capacity = projectedActive * cfg.dials_per_did_per_day;
     const shortfall = Math.max(0, (dialsYesterday ?? 0) - capacity);
 
+    // THE POOL CAN BE TOO SMALL WITHOUT BEING OVER CAPACITY, and the two
+    // failures look nothing alike from here.
+    //
+    // The capacity check compares yesterday's dials against what the active
+    // pool could carry. On a quiet day that is 0 against 160 and the advice
+    // read "Pool has enough headroom for current volume" -- while the pool
+    // sat at 2 active numbers against a min_active of 3.
+    //
+    // That is not a rounding-error of a lie. min_active is the guard in step
+    // 2: quarantine is skipped entirely while projectedActive <= min_active,
+    // because emptying the pool stops every agent. So at 2 of 3, the ONE
+    // thing this function exists to do -- pull a burnt number out of
+    // rotation before it drags the whole answer rate down -- cannot happen,
+    // and the only line of output anybody reads said everything was fine.
+    //
+    // A DID with a collapsed answer rate would still be logged as 'flagged'
+    // per number, but only if it had enough dials to be judged. With a pool
+    // this small and this new, nothing has enough data, so there was no
+    // signal anywhere at all.
+    const belowMinimum = projectedActive < cfg.min_active;
+    const advice = belowMinimum
+      ? `Pool is BELOW its minimum: ${projectedActive} active against a `
+        + `min_active of ${cfg.min_active}. Quarantine is suppressed while this `
+        + `is true -- a number whose answer rate collapses will be flagged and `
+        + `left in rotation, because taking it out would stop the floor. Buy `
+        + `at least ${cfg.min_active - projectedActive + 1} more number(s) to `
+        + `restore reputation protection.`
+      : shortfall > 0
+        ? `Pool is too small: ${dialsYesterday} dials against capacity for ${capacity}. `
+          + `Buy roughly ${Math.ceil(shortfall / cfg.dials_per_did_per_day)} more numbers `
+          + `in the area codes shown under Coverage.`
+        : 'Pool has enough headroom for current volume.';
+
+    if (belowMinimum) {
+      console.warn('dialer-autopilot: pool below min_active -- quarantine suppressed.', advice);
+    }
+
     return json({
       ok: true,
       dry_run: dryRun,
+      // Empty on every normal run. Non-empty means a setting in the cron
+      // entry was out of range and did NOT take effect -- worth seeing,
+      // because the alternative is a threshold that looks applied and is not.
+      config_notes: cfgNotes,
       pool_median_answer_rate: poolMedian,
       dids_evaluated: rows.length,
       active_after: projectedActive,
@@ -224,13 +369,16 @@ Deno.serve(async (req) => {
         dials_last_24h: dialsYesterday ?? 0,
         daily_capacity: capacity,
         shortfall,
+        // Separate from shortfall on purpose: a pool can be under its minimum
+        // and over its capacity independently, and this one disables
+        // quarantine while it is true.
+        below_minimum: belowMinimum,
+        min_active: cfg.min_active,
+        active: projectedActive,
+        quarantine_suppressed: belowMinimum,
         // Deliberately worded as an instruction, not a metric: this string
         // ends up in a cron log nobody reads unless something is wrong.
-        advice: shortfall > 0
-          ? `Pool is too small: ${dialsYesterday} dials against capacity for ${capacity}. `
-            + `Buy roughly ${Math.ceil(shortfall / cfg.dials_per_did_per_day)} more numbers `
-            + `in the area codes shown under Coverage.`
-          : 'Pool has enough headroom for current volume.',
+        advice,
       },
     });
   } catch (e) {
