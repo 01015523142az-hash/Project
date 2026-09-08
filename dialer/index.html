@@ -106,6 +106,25 @@ body:not(.authed) .header-right .pill{display:none}
 .signed-out{display:none;max-width:520px;margin:64px auto;padding:30px 28px;
   border:1px solid var(--border);border-radius:14px;background:var(--card);text-align:center}
 body:not(.authed) .signed-out{display:block}
+/* ---- ...and a third state, for before we know which of those two applies.
+   getSession() is async -- it reads storage and may refresh an expired token
+   over the network. Between first paint and its answer <body> has no .authed
+   class, so the rule above drew the sign-in card on EVERY refresh: a signed-in
+   user watched a login form appear and vanish. Nothing was broken, but a login
+   screen flashing on a page you are already signed into reads as being logged
+   out, which is worse than a blank moment.
+   So <body> ships with .booting and neither state renders; boot() clears it in
+   a finally, so a thrown error still lands on the sign-in card rather than a
+   blank page -- the same fail-closed choice the gate above makes. */
+body.booting .signed-out{display:none}
+body.booting:not(.authed) .so-checking{display:block}
+.so-checking{display:none;max-width:520px;margin:64px auto;text-align:center;
+  font-size:.85rem;color:var(--text-dim);
+  /* Delay plus fill 'both': a session check that answers quickly -- which is
+     the normal case, from storage -- shows nothing at all. This line only ever
+     appears if the answer is genuinely slow. */
+  animation:soChecking .25s ease .4s both}
+@keyframes soChecking{from{opacity:0}to{opacity:1}}
 .signed-out h2{margin:0 0 10px;font-size:1.05rem;color:var(--text)}
 .signed-out p{margin:0 0 18px;font-size:.9rem;line-height:1.55;color:var(--text-2)}
 .signed-out a.so-btn{display:inline-block;padding:10px 20px;border-radius:9px;
@@ -293,7 +312,7 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
 }
 </style>
 </head>
-<body>
+<body class="booting">
 
 <!-- The far end's audio. TelnyxRTC needs an element to attach the remote
      stream to; newCall() is given this by id as remoteElement. Without it the
@@ -317,6 +336,8 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
   </header>
 
 
+  <!-- Neither card is shown until boot() answers the session question. -->
+  <div class="so-checking">Checking your session…</div>
   <!-- Shown whenever <body> lacks .authed; see the signed-out gate CSS. -->
   <div class="signed-out" id="signedOut">
     <h2>Sign in</h2>
@@ -804,7 +825,10 @@ $('signInForm').addEventListener('submit', async (e) => {
   await boot();
 });
 
-boot();
+// finally, not then: boot() has early returns (no session, no staff profile)
+// and can throw, and every one of those outcomes must still resolve the page
+// to something. Leaving .booting on would leave it blank.
+boot().finally(() => document.body.classList.remove('booting'));
 
 // ------------------------------------------------------------- session ----
 async function startSession() {
