@@ -507,10 +507,10 @@ rather than an extension of the blind transfer that exists.
 
 ---
 
-## In flight: moving the consoles to their own origins
+## Done: the consoles are on their own origins
 
-`dialer.proptechnologyai.com` and `admin.proptechnologyai.com` are verified in
-DNS. The reason is not tidiness: the consoles currently share an ORIGIN, and
+`dialer.proptechnologyai.com` and `admin.proptechnologyai.com` are live. The
+reason is not tidiness: the consoles currently share an ORIGIN, and
 therefore a `sessionStorage`, with `dashboard.html` — 2.3MB and 37k lines. One
 XSS anywhere in that file yields a session that can place calls on a live
 carrier account. A separate origin is a separate storage partition, and
@@ -525,22 +525,37 @@ refused.
   in there. That is exactly what a separate origin breaks, so it was the
   prerequisite, not the decoration. Session pickup on the shared origin is
   untouched, so nothing changed today.
-- **CORS.** All eight functions the consoles call, plus the `_shared/cors.ts`
-  reference copy, now list both subdomains. Additive and inert until those
-  hostnames serve something. **Committed but NOT deployed** — see below.
+- **Two more Pages sites.** `agentdialer` and `admindialer`, one CNAME each,
+  because GitHub Pages serves exactly one custom domain per repository. The
+  deploy is now four remotes, which is the real operational cost of the split.
+  Nothing is ever edited in those two repos: `tools/publish-dialer.py`
+  regenerates them from `dialer/*.html`, and it is the script that rewrites
+  the cross-links (`href="/"`, `/dialer/admin.html`) to absolute URLs. Doing
+  that rewrite in the SOURCE would break the copies still served from
+  `staffportal.../dialer/`, so it happens at publish time and every rewrite
+  asserts it matched.
+- **CORS, deployed.** All eight functions the consoles call, plus the
+  `_shared/cors.ts` reference copy, list both subdomains. This was the whole
+  outage: sign-in and table reads worked (Auth and PostgREST answer `*`), so
+  the page rendered, signed in and loaded campaigns — and then the softphone
+  died, because every function still echoed `staffportal` at a browser on
+  `dialer.`, and the browser dropped the response. Verified by preflighting
+  all eight from all three origins: 24 of 24 echo the caller.
+- **No login-form flash on refresh.** The gate is `body.authed`, added once
+  `getSession()` answers; until then the body had no class and the sign-in
+  card rendered, so a signed-in user watched a login form appear and vanish on
+  every reload. `<body class="booting">` is now a third state meaning "we do
+  not know yet", cleared in a `finally` so an early return or a throw still
+  lands on the sign-in card rather than a blank page.
 
 **Left**
 
-1. **Two more Pages sites.** `live/main:CNAME` holds
-   `staffportal.proptechnologyai.com`, and GitHub Pages serves exactly one
-   custom domain per repository. Two subdomains means two more repos, taking
-   the deploy from two remotes to four. This is the real operational cost.
-2. **Deploy the eight functions.** Do it with the CLI —
-   `npx supabase functions deploy <name>` reads the file directly. Deploying
-   by hand means retyping 2,610 lines across eight files, and `dialer-call-control`
-   alone is 820 of them and authorises every dial.
-3. **Supabase Auth**: add both origins to the redirect allowlist.
-4. **Cross-links**: `href="/"` and `/dialer/admin.html` become absolute.
+1. **Supabase Auth**: add both origins to the redirect allowlist. Password
+   sign-in does not need it; password reset and any magic link do.
+2. **Cutover.** `staffportal.../dialer/` still serves both consoles from the
+   shared origin, so the XSS reachability this split exists to remove is only
+   actually removed once that copy is retired and people are sent to the
+   subdomains.
 
 **Decided, no action:** storage stays `sessionStorage`. Once the origins are
 split, a dashboard XSS cannot reach either storage, so the choice stops being
