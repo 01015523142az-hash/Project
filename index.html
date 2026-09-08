@@ -1795,20 +1795,24 @@
                   </div>
         </div>
     </div>
-    <!-- v526: Dialer -- opens the standalone agent dialer console at
-         /dialer/ (see dialer/index.html). Deliberately a real page nav
-         (window.open in the click handler below), not a data-tab in-app
-         section: the dialer page picks up the portal's login from
-         sessionStorage, which a SPA section switch cannot hand over.
-         v529: now opens in a NEW TAB so an agent mid-call does not lose the
-         portal by navigating away -- see the handler's comment for why
-         rel="noopener" must NOT be added. Grantable per role like
-         Finance/HR -- see DASHBOARD_TAB_KEYS. -->
+    <!-- v526: Dialer -- opens the standalone agent dialer console.
+         Deliberately a real page nav (window.open in the click handler
+         below), not a data-tab in-app section.
+         v529: a NEW TAB, so an agent mid-call does not lose the portal by
+         navigating away.
+         CUTOVER: it lives on dialer.proptechnologyai.com now -- its own
+         origin, and therefore its own session, which the agent signs into
+         once. The source is still dialer/index.html in the main repo;
+         tools/publish-dialer.py is what puts it on that host.
+         Grantable per role like Finance/HR -- see DASHBOARD_TAB_KEYS. -->
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="dialer" title="Dialer"><svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg><span>Dialer</span></button>
       <!-- v529: Dialer Admin — number pool, list import, campaigns, at
-           /dialer/admin.html. A SEPARATE tab key from 'dialer' on purpose:
-           the two are different jobs, not two views of one. Quality reviews
+           admin.proptechnologyai.com. A SEPARATE tab key from 'dialer' on
+           purpose -- and since the cutover a separate ORIGIN too, which is
+           stronger than any role check: an agent's dialer session is not
+           merely refused here, it does not exist here.
+           The two are different jobs, not two views of one. Quality reviews
            calls and must never land on a console with a Dial button; agents
            run the console and have no business ordering numbers. Keeping
            them as independent grants is what lets a role have one without
@@ -7552,28 +7556,35 @@ document.addEventListener('keydown', (e) => {
 // ---------- tab switching ----------
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    // v526: Dialer is a real separate page, not an in-app section --
-    // location.href keeps this a same-tab navigation, which is what lets
-    // dialer/index.html pick up the portal's session (sessionStorage
-    // doesn't cross tabs, so a new-tab open would never see it).
+    // v526: Dialer is a real separate page, not an in-app section.
     // v529: both dialer pages open in a NEW TAB, so an agent on a call does
     // not lose the portal (and a live WebRTC session) by navigating away.
     //
-    // CRITICAL, and the reason this is a helper rather than a plain link:
-    // the portal stores its Supabase session in sessionStorage, not
-    // localStorage (see the createClient call above, and dialer/index.html's
-    // matching config). sessionStorage is PER TAB — a tab opened cold starts
-    // empty. Browsers do clone it into a tab opened from this page, but ONLY
-    // when the new context keeps its opener relationship: adding
-    // rel="noopener" (or target="_blank" on a bare <a>) severs that and the
-    // dialer lands signed-out. So noopener is deliberately NOT set here.
+    // CUTOVER: they are now on their OWN ORIGINS, which is the entire point
+    // -- a separate origin is a separate sessionStorage, so a bug anywhere
+    // in this 2.3MB file can no longer reach the session that is allowed to
+    // place calls on a live carrier account. staffportal's own /dialer/ is a
+    // redirect stub now (tools/publish-dialer.py --stubs), so an old
+    // bookmark still lands in the right place.
     //
-    // Consequence to know: opening /dialer/ from a bookmark, or pasting the
-    // URL into a fresh tab, still shows "not signed in" — that was already
-    // true before this change, and is a property of the sessionStorage
-    // choice rather than of opening in a new tab.
+    // That also retires the long argument that used to live here about
+    // rel="noopener". The rule was that it must NOT be set, because the
+    // opener relationship is what clones this page's sessionStorage into the
+    // dialer tab. Across origins nothing is cloned either way, so the rule
+    // has no force left -- but noopener is still not set, for a second and
+    // duller reason: window.open(..., 'noopener') returns null by
+    // specification, which the popup-blocker fallback below reads as "the
+    // popup was blocked" and would answer by navigating THIS tab away. The
+    // destination is our own page, so the opener handle it keeps costs
+    // nothing worth that.
+    //
+    // Consequence, deliberate: the agent signs in on the dialer once, per
+    // browser session. Both consoles grew their own sign-in form for exactly
+    // this, and neither could authenticate anybody before.
     if(btn.dataset.tab === 'dialer' || btn.dataset.tab === 'dialer_admin'){
-      const url = btn.dataset.tab === 'dialer' ? '/dialer/' : '/dialer/admin.html';
+      const url = btn.dataset.tab === 'dialer'
+        ? 'https://dialer.proptechnologyai.com/'
+        : 'https://admin.proptechnologyai.com/';
       const w = window.open(url, '_blank');
       // Popup blockers should not strand someone with a dead button. A click
       // handler is a user gesture so this is normally allowed, but fall back
