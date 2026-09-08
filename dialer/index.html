@@ -112,6 +112,14 @@ body:not(.authed) .signed-out{display:block}
   background:var(--gold);color:#10131A;font-weight:600;text-decoration:none;font-size:.9rem}
 .signed-out a.so-btn:hover{filter:brightness(1.08)}
 .signed-out .so-detail{margin:16px 0 0;font-size:.8rem;color:var(--text-dim)}
+.signed-out .so-form{display:flex;flex-direction:column;gap:9px;margin:0 0 14px;text-align:left}
+.signed-out .so-form label{font-size:.78rem;font-weight:600;color:var(--text-dim)}
+.signed-out .so-form input{width:100%}
+.signed-out button.so-btn{width:100%;border:0;cursor:pointer;padding:10px 20px;border-radius:9px;
+  background:var(--gold);color:#10131A;font-weight:600;font-size:.9rem;font-family:inherit}
+.signed-out button.so-btn:hover:not(:disabled){background:var(--gold);filter:brightness(1.08)}
+.signed-out button.so-btn:disabled{opacity:.55;cursor:default}
+.signed-out .so-alt{margin:14px 0 0;font-size:.82rem;color:var(--text-dim)}
 
 .main-content{flex:1 1 0;min-width:0}
 
@@ -311,11 +319,25 @@ select:focus,input:focus,textarea:focus{outline:none;border-color:var(--focus)}
 
   <!-- Shown whenever <body> lacks .authed; see the signed-out gate CSS. -->
   <div class="signed-out" id="signedOut">
-    <h2>Sign in required</h2>
-    <p>
-      This console runs on your staff portal session. Sign in to the staff portal on this domain, then come back to this page.
+    <h2>Sign in</h2>
+    <p>Sign in with your staff account to use the dialer.</p>
+    <!-- autocomplete username/current-password so password managers offer to
+         fill and to save. Without them a manager treats this as an unknown
+         form and agents end up typing a password every shift. -->
+    <form class="so-form" id="signInForm">
+      <label for="siEmail">Email</label>
+      <input id="siEmail" type="email" autocomplete="username" required>
+      <label for="siPass">Password</label>
+      <input id="siPass" type="password" autocomplete="current-password" required>
+      <button class="so-btn" id="siBtn" type="submit">Sign in</button>
+    </form>
+    <!-- Absolute, not "/". On the shared origin this page still picks the
+         portal's session up for free; once it is served from its own
+         subdomain a relative link would point back at the dialer. -->
+    <p class="so-alt">
+      Forgotten it, or need an account?
+      <a href="https://staffportal.proptechnologyai.com/">Staff portal</a>
     </p>
-    <a class="so-btn" href="/">Open the staff portal</a>
     <p class="so-detail" id="signedOutDetail"></p>
   </div>
   <div class="app-body">
@@ -690,7 +712,7 @@ async function callFn(name, body) {
 }
 
 // ---------------------------------------------------------------- boot ----
-(async function boot() {
+async function boot() {
   // No session: the signed-out card is already on screen (the console is
   // hidden by default and revealed only below), so stop before any query.
   const { data: { session } } = await sb.auth.getSession();
@@ -736,7 +758,53 @@ async function callFn(name, body) {
       { type: 'application/json' });
     navigator.sendBeacon?.(url, blob);
   });
-})();
+}
+
+// ---- sign in ------------------------------------------------------------
+// This console had NO sign-in at all: it read the staff portal's session out
+// of sessionStorage on the shared origin, and told the agent to go and sign
+// in over there. That stops working the moment this page is served from its
+// own origin -- which is the point of moving it, because a separate origin
+// means a separate sessionStorage, so a bug anywhere in the 2.3MB dashboard
+// can no longer read the session that is allowed to place calls.
+//
+// Nothing changes on the shared origin today: boot() reveals this card only
+// when there is no session at all, so an agent who already has the portal
+// open is never asked to type anything.
+$('signInForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('siBtn');
+  const detail = $('signedOutDetail');
+  detail.textContent = '';
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
+
+  const { error } = await sb.auth.signInWithPassword({
+    email: $('siEmail').value.trim(),
+    password: $('siPass').value,
+  });
+
+  btn.disabled = false;
+  btn.textContent = 'Sign in';
+
+  if (error) {
+    // Supabase answers "Invalid login credentials" for a wrong password AND
+    // for an address that does not exist, deliberately. Repeat it verbatim:
+    // telling the two apart would confirm which staff addresses are real.
+    detail.textContent = error.message;
+    $('siPass').value = '';
+    $('siPass').focus();
+    return;
+  }
+
+  // Never leave the password sitting in the DOM after it has been used.
+  $('siPass').value = '';
+  // Re-run the same boot the page does on load. Safe to call twice: the
+  // first run returned at the "no session" check before touching anything.
+  await boot();
+});
+
+boot();
 
 // ------------------------------------------------------------- session ----
 async function startSession() {
