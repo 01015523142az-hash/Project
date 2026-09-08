@@ -13,7 +13,7 @@
 
     3. Anything else. Refused, loudly. If xml_curl is down, an outbound
        attempt must FAIL rather than fall through to a permissive catch-all
-       -- a dialplan that guesses is how toll fraud gets paid for.
+       - a dialplan that guesses is how toll fraud gets paid for.
   -->
   <context name="dialer">
 

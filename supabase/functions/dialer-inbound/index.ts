@@ -468,15 +468,66 @@ Deno.serve(async (req) => {
         // --- the caller hung up -------------------------------------------
         const { data: attempt } = await admin.from('dialer_attempts')
           .select('id, answered_at').eq('id', state.a).maybeSingle();
-        await admin.from('dialer_attempts').update({
-          ended_at: new Date().toISOString(),
+
+        // TIMINGS FROM THE CARRIER, NOT FROM OUR CLOCK, wherever Telnyx gives
+        // them. Everything else on this path stamps new Date() at the moment
+        // a webhook is processed, which folds delivery latency and our own
+        // queueing into what is supposed to be a measurement of a phone call.
+        // For status that is harmless. For a number that ends up next to a
+        // charge it is not, so start_time/end_time win when present.
+        const endedAtIso = p.end_time ? new Date(p.end_time).toISOString()
+                                      : new Date().toISOString();
+        const answeredIso = attempt?.answered_at as string | undefined;
+
+        // BILLED SECONDS WERE NEVER SET ON THIS PATH. Outbound gets them from
+        // dialer-telnyx-webhook; inbound is handled here and simply never
+        // computed them, so every inbound row had billed_seconds null and any
+        // billed-minute total across both directions silently counted only
+        // half the traffic.
+        //
+        // THE INCREMENT IS A GUESS AND IS LABELLED AS ONE. Outbound on the
+        // Voice API is demonstrably 60/60 -- a 44-second call billed exactly
+        // $0.0120, which is one minute at $0.0120/min. Inbound on this same
+        // account does NOT behave that way: three legs of 3s, 17s and 19s
+        // cost $0.0003, $0.0012 and $0.0015, and under 60/60 all three would
+        // have cost the same. So inbound is charged at some finer granularity
+        // that the observed data does not pin down.
+        //
+        // Rather than encode a number nobody has confirmed, the increment is
+        // an env var defaulting to 60 (the conservative direction: it
+        // over-states, so a reconciliation notices rather than a shortfall
+        // hiding). provider_cost_usd from call.cost remains the authoritative
+        // figure and is what reconciles to the invoice; billed_seconds only
+        // ever explains the shape of it. Set TELNYX_INBOUND_BILLING_INCREMENT
+        // once Telnyx confirms the real one.
+        const INBOUND_INCREMENT = Math.max(
+          1, Number(Deno.env.get('TELNYX_INBOUND_BILLING_INCREMENT')) || 60);
+
+        const update: Record<string, unknown> = {
+          ended_at: endedAtIso,
           // status is constrained to the v523 vocabulary, which has no
           // 'abandoned' -- the boolean below is what carries that meaning, and
           // it is the number the floor is actually judged on, so it is
           // recorded outright rather than inferred from timestamps later.
-          status: attempt?.answered_at ? 'completed' : 'no_answer',
-          was_abandoned: !attempt?.answered_at,
-        }).eq('id', state.a);
+          status: answeredIso ? 'completed' : 'no_answer',
+          was_abandoned: !answeredIso,
+        };
+
+        if (answeredIso) {
+          const talk = Math.max(0, Math.round(
+            (Date.parse(endedAtIso) - Date.parse(answeredIso)) / 1000));
+          update.talk_seconds = talk;
+          update.billed_seconds =
+            talk > 0 ? Math.ceil(talk / INBOUND_INCREMENT) * INBOUND_INCREMENT : 0;
+        } else {
+          // Never answered: no talk time and nothing to bill. Explicit zeros
+          // rather than nulls, so "we know it was nothing" is distinguishable
+          // from "nobody ever wrote this" -- which is the bug being fixed.
+          update.talk_seconds = 0;
+          update.billed_seconds = 0;
+        }
+
+        await admin.from('dialer_attempts').update(update).eq('id', state.a);
         break;
       }
 

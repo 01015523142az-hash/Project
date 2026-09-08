@@ -4,9 +4,15 @@ Working document for the portal dialer. There was no plan file before this one;
 the history lived in commit messages and migration headers. This pulls it into
 one place so the next person does not have to reconstruct it from `git log`.
 
-**State verified against the live database and the live site on 2026-09-06.**
+**State verified against the live database and the live site on 2026-09-08.**
 Everything under "Shipped" was checked, not assumed — the method is at the end
 so you can re-run it rather than trusting this file's date.
+
+The 2026-09-08 pass was a full sweep rather than a spot check: every table and
+column the dialer references validated against the live schema, every edge
+function smoke-tested unauthenticated, every gate exercised against real rows
+in rolled-back transactions, and both consoles driven in a browser. It found
+two security holes and four data bugs. See Phase 13.
 
 ---
 
@@ -14,11 +20,13 @@ so you can re-run it rather than trusting this file's date.
 
 | | |
 |---|---|
-| Migrations v523–v568 | all applied live |
-| `dialer/index.html`, `dialer/admin.html` | live copies identical to the repo |
-| Dialer edge functions | 16 deployed and ACTIVE |
+| Migrations v523–v577 | all applied live |
+| Consoles | on their own origins; `staffportal.../dialer/` is a redirect stub |
+| Dialer edge functions | 15 `dialer-*` deployed and ACTIVE, plus `telnyx-sms-webhook` |
+| `anon`-executable dialer functions | **0 of 33** (was 18 — see v571) |
+| Outbound carrier | Telnyx Elastic SIP Trunking, settled — not yet deployed |
 | Uncommitted dialer work | none |
-| Committed locally but never pushed | none — all pushed 2026-09-06 |
+| Committed locally but never pushed | none |
 
 ---
 
@@ -265,6 +273,159 @@ and then recycled. The invariant to re-check after any catalogue change: **no
 disposition meaning CONTACTED may be flagless**, because flagless is
 indistinguishable from a phone ringing out.
 
+### Phase 12 — the floor tells the truth, and the widest door gets a lock (v566–v570)
+
+**v566** rewrote `dialer_live_floor()` onto `agent_status`/`agent_status_since`.
+The tab had been calling the newest 50 of 133 rows "Live sessions"; 100 of them
+were a day old. **v567** documents `dialer_timezone_for_number()`, which is
+correctly uncalled. **v568** adds the session reaper, `pg_cron` job 38 every ten
+minutes, because nothing had ever closed a session — `sendBeacon` on tab close
+is best-effort and never fires on a crash or a closed laptop.
+
+**v569/v570** put a lock on `manual_dial`, which is the widest door in the
+dialer and says so in its own header: internal DNC is enforced absolutely, but
+calling hours, the list scrub and campaign assignment are all skipped by
+design. So any session that can reach it can reach any non-DNC US number.
+
+Two controls, because they stop different things. `can_manual_dial` decides who
+holds the capability. `manual_dial_daily_cap` bounds a **stolen** session,
+which a role check cannot — the thief holds the role. v570 repeats the check as
+a trigger on the insert so it survives an edit to the edge function, and it
+*calls* `dialer_manual_dial_allowed()` rather than reimplementing it, which is
+what let v574 fix both enforcement points from one migration.
+
+### Phase 13 — a security sweep, and billing that reconciles (v571–v577)
+
+Prompted by "do a full deep testing on each function". The sweep is worth
+repeating; the method is at the end of this file.
+
+**v571/v571b/v571c — eighteen functions were executable by `anon`.** The
+v556/v557 grant bug one layer down: those swept *tables*, nobody swept
+*functions*, and PostgreSQL grants EXECUTE to PUBLIC on every new function by
+default. Most are SECURITY DEFINER, so they do not merely bypass the caller's
+RLS, they run as the owner.
+
+Probed over PostgREST with the anon key — which ships in the page source, so
+this is "anyone on the internet". `dialer_queue_for_number('+1555…')` returned
+a **real queue uuid**. `dialer_bump_number_attempt` and `dialer_advance_number`
+both returned **204: they executed**. Those two can mark a phone line terminal
+and push another toward `max_attempts`, so an outsider with contact-phone ids
+could retire the dialable numbers out of the contact database one at a time,
+and it would read as ordinary dialing activity. The ids are unguessable uuids,
+which is why this was bad rather than catastrophic — that is not a control.
+
+Three passes because each found what the last had not: v571 did the twelve the
+app calls, v571b caught four that kept an *explicit* `authenticated` grant so
+revoking PUBLIC left them open, and v571c came from re-asserting across every
+`dialer\_%` function instead of the list I started from — six more, including a
+third anon-executable write nothing in the app calls by name.
+
+**v572/v577 — CDR rows nothing ever closed.** v568 reaps dead sessions; nothing
+reaped dead *attempts*, and ten sat open for sixty-odd hours. `ended_at` is set
+to the last observed moment, never `now()`: `now()` would turn a dial that
+never connected into a 62-hour call in reporting. v577 is the same bug one
+layer over — the reaper closed rows and left the billing columns null, so it
+swapped one silent gap for another.
+
+**v573 — the campaign could dial at 3am.** `calling_window` was 00:00–23:59
+across seven days, so gate 3 could never refuse anything. Nothing had gone out
+at 3am; the window was widened for QA and never narrowed, which is exactly how
+this bites on the campaign that later gets real contacts. Now a CHECK
+constraint at the TSR limit (16 CFR 310.4(c), 8am–9pm in the **called party's**
+local time, which is the time gate 3 already computes). A ceiling, not a
+schedule — 09:00–17:00 is still accepted.
+
+**v574 — the owner could dial a queue but not type a number.** v569's header
+asserted "admin, owner … cannot dial anyway". False:
+`dialer-call-control`'s top gate exempts owner and admin from
+`can_use_dialer`, so they can. v569 then seeded `can_manual_dial` from
+`can_use_dialer` and locked them out of manual dial. Two gates in one request
+path disagreeing about who is privileged. Fixed in the function rather than by
+flipping the flag, because `can_use_dialer=false` with `can_manual_dial=true`
+would be a row documenting a rule that is not the rule. **The cap still applies
+to them** — it bounds a stolen session, and an owner's is the most valuable one
+to steal.
+
+**v575 — one QA number removed from the internal DNC list.** Done as a
+migration rather than a console DELETE because `dialer_dnc` is append-only
+evidence: the live row is gone, the record of it and of why it was removed is
+permanent. The claim that it was a test number was checked against the data
+before acting (contact named "QA test contact (agent's own number)", from "Test
+List — Manual QA"), not taken on trust. **If you are about to delete another
+row: do it that way, or do not do it.**
+
+**v576 — inbound never wrote `billed_seconds`.** Outbound gets it from
+`dialer-telnyx-webhook`; inbound goes through `dialer-inbound`, which computed
+neither it nor `talk_seconds`. Every inbound row was null, so any billed-minute
+total across both directions counted only half the traffic.
+
+Measured after all of it: 28 calls, **0 nulls**, 172s of talk against 600s
+billed — **3.49x**. That is the 60/60 tax on real invoiced traffic, where the
+earlier 3.3x was a projection off ReadyMode's 18-second average.
+
+### Also shipped 2026-09-08, without migrations
+
+- **`dialer-autopilot` was an unauthenticated endpoint that moves the DID
+  pool.** Deployed `verify_jwt=false` and checking no header at all: straight
+  from the method check to a service-role client. Every threshold is
+  overridable per request, so the body was the exploit —
+  `{"config":{"min_active":0,"quarantine_ratio":999}}` quarantines every DID,
+  and gate 5 refuses a dial when no DID is available. **The whole floor stops,
+  from an anonymous POST.** Now gated on the `service_role` claim (safe only
+  because `verify_jwt` is now true — the two settings travel together) and
+  every threshold clamped, because "only cron can call it" and "a typo in the
+  cron entry cannot stop the floor" are different guarantees.
+- **Sign out on both consoles.** Order is load-bearing: the dialer session must
+  be closed BEFORE `auth.signOut()`, or the token is gone and the write is
+  refused by RLS, leaving a phantom agent on the live floor until v568's reaper
+  notices. The heartbeat is stopped first for the same class of reason. A live
+  call refuses the sign-out rather than confirming it.
+- **The agent console made an unauthenticated query on every page load.**
+  `loadDispositions()` was a bare top-level call, so it ran before sign-in and
+  PostgREST refused it. Invisible on the shared origin because the portal's
+  session was already in `sessionStorage`; a separate origin starts empty. The
+  banner was the lesser half — `dispositions` then stayed `[]` for the session,
+  so **the wrap-up screen had no buttons**.
+- **Four of seven FreeSWITCH XML files were not well-formed** (`--` inside an
+  XML comment). Never mattered because the gateway has never been deployed,
+  which is exactly why it would have surfaced as "FreeSWITCH will not start" on
+  cutover night.
+
+---
+
+## Carrier: settled 2026-09-08
+
+Telnyx confirmed in writing, after being asked three times in narrowing terms:
+
+| | |
+|---|---|
+| US-48 outbound | **$0.0050/min**, down from $0.0120 on the Voice API |
+| Billing increment | **60/60**, on both products — they would not move it |
+| STIR/SHAKEN | **A-level, and it survives our own host originating** over their trunk, because attestation follows the numbers and the account rather than the origination method |
+| 18-second ACD | explicitly accepted; no short-duration surcharge, no ASR/ACD minimum |
+| CPS | first 5 free; our 95th-percentile peak is ~1 |
+
+They also confirmed the gateway is **required, not optional**: the
+`@telnyx/webrtc` SDK terminates at `rtc.telnyx.com` and is rated as Voice API
+regardless, so a browser cannot register against an Elastic SIP Trunk.
+
+**So the saving is 58% off the rate, not 3.3x off the rounding** — about
+**$1,708/month** at the migration volume ($2,928 → $1,220). Chasing 6/6 at
+another carrier would add ~$854/month and put A-level attestation at risk; at
+243,990 calls a month a 1% answer-rate drop is 2,440 lost conversations, which
+is worth far more. `docs/OUTBOUND-CARRIER-RFQ.md` stays on file for the day the
+terms change.
+
+**`FS_BILLING_INCREMENT=60`**, set on Supabase and now also the code default.
+It was 6 while 6/6 was the goal; left at 6 against a 60/60 trunk,
+`dialer-fs-cdr` would record 18 billed seconds for a call billed as 60 — a
+3.3x under-report in the one column whose job is explaining the invoice.
+
+**Do not build the gateway yet.** Break-even on a ~$40/month host is ~1,700
+talk-minutes a month; the floor is doing ~1,000, where this saves $23/month.
+Build it when the ReadyMode volume actually moves. Runbook:
+`freeswitch/README.md`.
+
 ---
 
 ## Open items
@@ -358,13 +519,34 @@ the portal at `/index.html`, **not** `/dashboard/…` — that path 404s, and a
 naive curl comparison silently diffs your file against the 404 page and reports
 a difference that is not real.
 
-### 6. Inbound has not completed a call end to end yet
+### 6. ~~Inbound has not completed a call end to end~~ — MOSTLY RESOLVED 2026-09-08. Transfer still unproven.
 
-The pipeline is proven as far as ringing an agent — live calls have matched a
-queue, played the greeting, enqueued, created the agent leg and timed out
-correctly. What has not happened yet is an agent ANSWERING one, so bridge,
-talk path, hold-music-to-voicemail and transfer are all still unproven against
-a real call.
+It has now. Measured on live rows:
+
+| | |
+|---|---|
+| inbound calls | 9 |
+| answered by an agent, bridged to a named agent | **3** |
+| offers made | 5 — **3 answered, 2 timed out** |
+| reached voicemail | **1** |
+| abandoned (nobody picked up) | 6 |
+| longest talk | 19s |
+| **transferred** | **0 — still unproven** |
+
+So queue match, greeting, enqueue, agent leg, **bridge, talk path, the
+ring-timeout fallthrough to the next agent, and hold-music-to-voicemail** are
+all proven against real calls. `dialer_inbound_waiting()` is exercised by the
+same traffic.
+
+**What remains untested is transfer**, and it is the one piece with no
+fallback: `dialer-transfer` refuses outbound outright (a browser-originated leg
+is not under Call Control), so its only live path is an inbound call. Test it
+by taking an inbound call and transferring to a second agent on the same queue.
+Until then, treat the Transfer button as unproven.
+
+The original note follows, because the four console bugs it records were found
+by exactly this kind of live test and the next person testing transfer should
+expect the same class of surprise.
 
 Four bugs were found by those first live tests and fixed, all in the console:
 the incoming panel never appeared (the SDK sets `direction` one line AFTER it

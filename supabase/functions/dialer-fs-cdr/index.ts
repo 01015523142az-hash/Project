@@ -12,12 +12,18 @@
 //
 //     billed_seconds = Math.max(60, Math.ceil(talkSeconds / 60) * 60)
 //
-// 60/60 -- every call rounds up to a whole minute, minimum one. On an
+// 60/60 - every call rounds up to a whole minute, minimum one. On an
 // 18-second average that is what makes our effective rate 3.3x the sticker
 // price. Here the increment comes from FS_BILLING_INCREMENT because it is a
 // CONTRACT TERM, not a law of physics: the carrier's rate sheet decides it,
-// and rate sheets get renegotiated. Baking 6 into the code would leave
-// somebody hunting for it the day the contract changes.
+// and rate sheets get renegotiated.
+//
+// THE TRUNK WE ARE LANDING ON IS ALSO 60/60. Telnyx confirmed in writing that
+// Elastic SIP Trunking bills whole minutes exactly like the Voice API - they
+// would not move the increment and moved the RATE instead, $0.0120 to
+// $0.0050/min. So this project's saving is 58% off the rate, not 3.3x off the
+// rounding, and FS_BILLING_INCREMENT must be set to 60 to match. See the
+// default below for why it fails toward 60 rather than 6.
 //
 // IDEMPOTENCY. FreeSWITCH retries a CDR it did not get a 2xx for, and a
 // Supabase cold start can outrun the retry window. The row is found by
@@ -104,7 +110,25 @@ Deno.serve(async (req) => {
   // A non-2xx makes FreeSWITCH queue and retry. That is right for a genuine
   // failure and wrong for a CDR we will never be able to use, so a record we
   // cannot parse or do not recognise is answered 200 and dropped.
-  const INCREMENT = Math.max(1, intOf(Deno.env.get('FS_BILLING_INCREMENT')) || 6);
+
+  // DEFAULT 60, NOT 6, AND THE DIRECTION IS THE POINT.
+  //
+  // This defaulted to 6 while 6/6 was the goal of the project. Telnyx have
+  // since confirmed in writing that Elastic SIP Trunking is 60/60 like the
+  // Voice API - they moved the RATE instead, $0.0120 to $0.0050 - so the
+  // carrier we are actually landing on bills whole minutes.
+  //
+  // Left at 6, this function would record 18 billed seconds for an 18-second
+  // call that Telnyx bills as 60: a 3.3x UNDER-report, in the one column whose
+  // entire job is to explain the invoice. Under-reporting hides money. If the
+  // env var is ever unset or fat-fingered, failing toward 60 over-states, and
+  // an over-statement shows up as a discrepancy somebody chases rather than a
+  // shortfall nobody notices -- the same reasoning as the inbound increment in
+  // dialer-inbound.
+  //
+  // Still a setting, not a constant: it is a contract term and contract terms
+  // get renegotiated. Set it to what the rate sheet actually says.
+  const INCREMENT = Math.max(1, intOf(Deno.env.get('FS_BILLING_INCREMENT')) || 60);
 
   try {
     const raw = await req.text();

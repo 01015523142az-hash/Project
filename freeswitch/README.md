@@ -54,7 +54,7 @@ Set the matching Supabase secrets before the switch will get any answer but
 
 ```bash
 supabase secrets set FS_XML_SECRET="$(head -c 32 /dev/urandom | base64)"
-supabase secrets set FS_BILLING_INCREMENT=6
+supabase secrets set FS_BILLING_INCREMENT=60   # Telnyx trunking is 60/60
 supabase secrets set FS_DOMAIN=fs.staffportal.proptechnologyai.com
 supabase secrets set FS_WS_URL=wss://fs.staffportal.proptechnologyai.com/verto
 supabase secrets set FS_SECRET_TTL_HOURS=12
@@ -68,6 +68,19 @@ sending whoever debugs it to look in entirely the wrong place.
 `FS_BILLING_INCREMENT` is the trunk's billing increment and belongs in
 config, not code — it is a contract term, and contract terms get
 renegotiated. Set it to what the carrier's rate sheet actually says.
+
+**For Telnyx Elastic SIP Trunking that number is 60, not 6.** Confirmed in
+writing: their trunking product is 60/60 exactly like the Voice API. They would
+not move the increment and moved the *rate* instead — $0.0120 to $0.0050/min,
+a 58% cut, which is where the saving in this project now comes from.
+
+Setting it to 6 against a 60/60 trunk records 18 billed seconds for an
+18-second call the carrier bills as 60: a 3.3x under-report in the one column
+whose job is to explain the invoice. The default is 60 for that reason — if
+this is ever unset, over-stating surfaces as a discrepancy somebody chases,
+where under-stating is a shortfall nobody notices.
+
+Set it to 6 only if you later move to a carrier whose rate sheet says 6/6.
 
 ## The console keeps its existing softphone
 
@@ -130,23 +143,62 @@ Two consequences worth stating plainly:
 - **The functions fail closed.** With `FS_XML_SECRET` unset they refuse every
   request with `503` rather than defaulting to open. Verified live.
 
+## Carrier: settled
+
+Telnyx **Elastic SIP Trunking**, confirmed in writing 2026-09-08:
+
+| | |
+|---|---|
+| US-48 outbound | **$0.0050/min** (down from $0.0120 on the Voice API) |
+| Billing increment | **60/60** — they would not move it, they moved the rate |
+| STIR/SHAKEN | **A-level**, and it still applies when OUR host originates over their trunk, because attestation follows the numbers and the account rather than the origination method |
+| 18-second ACD | Explicitly accepted. No short-duration surcharge, no ASR/ACD minimum |
+| CPS | First 5 free; our 95th-percentile peak is ~1, so no surcharge |
+
+They also confirmed the architecture below is **required**, not optional: the
+`@telnyx/webrtc` SDK terminates at `rtc.telnyx.com` and is rated as Voice API
+no matter what. A browser cannot register against an Elastic SIP Trunk. The
+only route to $0.0050 is this gateway originating over the trunk with the
+browser bridged to it.
+
+So the saving is **58% off the rate**, not 3.3x off the rounding. Roughly
+**$1,708/month at the migration volume** ($2,928 to $1,220).
+
 ## Bring-up order
 
 Riskiest assumption first, nothing irreversible until the end.
 
-1. **Host.** VPS with a static public IP, DNS A record, Let's Encrypt cert.
-   4 vCPU / 8 GB handles roughly 50 concurrent transcoded calls; concurrency
-   equals headcount, because it is one line per agent.
-2. **Echo test.** Register a test user, dial `9196`, and listen. Proves
-   media, NAT and codecs before any money is spent.
-3. **Trunk.** Point `trunk-primary` at the carrier, whitelist the host IP
-   with them, fill in `acl.conf.xml`. Confirm **A-level STIR/SHAKEN
-   attestation in writing** first — see below.
-4. **Wire Supabase.** Set the secrets, substitute the placeholders, restart.
-   `dialer-fs-directory` should start answering registrations.
-5. **Provision one agent**, flip only them to `freeswitch`, and dial.
-6. **Pilot on answer rate.** Two agents here, the rest on Telnyx, same lists
-   and hours.
+**Do not start until the volume justifies it.** Break-even on a ~$40/month
+host is about **1,700 talk-minutes a month**. At the time of writing the floor
+is doing ~1,000, where the saving is $23/month and the host costs more than it
+returns. This is worth building when the ReadyMode volume actually moves, and
+not before.
+
+- [x] **Carrier terms.** Settled — see above. A-level attestation confirmed in
+      writing, which was the one gate that could have killed the whole plan.
+- [x] **`FS_BILLING_INCREMENT=60`** set on Supabase. Also the code default, so
+      it is belt-and-braces rather than load-bearing.
+- [ ] 1. **Host.** VPS with a static public IP, DNS A record, Let's Encrypt
+      cert. 4 vCPU / 8 GB handles roughly 50 concurrent transcoded calls;
+      concurrency equals headcount, because it is one line per agent.
+- [ ] 2. **Echo test.** Register a test user, dial `9196`, and listen. Proves
+      media, NAT and codecs before any money is spent.
+- [ ] 3. **Trunk.** Point `trunk-primary` at Telnyx Elastic SIP, whitelist the
+      host IP with them, fill in `acl.conf.xml`.
+- [ ] 4. **Wire Supabase.** Set the remaining secrets, substitute the
+      placeholders, restart. `dialer-fs-directory` should start answering
+      registrations.
+- [ ] 5. **Provision one agent**, flip only them to `freeswitch`, and dial.
+- [ ] 6. **Check the first CDR log line before trusting any billing number:**
+
+      dialer-fs-cdr: closed <id> completed billsec=18 -> 60s
+
+      The arrow must say `-> 60s`. If it says `-> 18s` the increment is wrong
+      and `billed_seconds` is under-reporting by 3.3x. That log line is the
+      only real verification the secret took effect.
+- [ ] 7. **Pilot on answer rate.** Two agents here, the rest on Telnyx, same
+      lists and hours. Attestation is confirmed A-level on both paths, so a
+      divergence in answer rate means something else is wrong.
 
 ## The failure that will actually happen
 

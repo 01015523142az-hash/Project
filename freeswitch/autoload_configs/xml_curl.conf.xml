@@ -7,7 +7,7 @@
 
     gateway-credentials is sent as HTTP Basic. The username half is ignored
     by both functions; the PASSWORD half is FS_XML_SECRET and is the only
-    thing authenticating this switch to them. It must not be committed --
+    thing authenticating this switch to them. It must not be committed -
     see README, "Secrets".
   -->
   <bindings>

@@ -60,7 +60,23 @@ begin
          -- the webhook knew something, and overwriting it would lose it.
          status       = case when status in ('initiated', 'ringing', 'in_progress')
                              then 'failed' else status end,
-         hangup_cause = coalesce(hangup_cause, 'reaped_no_carrier_event')
+         hangup_cause = coalesce(hangup_cause, 'reaped_no_carrier_event'),
+         -- v577: zero, not null. This reaper originally set ended_at and
+         -- status and left the billing columns alone, which swapped one
+         -- silent gap for another -- the row stopped reading as open but
+         -- still contributed nothing to SUM(billed_seconds) and nothing said
+         -- why. ended_at is answered_at (or initiated_at), so the arithmetic
+         -- is 0 by construction; it is written explicitly so the column says
+         -- "known to be nothing" rather than "never written".
+         --
+         -- For a reaped row that DID answer, 0 is honest rather than
+         -- accurate: the carrier charged for something we never learned.
+         -- `where hangup_cause = 'reaped_no_carrier_event' and
+         -- provider_cost_usd is null` is the exact list of those.
+         talk_seconds = coalesce(talk_seconds,
+           greatest(0, round(extract(epoch from
+             (coalesce(answered_at, initiated_at) - coalesce(answered_at, initiated_at))))::int)),
+         billed_seconds = coalesce(billed_seconds, 0)
    where ended_at is null
      and initiated_at < v_cut;
 

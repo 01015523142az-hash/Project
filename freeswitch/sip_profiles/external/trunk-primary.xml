@@ -1,8 +1,13 @@
 <!--
-  Outbound termination. IP authentication rather than registration: one less
+  Outbound termination. As of the Telnyx answer this is TELNYX ELASTIC SIP
+  TRUNKING: $0.0050/min US-48, 60/60 increment, A-level attestation confirmed
+  for DIDs on the account regardless of it being our host originating, first
+  5 CPS free (we peak around 1). Set FS_BILLING_INCREMENT=60 to match.
+
+  IP authentication rather than registration: one less
   credential that can leak, and no re-registration storm after a restart.
   Whitelist this host's public IP with the carrier AND put their signalling
-  IPs in acl.conf.xml -- both halves are needed, neither is sufficient.
+  IPs in acl.conf.xml - both halves are needed, neither is sufficient.
 -->
 <gateway name="trunk-primary">
   <param name="proxy" value="__TRUNK_PRIMARY_HOST__"/>
