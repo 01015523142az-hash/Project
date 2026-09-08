@@ -507,6 +507,52 @@ rather than an extension of the blind transfer that exists.
 
 ---
 
+## In flight: moving the consoles to their own origins
+
+`dialer.proptechnologyai.com` and `admin.proptechnologyai.com` are verified in
+DNS. The reason is not tidiness: the consoles currently share an ORIGIN, and
+therefore a `sessionStorage`, with `dashboard.html` — 2.3MB and 37k lines. One
+XSS anywhere in that file yields a session that can place calls on a live
+carrier account. A separate origin is a separate storage partition, and
+splitting agent from admin adds something a role check cannot: an agent's
+session becomes unusable on the admin origin outright, rather than merely
+refused.
+
+**Done**
+
+- **Sign-in on both pages.** Neither could authenticate anybody — they read
+  the portal's session off the shared origin and told the agent to go and sign
+  in there. That is exactly what a separate origin breaks, so it was the
+  prerequisite, not the decoration. Session pickup on the shared origin is
+  untouched, so nothing changed today.
+- **CORS.** All eight functions the consoles call, plus the `_shared/cors.ts`
+  reference copy, now list both subdomains. Additive and inert until those
+  hostnames serve something. **Committed but NOT deployed** — see below.
+
+**Left**
+
+1. **Two more Pages sites.** `live/main:CNAME` holds
+   `staffportal.proptechnologyai.com`, and GitHub Pages serves exactly one
+   custom domain per repository. Two subdomains means two more repos, taking
+   the deploy from two remotes to four. This is the real operational cost.
+2. **Deploy the eight functions.** Do it with the CLI —
+   `npx supabase functions deploy <name>` reads the file directly. Deploying
+   by hand means retyping 2,610 lines across eight files, and `dialer-call-control`
+   alone is 820 of them and authorises every dial.
+3. **Supabase Auth**: add both origins to the redirect allowlist.
+4. **Cross-links**: `href="/"` and `/dialer/admin.html` become absolute.
+
+**Decided, no action:** storage stays `sessionStorage`. Once the origins are
+split, a dashboard XSS cannot reach either storage, so the choice stops being
+about that threat — what is left is that `localStorage` leaves a refresh token
+on disk that outlives the tab, and on a shared workstation it would leave the
+next person signed in as the last. `sessionStorage` survives a reload and only
+dies on tab close, and the `autocomplete` attributes mean a password manager
+refills it in two clicks. If persistence is ever wanted, pair it with a
+shorter JWT expiry rather than flipping the storage alone.
+
+---
+
 ## Traps for whoever works on this next
 
 - **Two repos.** `origin` = `proptechai` (mirror/source). `live` = `Project`,

@@ -31,6 +31,17 @@ const ALLOWED_ORIGINS = [
   'https://clientportal.proptechnologyai.com',
   'https://proptechnologyai.com',
   'https://www.proptechnologyai.com',
+  // The dialer consoles get their own ORIGINS so that a bug anywhere in the
+  // 2.3MB dashboard cannot read the session that is allowed to place calls:
+  // a separate origin is a separate sessionStorage. Both pages gained a
+  // sign-in of their own for exactly this, since neither could authenticate
+  // anybody before -- they read the portal's session off the shared origin.
+  //
+  // Additive and inert until those hostnames actually serve something. An
+  // origin nobody requests from costs nothing; the reverse -- moving the
+  // pages first and finding every function refuses them -- is a bad hour.
+  'https://dialer.proptechnologyai.com',
+  'https://admin.proptechnologyai.com',
 ];
 function getCorsHeaders(req: Request): Record<string, string> {
   const origin = req.headers.get('origin') || '';
