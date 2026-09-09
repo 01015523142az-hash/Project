@@ -30226,36 +30226,76 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
     (existingLeads || []).forEach(l => { if(!latestByPhone[l.seller_phone_norm]) latestByPhone[l.seller_phone_norm] = l; });
 
     const requiredKeys = ISPEEDTOLEAD_FIELD_GROUPS.flatMap(g => g.fields).filter(f => f.required).map(f => f.key);
+
+    // v565 (user request, 2026-09-09): THE PROPERTY ADDRESS IS THE LEAD'S
+    // IDENTITY — not the phone number.
+    //
+    // Phone was the primary match key until now, which is wrong for this
+    // business: one owner routinely has several properties, so the same
+    // phone legitimately belongs to several DIFFERENT leads. Matching on it
+    // meant the second and third property an owner called about were
+    // treated as duplicates of the first and silently dropped — real leads
+    // lost, with nothing in the summary to say so.
+    //
+    // Address is now the primary key. Phone survives only as a fallback for
+    // a row that carries no address at all, where there is nothing else to
+    // compare and creating blindly risks a genuine duplicate.
+    //
+    // Matching is on a normalized key (lowercased, non-alphanumerics
+    // stripped) rather than the raw string the old code compared, so
+    // "123 Main St." / "123 main st" / "123  Main  St" are one property
+    // instead of three.
+    const ispdAddrKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // One fetch of every PrimeHome Buyers lead that has an address, so the
+    // comparison can be done on normalized keys client-side. An exact-string
+    // `.in()` (what this used to do) cannot match across formatting
+    // differences, which is precisely where duplicates slipped through.
+    const existingByAddrKey = {};
+    if(leadsPrimeHomeBuyersFormId){
+      const PAGE = 1000;
+      for(let from = 0; ; from += PAGE){
+        const { data: addrLeads, error: addrErr } = await sb.from('leads')
+          .select('id, extra_fields, status, submitted_at')
+          .eq('submission_form_id', leadsPrimeHomeBuyersFormId)
+          .order('submitted_at', { ascending: false })
+          .range(from, from + PAGE - 1);
+        if(addrErr){ console.error('address-dedupe fetch failed:', addrErr); break; }
+        if(!addrLeads || !addrLeads.length) break;
+        addrLeads.forEach(l => {
+          const k = ispdAddrKey((l.extra_fields || {}).form_address);
+          if(k && !existingByAddrKey[k]) existingByAddrKey[k] = l;
+        });
+        if(addrLeads.length < PAGE) break;
+      }
+    }
+
     parsed.forEach(r => {
-      r.matchedLeadId = latestByPhone[r.phoneNorm] ? latestByPhone[r.phoneNorm].id : null;
       r.missing = requiredKeys.filter(k => !r.__cells[k]);
+      r.addrKey = ispdAddrKey(r.__cells.form_address);
+      const addrHit = r.addrKey ? existingByAddrKey[r.addrKey] : null;
+      if(addrHit){
+        r.matchedLeadId = addrHit.id;
+        r.matchedOn = 'address';
+      } else if(!r.addrKey && latestByPhone[r.phoneNorm]){
+        // No address on this row — fall back to phone so a row with nothing
+        // to identify the property by cannot quietly create a duplicate.
+        r.matchedLeadId = latestByPhone[r.phoneNorm].id;
+        r.matchedOn = 'phone (row has no address)';
+      } else {
+        r.matchedLeadId = null;
+        r.matchedOn = null;
+      }
     });
 
-    // BUG FIX (user request, 2026-09): a row whose phone had no match still
-    // went in as a brand-new lead even when it was the SAME property as an
-    // existing PrimeHome Buyers lead under a different/typo'd phone number —
-    // exactly the "true duplicate" pattern the 2026-09 backfill had to clean
-    // up after the fact. Phone-matched rows already correctly merge above
-    // (matchedLeadId), so this only needs to catch the ones phone-matching
-    // missed: no phone match, but the same property address already exists
-    // as a PrimeHome Buyers lead. Hard-blocked at import time, no override.
-    const unmatchedAddresses = [...new Set(parsed.filter(r => !r.matchedLeadId && r.__cells.form_address).map(r => r.__cells.form_address.trim()))];
-    const existingByAddress = {};
-    if(unmatchedAddresses.length && leadsPrimeHomeBuyersFormId){
-      const { data: existingAddrLeads } = await sb.from('leads')
-        .select('id, extra_fields, status, submitted_at')
-        .eq('submission_form_id', leadsPrimeHomeBuyersFormId)
-        .in('extra_fields->>form_address', unmatchedAddresses);
-      (existingAddrLeads || []).forEach(l => {
-        const a = String((l.extra_fields || {}).form_address || '').trim();
-        if(a && !existingByAddress[a]) existingByAddress[a] = l;
-      });
-    }
+    // Two rows in the SAME file for the same property: only the first can
+    // create the lead. Without this the file duplicates against itself,
+    // since nothing exists in the database to match the second against yet.
+    const seenAddrKeys = new Set();
     parsed.forEach(r => {
-      if(!r.matchedLeadId && r.__cells.form_address){
-        const hit = existingByAddress[r.__cells.form_address.trim()];
-        if(hit) r.duplicateAddress = hit;
-      }
+      if(r.matchedLeadId || !r.addrKey) return;
+      if(seenAddrKeys.has(r.addrKey)) r.duplicateInFile = true;
+      else seenAddrKeys.add(r.addrKey);
     });
 
     // v561: a lead that has ALREADY been delivered to PrimeHome Buyers is
@@ -30264,7 +30304,7 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
     // silently overwriting them from a later export makes the record
     // disagree with what the buyer received, and there is no way to tell
     // afterwards which version went out. Skipped outright (not merged,
-    // not flagged for override), same hard-block treatment duplicateAddress
+    // not flagged for override), same hard-block treatment duplicateInFile
     // already gets. Only a SUCCESSFUL send counts: a failed attempt left
     // the lead undelivered, so it stays importable.
     const matchedIds = [...new Set(parsed.map(r => r.matchedLeadId).filter(Boolean))];
@@ -30315,7 +30355,7 @@ function renderIspdPreview(usedCols){
   $('ispdPreviewHead').innerHTML = `<tr><th>Match</th>${usedCols.map(c => `<th>${escapeHtml(c.header)}</th>`).join('')}</tr>`;
   $('ispdPreviewBody').innerHTML = ispdParsedRows.map(r => `
     <tr>
-      <td class="mono" style="white-space:nowrap; color:${(r.duplicateAddress || r.alreadySentPrimehome || r.matchedLeadId) ? 'var(--danger)' : 'var(--text-2)'};" title="${r.alreadySentPrimehome ? 'Already delivered to PrimeHome Buyers — skipped so the sent record is not overwritten.' : (r.matchedLeadId ? `This seller is already on file${r.alreadySentGyhomes ? ' and was already sent to gyhomes' : ' and has never been sent anywhere'}. Nothing on the lead will be changed — the import only creates new leads. It is still tagged into this import so you can find it under Imported → My last import.` : (r.duplicateAddress ? `Same address already on file as a PrimeHome Buyers lead (status: ${escapeHtml(r.duplicateAddress.status)}) — skipped, not imported.` : ''))}">${r.alreadySentPrimehome ? 'Sent to PrimeHome — will skip' : (r.matchedLeadId ? (r.alreadySentGyhomes ? 'On file, sent to gyhomes' : 'On file, never sent — for resend') : (r.duplicateAddress ? 'Duplicate — will skip' : 'New lead'))}${r.missing.length ? ` <span style="color:var(--danger);" title="Missing: ${escapeHtml(r.missing.join(', '))}">⚠ ${r.missing.length} missing</span>` : ''}</td>
+      <td class="mono" style="white-space:nowrap; color:${(r.duplicateInFile || r.alreadySentPrimehome || r.matchedLeadId) ? 'var(--danger)' : 'var(--text-2)'};" title="${r.alreadySentPrimehome ? 'This property was already delivered to PrimeHome Buyers — skipped so the sent record is not overwritten.' : (r.matchedLeadId ? `This PROPERTY is already on file (matched on ${escapeHtml(r.matchedOn || 'address')})${r.alreadySentGyhomes ? ' and was already sent to gyhomes' : ' and has never been sent anywhere'}. Nothing on the lead will be changed — the import only creates new leads. It is still tagged into this import so you can find it under Imported → My last import.` : (r.duplicateInFile ? 'The same property appears earlier in this file — only the first row creates the lead.' : ''))}">${r.alreadySentPrimehome ? 'Sent to PrimeHome — will skip' : (r.matchedLeadId ? (r.alreadySentGyhomes ? 'On file, sent to gyhomes' : 'On file, never sent — for resend') : (r.duplicateInFile ? 'Duplicate in file — will skip' : 'New lead'))}${r.missing.length ? ` <span style="color:var(--danger);" title="Missing: ${escapeHtml(r.missing.join(', '))}">⚠ ${r.missing.length} missing</span>` : ''}</td>
       ${usedCols.map(c => `<td>${escapeHtml((r.__cells[c.key] || '').slice(0, 40))}</td>`).join('')}
     </tr>
   `).join('');
@@ -30354,13 +30394,17 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
   // batch. A file with two rows sharing a phone number that DIDN'T already
   // have a lead (a purchased/outside list, exactly the case this import
   // exists for) would insert two separate lead rows for the same seller
-  // instead of merging the second into the first. matchedLeadIdByPhone
-  // starts from the same DB-matched ids parse time found, but gets updated
-  // as each row is processed so a later row with the same phoneNorm merges
-  // onto the lead this batch itself just created/updated, same as it would
-  // if that lead had already existed going in.
-  const matchedLeadIdByPhone = {};
-  ispdParsedRows.forEach(r => { if(r.matchedLeadId) matchedLeadIdByPhone[r.phoneNorm] = r.matchedLeadId; });
+  // instead of merging the second into the first.
+  //
+  // v565: that in-batch map is now keyed on the ADDRESS, not the phone.
+  // Keying it on phone would have silently reinstated exactly the
+  // behaviour this version removes — an owner's second property in the
+  // same file resolving onto the lead created for their first one. Rows
+  // that genuinely repeat a property inside one file are caught at parse
+  // time (r.duplicateInFile), so this map only has to carry ids forward
+  // for anything that slips past that.
+  const matchedLeadIdByAddr = {};
+  ispdParsedRows.forEach(r => { if(r.matchedLeadId && r.addrKey) matchedLeadIdByAddr[r.addrKey] = r.matchedLeadId; });
   // v561: one id per import run, stamped on every lead this run touches so
   // the queue can filter back to "my last import" — see the Imported filter
   // and leads.last_import_batch. Deliberately does NOT touch submitted_at or
@@ -30369,7 +30413,7 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
   const importStamp = { last_import_batch: importBatchId, last_imported_at: new Date().toISOString(), last_imported_by: user.id };
   let created = 0, failed = 0, skippedDuplicate = 0, skippedAlreadySent = 0, refreshedGyhomes = 0, refreshedNeverSent = 0;
   for(const r of ispdParsedRows){
-    const matchedLeadId = matchedLeadIdByPhone[r.phoneNorm] || null;
+    const matchedLeadId = r.matchedLeadId || (r.addrKey ? (matchedLeadIdByAddr[r.addrKey] || null) : null);
     // v562: this import is CREATE-ONLY for lead DATA (user request,
     // 2026-09-09). It used to merge a matched row's fields onto the
     // existing lead; it no longer writes a single field of lead data to an
@@ -30402,10 +30446,10 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
       else refreshedNeverSent++;
       continue;
     }
-    // Hard-blocked at parse time (see r.duplicateAddress above) — same
-    // address already exists as a PrimeHome Buyers lead under a different
-    // phone number, so this would otherwise create a true duplicate.
-    if(r.duplicateAddress){ skippedDuplicate++; continue; }
+    // v565: the same property appears earlier in THIS file. Only the first
+    // row creates it — the rest would duplicate against a lead that did not
+    // exist when the batch was parsed.
+    if(r.duplicateInFile){ skippedDuplicate++; continue; }
     const extraFields = {};
     Object.entries(r.__cells).forEach(([k, v]) => { if(!k.startsWith('__') && v) extraFields[k] = v; });
     {
@@ -30437,7 +30481,7 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
         seller_phone: r.__cells.__phone || null,
         extra_fields: Object.keys(extraFields).length ? extraFields : {},
       }).select('id').single();
-      if(error) failed++; else { created++; matchedLeadIdByPhone[r.phoneNorm] = newLead.id; }
+      if(error) failed++; else { created++; if(r.addrKey) matchedLeadIdByAddr[r.addrKey] = newLead.id; }
     }
   }
   logActivity('lead.csv_import', null, null, `CSV/Excel import (create-only): ${created} created, ${refreshedGyhomes} already sent to gyhomes, ${refreshedNeverSent} never sent (refreshed to resend), ${skippedAlreadySent} skipped as already sent to PrimeHome Buyers${skippedDuplicate ? `, ${skippedDuplicate} skipped as duplicate address` : ''}${failed ? `, ${failed} failed` : ''} (batch ${importBatchId})${!defaultCampaignFormId ? ' — WARNING: PrimeHome Buyers campaign could not be resolved, leads went in untagged' : ''}`);
