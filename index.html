@@ -30037,6 +30037,31 @@ function ispdRawParseAddress(raw){
   if(m) return { street: m[1], city: m[2], state: m[3], zip: m[4] || '', ok: true };
   return { street: a, city: '', state: '', zip: '', ok: false };
 }
+// v567: one Property Address cell carrying MORE THAN ONE address — a
+// caller logging two neighbouring properties in a single row. Seen live on
+// three leads:
+//   "8912 Centergrove Ln, Charlotte, NC 28214 //8924 Centergrove Ln"
+//   "3575 Landis St, Winston Salem, NC 27107 //  3595 Landis St, ...,,,,"
+//   "4936 Lakeview Rd, Charlotte, NC 28216,,,4940 Lakeview Rd Charlotte..."
+//
+// Left alone these are quietly corrosive: the whole string lands in
+// form_address, ispdRawParseAddress can't match its city/state/zip regex
+// (it anchors on the string ENDING at state+zip), so those fields come out
+// blank — and because address is now the dedupe key, the mangled string
+// never matches anything, so every future import of the same row looks
+// like a brand-new property.
+//
+// Separators are deliberately narrow: "//", ";", " | ", or a run of 3+
+// commas. All are punctuation nobody puts inside a single real address, so
+// a legitimately long address is never split.
+const ISPD_MULTI_ADDR_SEP_RE = /\s*(?:\/{2,}|;|\s\|\s|,{3,})\s*/;
+function ispdSplitMultiAddress(raw){
+  const s = String(raw || '').trim();
+  if(!s) return [];
+  return s.split(ISPD_MULTI_ADDR_SEP_RE)
+    .map(x => x.replace(/^[\s,]+|[\s,]+$/g, '').trim())
+    .filter(Boolean);
+}
 function ispdRawNormalizePhone(raw){ return String(raw || '').replace(/\s*\[dnc\]\s*/ig, '').trim(); }
 function ispdRawIsDnc(raw){ return /\[dnc\]/i.test(String(raw || '')); }
 // Detects the one known source-export corruption pattern seen in this
@@ -30270,6 +30295,38 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
       }
     }
 
+    // v567: split a multi-address cell BEFORE anything else reads the
+    // address — dedupe, city/state parsing and the stored lead all need the
+    // cleaned value. Applied here rather than inside ispdConvertRawImport so
+    // it covers a hand-filled template upload too, not just raw exports.
+    //
+    // The extra addresses are moved into Conversation notes rather than
+    // dropped: the row genuinely mentioned another property, and that is
+    // worth a human deciding about. The preview flags the row so that
+    // decision happens before import, not after.
+    parsed.forEach(r => {
+      const parts = ispdSplitMultiAddress(r.__cells.form_address);
+      if(parts.length > 1){
+        r.multiAddress = parts;
+        // Re-parse the first address on its own. ispdRawParseAddress anchors
+        // its regex on the string ENDING at "City, ST 12345", so a
+        // multi-address cell never matched and left city/state/zip blank —
+        // which is exactly the state the three live examples were found in.
+        // Split apart, the first one parses normally.
+        const one = ispdRawParseAddress(parts[0]);
+        r.__cells.form_address = one.ok ? one.street : parts[0];
+        if(one.ok){
+          if(!r.__cells.form_city)  r.__cells.form_city  = one.city;
+          if(!r.__cells.form_state) r.__cells.form_state = one.state;
+          if(!r.__cells.form_zip && one.zip) r.__cells.form_zip = one.zip;
+        }
+        const note = `⚠ The source row listed ${parts.length} addresses in one cell. Imported as the first: "${parts[0]}". Also mentioned: ${parts.slice(1).join(' | ')}`;
+        r.__cells.form_conversation_notes = r.__cells.form_conversation_notes
+          ? `${note}\n\n${r.__cells.form_conversation_notes}`
+          : note;
+      }
+    });
+
     parsed.forEach(r => {
       r.missing = requiredKeys.filter(k => !r.__cells[k]);
       r.addrKey = ispdAddrKey(r.__cells.form_address);
@@ -30390,7 +30447,7 @@ function renderIspdPreview(usedCols){
   $('ispdPreviewHead').innerHTML = `<tr><th>Match</th>${usedCols.map(c => `<th>${escapeHtml(c.header)}</th>`).join('')}</tr>`;
   $('ispdPreviewBody').innerHTML = ispdParsedRows.map(r => `
     <tr>
-      <td class="mono" style="white-space:nowrap; color:${(r.duplicateInFile || r.alreadySentPrimehome || r.matchedLeadId) ? 'var(--danger)' : 'var(--text-2)'};" title="${r.alreadySentPrimehome ? 'This property was already delivered to PrimeHome Buyers — skipped so the sent record is not overwritten.' : (r.matchedLeadId ? `This PROPERTY is already on file (matched on ${escapeHtml(r.matchedOn || 'address')})${r.alreadySentGyhomes ? ' and was already sent to gyhomes' : (r.deliveredByPostbackOnly ? ' and iSpeedToLead already confirmed delivery by postback (channel unknown)' : ' and has never been sent anywhere')}. Nothing on the lead will be changed — the import only creates new leads. It is still tagged into this import so you can find it under Imported → My last import.` : (r.duplicateInFile ? 'The same property appears earlier in this file — only the first row creates the lead.' : ''))}">${r.alreadySentPrimehome ? 'Sent to PrimeHome — will skip' : (r.matchedLeadId ? (r.alreadySentGyhomes ? 'On file, sent to gyhomes' : (r.deliveredByPostbackOnly ? 'On file, delivered (postback)' : 'On file, never sent — for resend')) : (r.duplicateInFile ? 'Duplicate in file — will skip' : 'New lead'))}${r.missing.length ? ` <span style="color:var(--danger);" title="Missing: ${escapeHtml(r.missing.join(', '))}">⚠ ${r.missing.length} missing</span>` : ''}</td>
+      <td class="mono" style="white-space:nowrap; color:${(r.duplicateInFile || r.alreadySentPrimehome || r.matchedLeadId) ? 'var(--danger)' : 'var(--text-2)'};" title="${r.alreadySentPrimehome ? 'This property was already delivered to PrimeHome Buyers — skipped so the sent record is not overwritten.' : (r.matchedLeadId ? `This PROPERTY is already on file (matched on ${escapeHtml(r.matchedOn || 'address')})${r.alreadySentGyhomes ? ' and was already sent to gyhomes' : (r.deliveredByPostbackOnly ? ' and iSpeedToLead already confirmed delivery by postback (channel unknown)' : ' and has never been sent anywhere')}. Nothing on the lead will be changed — the import only creates new leads. It is still tagged into this import so you can find it under Imported → My last import.` : (r.duplicateInFile ? 'The same property appears earlier in this file — only the first row creates the lead.' : ''))}">${r.alreadySentPrimehome ? 'Sent to PrimeHome — will skip' : (r.matchedLeadId ? (r.alreadySentGyhomes ? 'On file, sent to gyhomes' : (r.deliveredByPostbackOnly ? 'On file, delivered (postback)' : 'On file, never sent — for resend')) : (r.duplicateInFile ? 'Duplicate in file — will skip' : 'New lead'))}${r.missing.length ? ` <span style="color:var(--danger);" title="Missing: ${escapeHtml(r.missing.join(', '))}">⚠ ${r.missing.length} missing</span>` : ''}${r.multiAddress ? ` <span style="color:var(--danger); font-weight:700;" title="This row's Property Address cell contained ${r.multiAddress.length} addresses: ${escapeHtml(r.multiAddress.join(' | '))}&#10;&#10;Importing as the first one. The others are saved into Conversation notes — check whether they are separate leads.">⚠ ${r.multiAddress.length} addresses</span>` : ''}</td>
       ${usedCols.map(c => `<td>${escapeHtml((r.__cells[c.key] || '').slice(0, 40))}</td>`).join('')}
     </tr>
   `).join('');
@@ -30538,6 +30595,11 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
   // Printed only when it happens — unlike the four core categories, this
   // is a rare state and a permanent "0" line would just be noise.
   if(refreshedPostback) importSummaryLines.push(`Delivered via iSpeedToLead postback (channel unknown): ${refreshedPostback}`);
+  // v567: rows whose Property Address cell held more than one address. The
+  // first was imported and the rest saved into Conversation notes; someone
+  // still has to decide whether those are separate leads.
+  const multiAddrCount = ispdParsedRows.filter(r => r.multiAddress).length;
+  if(multiAddrCount) importSummaryLines.push(`Rows with more than one address in the cell: ${multiAddrCount} — imported the first, the rest are in Conversation notes`);
   if(skippedDuplicate) importSummaryLines.push(`Skipped as a repeat of the same property in this file: ${skippedDuplicate}`);
   if(failed) importSummaryLines.push(`Failed: ${failed}`);
   msg.innerHTML = importSummaryLines.map(t => `<div>${escapeHtml(t)}</div>`).join('')
