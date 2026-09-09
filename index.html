@@ -30284,7 +30284,26 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
     // stripped) rather than the raw string the old code compared, so
     // "123 Main St." / "123 main st" / "123  Main  St" are one property
     // instead of three.
-    const ispdAddrKey = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    // v571: the key is street + CITY, not street alone.
+    //
+    // Street-only collides on common names: live there are two separate
+    // leads at "40 High St" — one in Shrewsbury MA, one in Amsterdam NY.
+    // Different states, different properties, identical key. Street-only
+    // would silently drop one as a duplicate, and "Main St" / "Oak St"
+    // guarantee more of these as markets are added.
+    //
+    // Safe to tighten: of 2,309 PrimeHome leads with an address, 2,296
+    // carry a city, and NO street key currently has a mix of rows with and
+    // without one — so no existing property splits into two keys. Zip is
+    // the fallback, then street-only for the 13 rows that have neither
+    // (a possible collision beats treating every city-less row as unique).
+    const ispdAddrKey = (street, city, zip) => {
+      const n = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      const st = n(street);
+      if(!st) return '';
+      const loc = n(city) || n(zip);
+      return loc ? `${st}|${loc}` : st;
+    };
 
     // One fetch of every PrimeHome Buyers lead that has an address, so the
     // comparison can be done on normalized keys client-side. An exact-string
@@ -30324,7 +30343,8 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
         if(addrErr){ console.error('address-dedupe fetch failed:', addrErr); fetchOk = false; break; }
         if(!addrLeads || !addrLeads.length) break;
         addrLeads.forEach(l => {
-          const k = ispdAddrKey((l.extra_fields || {}).form_address);
+          const ef = l.extra_fields || {};
+          const k = ispdAddrKey(ef.form_address, ef.form_city, ef.form_zip);
           if(k && !existingByAddrKey[k]) existingByAddrKey[k] = l;
         });
         if(addrLeads.length < PAGE) break;
@@ -30376,7 +30396,7 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
 
     parsed.forEach(r => {
       r.missing = requiredKeys.filter(k => !r.__cells[k]);
-      r.addrKey = ispdAddrKey(r.__cells.form_address);
+      r.addrKey = ispdAddrKey(r.__cells.form_address, r.__cells.form_city, r.__cells.form_zip);
       const addrHit = r.addrKey ? existingByAddrKey[r.addrKey] : null;
       if(addrHit){
         r.matchedLeadId = addrHit.id;
