@@ -1848,6 +1848,7 @@
       <button class="csub-subtab-btn" data-csub-section="campaign"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16V8l7-4 7 4v8"/><path d="M8 16v-5h4v5"/></svg>Campaign Details</button>
       <button class="csub-subtab-btn" data-csub-section="campaign_guide"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5c-1.5-1-4-1-6-.3v10.6c2-.7 4.5-.7 6 .3 1.5-1 4-1 6-.3V4.7C14 4 11.5 4 10 5z"/><path d="M10 5v10.6"/></svg>Campaign Guide</button>
       <button class="csub-subtab-btn" data-csub-section="campaign_progress"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v12h12" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.5 12.5l3-3.5 2.5 2 3.5-4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Campaign Progress</button>
+      <button class="csub-subtab-btn" data-csub-section="readymode_upload_list"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13V4"/><path d="M6.5 7.5L10 4l3.5 3.5"/><path d="M4 13v3h12v-3"/></svg>ReadyMode Upload List</button>
         </div>
     </div>
     <!-- v358: Data Science -- Data Form (moved from Client Submissions),
@@ -3387,45 +3388,6 @@
           <div class="msg" id="rmImportMsg"></div>
         </div>
 
-        <div class="card" style="margin-top:16px;">
-          <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Upload list for ReadyMode — dedupe check</h3>
-          <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.4;">
-            Upload a raw property list (DealMachine, BatchLeads, or similar export — CSV or Excel) before loading it into ReadyMode's dialer. This checks every address against leads already known to iSpeedToLead (any PrimeHome Buyers submission, any status) and flags ones that would just come back "Duplicate address/phone number" if resubmitted, so agents aren't cold-calling a property already in the pipeline. Direct upload straight into ReadyMode isn't wired up yet — their inbound Channel/TPI API access is still pending from their Integrations team — so this produces a cleaned CSV for ReadyMode's own manual upload in the meantime.
-          </div>
-          <input type="file" id="rmListUploadInput" accept=".csv,.xlsx,.xls">
-          <div class="msg" id="rmListUploadMsg"></div>
-          <div id="rmListUploadResults" style="display:none; margin-top:14px;">
-            <div class="act-stats-row" style="margin-bottom:14px;">
-              <div class="act-stat-card"><div class="act-stat-label">Rows in file</div><div class="act-stat-value" id="rmListStatTotal">0</div></div>
-              <div class="act-stat-card"><div class="act-stat-label">Duplicate addresses</div><div class="act-stat-value bad" id="rmListStatDup">0</div></div>
-              <div class="act-stat-card"><div class="act-stat-label">Clean — ready to upload</div><div class="act-stat-value good" id="rmListStatClean">0</div></div>
-            </div>
-            <button class="btn-primary" id="rmListDownloadCleanBtn" style="width:auto; padding:9px 16px;">Download clean list (CSV)</button>
-            <button class="btn-secondary" id="rmListDownloadDupBtn" style="width:auto; padding:9px 16px; margin-left:8px;">Download flagged duplicates (CSV)</button>
-            <div style="display:flex; align-items:center; gap:8px; margin-top:12px; flex-wrap:wrap;">
-              <label style="margin:0; font-size:12px; color:var(--text-dim);">Push to channel/campaign:</label>
-              <select id="rmListChannelSelect" style="min-width:240px;"><option value="">Loading channels…</option></select>
-              <button class="btn-primary edit-only" id="rmListPushBtn" style="width:auto; padding:9px 16px;">Push clean list to ReadyMode</button>
-            </div>
-            <div class="msg" id="rmListPushMsg" style="margin-top:10px;"></div>
-            <div id="rmListPushResults" style="display:none; margin-top:10px; max-height:220px; overflow-y:auto; border:1px solid var(--border-light); border-radius:8px;"></div>
-            <div style="margin-top:14px; max-height:320px; overflow-y:auto; border:1px solid var(--border-light); border-radius:8px;">
-              <table class="mono" style="width:100%; font-size:11px; border-collapse:collapse;">
-                <thead><tr><th style="text-align:left; padding:6px 8px;">Address (as uploaded)</th><th style="text-align:left; padding:6px 8px;">Result</th><th style="text-align:left; padding:6px 8px;">Matched iSpeedToLead lead</th></tr></thead>
-                <tbody id="rmListPreviewBody"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:16px;">
-          <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Lead push history</h3>
-          <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.4;">
-            Permanent record of every lead ever pushed to ReadyMode via the "Push clean list to ReadyMode" button above — who pushed it, when, and whether ReadyMode accepted it. Independent of ReadyMode's own optional email notifications.
-          </div>
-          <button class="btn-secondary" id="rmRefreshLeadPushesBtn" style="width:auto; padding:7px 14px; margin-bottom:10px;">Refresh</button>
-          <div id="rmLeadPushesList"><div class="empty">Loading…</div></div>
-        </div>
 
         <div class="card" style="margin-top:16px;">
           <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Automated email imports</h3>
@@ -3868,6 +3830,61 @@
         </div>
         <button class="btn-secondary" id="rmRefreshCampaignProgressBtn" style="width:auto; padding:7px 14px; margin-bottom:10px;">Refresh</button>
         <div id="rmCampaignProgressList"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+    <!-- v574: moved here from Integrations -> ReadyMode (user request).
+         These two are day-to-day campaign work, not connection setup: you
+         dedupe a list against existing leads, push the clean rows into a
+         ReadyMode Channel, then check what actually got pushed. Living
+         under Integrations put them behind a screen most staff never open
+         and next to credentials they should not be near.
+
+         NOTE: both still call the readymode-api Edge Function, which gates
+         EVERY action on Owner/Admin. So a role with the Campaigns tab but
+         not Owner/Admin will see this subtab and get 403 "Only Owner/Admin
+         can manage the ReadyMode connection" -- the same fault already
+         reported for Campaign Progress. Moving the UI does not fix that;
+         the function's gate has to be narrowed to the actions that really
+         are connection management. -->
+    <div class="csub-section" id="csubSection-readymode_upload_list" style="display:none;">
+      <div class="card" style="margin-top:16px;">
+        <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Upload list for ReadyMode — dedupe check</h3>
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.4;">
+          Upload a raw property list (DealMachine, BatchLeads, or similar export — CSV or Excel) before loading it into ReadyMode's dialer. This checks every address against leads already known to iSpeedToLead (any PrimeHome Buyers submission, any status) and flags ones that would just come back "Duplicate address/phone number" if resubmitted, so agents aren't cold-calling a property already in the pipeline. Direct upload straight into ReadyMode isn't wired up yet — their inbound Channel/TPI API access is still pending from their Integrations team — so this produces a cleaned CSV for ReadyMode's own manual upload in the meantime.
+        </div>
+        <input type="file" id="rmListUploadInput" accept=".csv,.xlsx,.xls">
+        <div class="msg" id="rmListUploadMsg"></div>
+        <div id="rmListUploadResults" style="display:none; margin-top:14px;">
+          <div class="act-stats-row" style="margin-bottom:14px;">
+            <div class="act-stat-card"><div class="act-stat-label">Rows in file</div><div class="act-stat-value" id="rmListStatTotal">0</div></div>
+            <div class="act-stat-card"><div class="act-stat-label">Duplicate addresses</div><div class="act-stat-value bad" id="rmListStatDup">0</div></div>
+            <div class="act-stat-card"><div class="act-stat-label">Clean — ready to upload</div><div class="act-stat-value good" id="rmListStatClean">0</div></div>
+          </div>
+          <button class="btn-primary" id="rmListDownloadCleanBtn" style="width:auto; padding:9px 16px;">Download clean list (CSV)</button>
+          <button class="btn-secondary" id="rmListDownloadDupBtn" style="width:auto; padding:9px 16px; margin-left:8px;">Download flagged duplicates (CSV)</button>
+          <div style="display:flex; align-items:center; gap:8px; margin-top:12px; flex-wrap:wrap;">
+            <label style="margin:0; font-size:12px; color:var(--text-dim);">Push to channel/campaign:</label>
+            <select id="rmListChannelSelect" style="min-width:240px;"><option value="">Loading channels…</option></select>
+            <button class="btn-primary edit-only" id="rmListPushBtn" style="width:auto; padding:9px 16px;">Push clean list to ReadyMode</button>
+          </div>
+          <div class="msg" id="rmListPushMsg" style="margin-top:10px;"></div>
+          <div id="rmListPushResults" style="display:none; margin-top:10px; max-height:220px; overflow-y:auto; border:1px solid var(--border-light); border-radius:8px;"></div>
+          <div style="margin-top:14px; max-height:320px; overflow-y:auto; border:1px solid var(--border-light); border-radius:8px;">
+            <table class="mono" style="width:100%; font-size:11px; border-collapse:collapse;">
+              <thead><tr><th style="text-align:left; padding:6px 8px;">Address (as uploaded)</th><th style="text-align:left; padding:6px 8px;">Result</th><th style="text-align:left; padding:6px 8px;">Matched iSpeedToLead lead</th></tr></thead>
+              <tbody id="rmListPreviewBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Lead push history</h3>
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.4;">
+          Permanent record of every lead ever pushed to ReadyMode via the "Push clean list to ReadyMode" button above — who pushed it, when, and whether ReadyMode accepted it. Independent of ReadyMode's own optional email notifications.
+        </div>
+        <button class="btn-secondary" id="rmRefreshLeadPushesBtn" style="width:auto; padding:7px 14px; margin-bottom:10px;">Refresh</button>
+        <div id="rmLeadPushesList"><div class="empty">Loading…</div></div>
       </div>
     </div>
   </div>
@@ -16146,6 +16163,7 @@ const CSUB_SECTIONS = [
   { key: 'campaign', label: 'Campaign Details' },
   { key: 'campaign_guide', label: 'Campaign Guide' },
   { key: 'campaign_progress', label: 'Campaign Progress' },
+  { key: 'readymode_upload_list', label: 'ReadyMode Upload List' },
 ];
 function csubSectionDefault(key){ return key !== 'campaign_guide'; }
 function csubEditSectionDefault(){ return false; }
@@ -25100,7 +25118,7 @@ function activateCsubSection(key){
   document.querySelectorAll('.csub-subtab-btn').forEach(b => b.classList.toggle('active', b.dataset.csubSection === key));
   document.querySelectorAll('.csub-section').forEach(s => { s.style.display = (s.id === 'csubSection-' + key) ? 'block' : 'none'; });
   const filterCard = $('csubFormFilterCard');
-  if(filterCard) filterCard.style.display = (key === 'dashboard' || key === 'campaign_guide' || key === 'campaign_progress') ? 'none' : '';
+  if(filterCard) filterCard.style.display = (key === 'dashboard' || key === 'campaign_guide' || key === 'campaign_progress' || key === 'readymode_upload_list') ? 'none' : '';
   // v366: Form/Export CSV only mean anything on Data Form/Qualification
   // (Export CSV was never wired for Campaign Management -- see its own
   // click handler comment); Status/Package only mean anything on Campaign
@@ -25113,7 +25131,7 @@ function activateCsubSection(key){
   // four wraps for it rather than letting it fall into the "else" half of
   // onCampaign's ternaries below, which would show the Data Form/
   // Qualification filter UI above a section that ignores it entirely.
-  const hideAllFilters = key === 'campaign_progress';
+  const hideAllFilters = key === 'campaign_progress' || key === 'readymode_upload_list';
   if($('csubFormFilterWrap')) $('csubFormFilterWrap').style.display = (onCampaign || hideAllFilters) ? 'none' : '';
   if($('csubExportCsvWrap')) $('csubExportCsvWrap').style.display = (onCampaign || hideAllFilters) ? 'none' : '';
   if($('csubCampaignStatusFilterWrap')) $('csubCampaignStatusFilterWrap').style.display = (onCampaign && !hideAllFilters) ? '' : 'none';
@@ -25135,6 +25153,12 @@ function activateCsubSection(key){
     initCampaignResourcesSection();
   } else if(key === 'campaign_progress'){
     loadRmCampaignProgress();
+  } else if(key === 'readymode_upload_list'){
+    // The channel dropdown on the dedupe card and the push-history list
+    // were previously filled by the Integrations tab's own bulk load, which
+    // never runs if staff go straight to Campaigns. Load both here.
+    loadRmLeadPostingChannels();
+    loadRmLeadPushes();
   }
 }
 document.querySelectorAll('.csub-subtab-btn').forEach(btn => {
