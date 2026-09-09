@@ -30251,7 +30251,7 @@ function renderIspdPreview(usedCols){
   $('ispdPreviewHead').innerHTML = `<tr><th>Match</th>${usedCols.map(c => `<th>${escapeHtml(c.header)}</th>`).join('')}</tr>`;
   $('ispdPreviewBody').innerHTML = ispdParsedRows.map(r => `
     <tr>
-      <td class="mono" style="white-space:nowrap; color:${(r.duplicateAddress || r.alreadySentPrimehome) ? 'var(--danger)' : (r.matchedLeadId ? 'var(--focus)' : 'var(--text-2)')};" title="${r.alreadySentPrimehome ? 'Already delivered to PrimeHome Buyers — this row will be skipped so the sent record is not overwritten.' : (r.duplicateAddress ? `Same address already on file as a PrimeHome Buyers lead (status: ${escapeHtml(r.duplicateAddress.status)}) — this row will be skipped, not imported.` : '')}">${r.alreadySentPrimehome ? 'Already sent — will skip' : (r.duplicateAddress ? 'Duplicate — will skip' : (r.matchedLeadId ? 'Update existing' : 'New lead'))}${r.missing.length ? ` <span style="color:var(--danger);" title="Missing: ${escapeHtml(r.missing.join(', '))}">⚠ ${r.missing.length} missing</span>` : ''}</td>
+      <td class="mono" style="white-space:nowrap; color:${(r.duplicateAddress || r.alreadySentPrimehome || r.matchedLeadId) ? 'var(--danger)' : 'var(--text-2)'};" title="${r.alreadySentPrimehome ? 'Already delivered to PrimeHome Buyers — skipped so the sent record is not overwritten.' : (r.matchedLeadId ? 'This seller is already on file. Nothing on the lead will be changed — the import only creates new leads. It will still be tagged into this import so you can find it under Imported → My last import.' : (r.duplicateAddress ? `Same address already on file as a PrimeHome Buyers lead (status: ${escapeHtml(r.duplicateAddress.status)}) — skipped, not imported.` : ''))}">${r.alreadySentPrimehome ? 'Already sent — will skip' : (r.matchedLeadId ? 'Already on file — not modified' : (r.duplicateAddress ? 'Duplicate — will skip' : 'New lead'))}${r.missing.length ? ` <span style="color:var(--danger);" title="Missing: ${escapeHtml(r.missing.join(', '))}">⚠ ${r.missing.length} missing</span>` : ''}</td>
       ${usedCols.map(c => `<td>${escapeHtml((r.__cells[c.key] || '').slice(0, 40))}</td>`).join('')}
     </tr>
   `).join('');
@@ -30303,38 +30303,47 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
   // status: a re-upload must never rewrite a review decision.
   const importBatchId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
   const importStamp = { last_import_batch: importBatchId, last_imported_at: new Date().toISOString(), last_imported_by: user.id };
-  let updated = 0, created = 0, failed = 0, skippedDuplicate = 0, skippedAlreadySent = 0;
+  let created = 0, failed = 0, skippedDuplicate = 0, skippedAlreadySent = 0, skippedExisting = 0;
   for(const r of ispdParsedRows){
     const matchedLeadId = matchedLeadIdByPhone[r.phoneNorm] || null;
-    // v561: already delivered to PrimeHome Buyers — leave it completely
-    // alone (see the parse-time lookup above for why). Checked before the
-    // duplicate-address block because it is the stronger claim: this exact
-    // lead was sent, not merely a lead at the same address.
+    // v562: this import is CREATE-ONLY for lead DATA (user request,
+    // 2026-09-09). It used to merge a matched row's fields onto the
+    // existing lead; it no longer writes a single field of lead data to an
+    // existing lead — not extra_fields, not submission_form_id, and (as
+    // before) never status or submitted_at.
+    //
+    // Why: the recording and ping screenshot are attached by hand during
+    // the per-lead review, not carried by the file, so the merge had
+    // nothing useful to add — while a re-upload of a stale export could
+    // quietly overwrite fields a reviewer had already corrected. The last
+    // run made this concrete: 320 updated, 0 created. Every write went to a
+    // lead somebody was already working, and not one new seller came in.
+    //
+    // A matched lead IS still stamped with the batch columns, and only
+    // those. That is what makes the file usable as a worklist: with a
+    // create-only import and no stamp, re-uploading this file would do
+    // literally nothing (0 created, 347 skipped) and "My last import"
+    // would come back empty — which defeats the filter it was added for.
+    // The stamp touches tracking columns exclusively, so it cannot change
+    // anything anyone reviews.
+    //
+    // Deliberately NOT stamped: leads already delivered to PrimeHome
+    // Buyers. Those are finished — surfacing them in a worklist would only
+    // invite re-sending something the buyer already has.
     if(r.alreadySentPrimehome){ skippedAlreadySent++; continue; }
+    if(matchedLeadId){
+      const { error } = await sb.from('leads').update(importStamp).eq('id', matchedLeadId);
+      if(error){ failed++; console.error('import: batch stamp failed for lead', matchedLeadId, error); }
+      else skippedExisting++;
+      continue;
+    }
     // Hard-blocked at parse time (see r.duplicateAddress above) — same
     // address already exists as a PrimeHome Buyers lead under a different
     // phone number, so this would otherwise create a true duplicate.
-    if(!matchedLeadId && r.duplicateAddress){ skippedDuplicate++; continue; }
+    if(r.duplicateAddress){ skippedDuplicate++; continue; }
     const extraFields = {};
     Object.entries(r.__cells).forEach(([k, v]) => { if(!k.startsWith('__') && v) extraFields[k] = v; });
-    if(matchedLeadId){
-      // Merge onto whatever's already there rather than overwrite — a row
-      // only filling in Ping ID + Call recording link shouldn't blank out
-      // fields an admin already entered one-by-one in the review modal.
-      const { data: existingLead } = await sb.from('leads').select('extra_fields, submission_form_id').eq('id', matchedLeadId).maybeSingle();
-      const merged = { ...(existingLead && existingLead.extra_fields ? existingLead.extra_fields : {}), ...extraFields };
-      const updatePayload = { extra_fields: merged, ...importStamp };
-      // v88: only default the campaign if this lead doesn't already have
-      // one (submission_form_id, not task_id — see the v88 changelog for
-      // why campaigns moved off tasks entirely) — an existing lead that
-      // was already tagged (e.g. submitted by an agent through a real
-      // Submission Form, then later matched here by phone to attach a
-      // recording/ping id) keeps its real campaign rather than being
-      // silently relabeled PrimeHome Buyers.
-      if(existingLead && !existingLead.submission_form_id && defaultCampaignFormId) updatePayload.submission_form_id = defaultCampaignFormId;
-      const { error } = await sb.from('leads').update(updatePayload).eq('id', matchedLeadId);
-      if(error) failed++; else updated++;
-    } else {
+    {
       // No existing lead for this phone, in the DB or elsewhere in this
       // batch — an outside/purchased list row. Attributed to the importing
       // admin as user_id (leads.user_id is NOT NULL and RLS requires
@@ -30366,9 +30375,9 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
       if(error) failed++; else { created++; matchedLeadIdByPhone[r.phoneNorm] = newLead.id; }
     }
   }
-  logActivity('lead.csv_import', null, null, `CSV/Excel import: ${updated} updated, ${created} created${failed ? `, ${failed} failed` : ''}${skippedDuplicate ? `, ${skippedDuplicate} skipped as duplicate address` : ''}${skippedAlreadySent ? `, ${skippedAlreadySent} skipped as already sent to PrimeHome Buyers` : ''} (batch ${importBatchId})${!defaultCampaignFormId ? ' — WARNING: PrimeHome Buyers campaign could not be resolved, leads went in untagged' : ''}`);
-  msg.textContent = `Done — ${updated} lead(s) updated, ${created} created${failed ? `, ${failed} failed` : ''}${skippedDuplicate ? `, ${skippedDuplicate} skipped as a duplicate of an existing PrimeHome Buyers lead` : ''}${skippedAlreadySent ? `, ${skippedAlreadySent} skipped because they were already sent to PrimeHome Buyers` : ''}.`
-    + ((updated + created) ? ` Find them with the Imported filter → "My last import".` : '')
+  logActivity('lead.csv_import', null, null, `CSV/Excel import (create-only, existing leads tagged not modified): ${created} created${failed ? `, ${failed} failed` : ''}${skippedExisting ? `, ${skippedExisting} already on file (tagged, unmodified)` : ''}${skippedAlreadySent ? `, ${skippedAlreadySent} skipped as already sent to PrimeHome Buyers` : ''}${skippedDuplicate ? `, ${skippedDuplicate} skipped as duplicate address` : ''} (batch ${importBatchId})${!defaultCampaignFormId ? ' — WARNING: PrimeHome Buyers campaign could not be resolved, leads went in untagged' : ''}`);
+  msg.textContent = `Done — ${created} new lead(s) created${failed ? `, ${failed} failed` : ''}${skippedExisting ? `, ${skippedExisting} already on file (nothing changed on them)` : ''}${skippedAlreadySent ? `, ${skippedAlreadySent} skipped (already sent to PrimeHome Buyers)` : ''}${skippedDuplicate ? `, ${skippedDuplicate} skipped (duplicate address)` : ''}.`
+    + ((created + skippedExisting) ? ` Find all ${created + skippedExisting} with the Imported filter → "My last import".` : '')
     + (!defaultCampaignFormId ? ' Warning: could not resolve the PrimeHome Buyers campaign — these leads were NOT tagged and may not show under Lead Reviewing. Try the import again, or check Submission Forms Creator.' : '');
   msg.className = (failed || !defaultCampaignFormId) ? 'msg error' : 'msg';
   msg.style.display = 'block';
