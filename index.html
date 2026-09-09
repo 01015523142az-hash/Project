@@ -25159,6 +25159,13 @@ function activateCsubSection(key){
     // never runs if staff go straight to Campaigns. Load both here.
     loadRmLeadPostingChannels();
     loadRmLeadPushes();
+    // v576: "Push clean list to ReadyMode" is marked .edit-only, but that
+    // class does nothing unless someone applies the gating -- and this was
+    // the only csub section that never called it, so every view-only role
+    // saw a live Push button that just 403'd from readymode-api. The
+    // backend refuses it either way (readymode-api's own v575 gate); this
+    // makes the UI say so up front instead of after the click.
+    applyCsubSectionEditGating('readymode_upload_list');
   }
 }
 document.querySelectorAll('.csub-subtab-btn').forEach(btn => {
