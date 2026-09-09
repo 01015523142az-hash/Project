@@ -2790,7 +2790,7 @@
             <div style="min-width:200px;"><label>Campaign Name</label><select id="leadsIspdCampaignFilter"><option value="">All campaigns</option></select></div>
             <div style="flex:0; min-width:150px;"><label>Status</label><select id="leadsIspdStatusFilter"><option value="">All statuses</option><option value="pending">Pending</option><option value="accepted">Accepted (Purchased)</option><option value="rejected">Rejected</option><option value="refund">Refund</option></select></div>
             <div style="flex:0; min-width:150px;"><label>PrimeHome Buyers</label><select id="leadsIspdSentFilter"><option value="">Sent or not sent</option><option value="sent">Sent</option><option value="not_sent">Not sent</option></select></div>
-            <div style="flex:0; min-width:170px;"><label>Sent via</label><select id="leadsIspdSentChannelFilter"><option value="">Any channel</option><option value="gyhomes">Sent to gyhomes</option><option value="primehome">Sent to PrimeHome Buyers</option></select></div>
+            <div style="flex:0; min-width:170px;"><label>Sent via</label><select id="leadsIspdSentChannelFilter" title="How the lead reached iSpeedToLead. &quot;Postback only&quot; means iSpeedToLead confirmed delivery but this system holds no send record — the postback does not say which channel it came through."><option value="">Any channel</option><option value="gyhomes">Sent to gyhomes</option><option value="primehome">Sent to PrimeHome Buyers</option><option value="postback">Delivered — postback only</option></select></div>
             <div style="min-width:170px;"><label>Sent by</label><select id="leadsIspdSentByFilter"><option value="">Anyone</option></select></div>
             <div><label>Sent from</label><input type="date" id="leadsIspdSentDateFromFilter"></div>
             <div><label>Sent to</label><input type="date" id="leadsIspdSentDateToFilter"></div>
@@ -22437,6 +22437,30 @@ function isIspdRefundLead(r, postback){
   return r.status === 'rejected' && !!p && p.mapped_status === 'rejected' && String(p.status_raw || '').toLowerCase().includes('refund');
 }
 
+// v564: a lead can reach iSpeedToLead without this system holding a send
+// record for it — most often a backfilled postback matched by phone to a
+// lead that was created afterwards. A postback is proof of delivery, so
+// such a lead must not read as "Not sent".
+//
+// What it is NOT is proof of a CHANNEL. Both outbound paths submit into
+// iSpeedToLead — gyhomes via the coocalls pre-qualification form,
+// PrimeHome Buyers via their JSON API — so both produce postbacks.
+// Measured live before writing this: of 1,120 leads carrying a postback,
+// 665 had a gyhomes send and 447 had a PrimeHome one. Attributing a
+// postback to gyhomes would therefore have mislabelled 447 PrimeHome
+// deliveries, and that attribution is what the Sent via filter, the
+// gyhomes stat card and the per-agent scorecards all read. So this stays
+// deliberately channel-agnostic: it reports "delivered", never "via X".
+function ispdHasPostbackDelivery(r){
+  return !!leadsInboundPostbackByLeadId[r.id];
+}
+// True only when the postback is the ONLY evidence of delivery — i.e.
+// there is no send record of our own. That is the case worth labelling
+// differently, since everything else already says "Sent <date>".
+function ispdPostbackOnlyDelivery(r){
+  return ispdHasPostbackDelivery(r) && !(leadsIspeedtoleadSendByLeadId[r.id] || {}).success;
+}
+
 // ---------- Leads tab: sub-section navigation + per-section gating (v71) ----------
 // Same 2-level pattern as User Management (initUserManagementTab/
 // activateUmSection/applyUmSectionEditGating) — see those for the
@@ -27660,7 +27684,7 @@ function renderLeadsQueueTable(){
     const extraFieldsText = extraFieldsLabel(r.task_id, r.submission_form_id, r.extra_fields);
     const viaIspeedtolead = ispeedtoleadByLeadId[r.id] || null;
     const sendStatus = leadsIspeedtoleadSendByLeadId[r.id] || null;
-    const sendStatusLabel = sendStatus ? (sendStatus.success ? `Sent ${new Date(sendStatus.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) })}` : 'Send failed') : 'Not sent';
+    const sendStatusLabel = sendStatus ? (sendStatus.success ? `Sent ${new Date(sendStatus.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) })}` : 'Send failed') : (ispdPostbackOnlyDelivery(r) ? 'Delivered (postback)' : 'Not sent');
     return {
       agent: agentName(r.user_id), submitted: submittedLabel, count: r.count,
       sellerInvestor: r.seller_investor_name || '—', phone: r.seller_phone || '', extraFieldsText,
@@ -27810,13 +27834,22 @@ function renderIspdReviewTable(){
   else if(ispdStatusFilterValue === 'rejected') filtered = filtered.filter(r => !isIspdRefundLead(r));
   // v107: sent/not-sent filter — applied after leadsRowMatchesFilters since
   // it reads from leadsIspeedtoleadSendByLeadId, not a plain lead column.
-  if(leadsIspdFilters.sent === 'sent') filtered = filtered.filter(r => (leadsIspeedtoleadSendByLeadId[r.id] || {}).success);
-  else if(leadsIspdFilters.sent === 'not_sent') filtered = filtered.filter(r => !(leadsIspeedtoleadSendByLeadId[r.id] || {}).success);
+  // v564: a postback counts as delivery here too. Without this a lead that
+  // iSpeedToLead has already confirmed would sit under "Not sent" and get
+  // swept into a bulk re-send — sending the buyer something they already
+  // have. See ispdHasPostbackDelivery() for why it is never attributed to
+  // a channel.
+  if(leadsIspdFilters.sent === 'sent') filtered = filtered.filter(r => (leadsIspeedtoleadSendByLeadId[r.id] || {}).success || ispdHasPostbackDelivery(r));
+  else if(leadsIspdFilters.sent === 'not_sent') filtered = filtered.filter(r => !(leadsIspeedtoleadSendByLeadId[r.id] || {}).success && !ispdHasPostbackDelivery(r));
   // v471: "Sent via" — separate from the sent/not-sent filter above,
   // channel-specific (leadsGyhomesSendByLeadId/leadsPrimehomeSendByLeadId
   // are a clean partition of leadsIspeedtoleadSendByLeadId by channel).
   if(leadsIspdFilters.sentChannel === 'gyhomes') filtered = filtered.filter(r => (leadsGyhomesSendByLeadId[r.id] || {}).success);
   else if(leadsIspdFilters.sentChannel === 'primehome') filtered = filtered.filter(r => (leadsPrimehomeSendByLeadId[r.id] || {}).success);
+  // v564: delivery confirmed by iSpeedToLead with no send record of our
+  // own. Deliberately a THIRD state rather than folded into either
+  // channel — a postback does not say which one it came through.
+  else if(leadsIspdFilters.sentChannel === 'postback') filtered = filtered.filter(r => ispdPostbackOnlyDelivery(r));
   // v260: "Sent by" — same reasoning as the sent/not-sent filter above,
   // applied after leadsRowMatchesFilters since it also reads from
   // leadsIspeedtoleadSendByLeadId rather than a plain lead column.
@@ -27920,7 +27953,7 @@ function renderIspdReviewTable(){
     // same way a plain rejection's does, just relabeled per isRefund.
     const rejectReason = r.status === 'rejected' && r.review_note ? r.review_note : '';
     const sendStatus = leadsIspeedtoleadSendByLeadId[r.id] || null;
-    const sendStatusLabel = sendStatus ? (sendStatus.success ? `Sent ${new Date(sendStatus.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) })}` : 'Send failed') : 'Not sent';
+    const sendStatusLabel = sendStatus ? (sendStatus.success ? `Sent ${new Date(sendStatus.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) })}` : 'Send failed') : (ispdPostbackOnlyDelivery(r) ? 'Delivered (postback)' : 'Not sent');
     // v140: self-accept restriction removed — see the matching comment in
     // the general Queue Review table above.
     const canEditThisLead = true;
