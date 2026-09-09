@@ -18980,21 +18980,40 @@ if(rmRefreshLeadPushesBtn) rmRefreshLeadPushesBtn.addEventListener('click', () =
 // call-result events (campaign_progress action) -- distinct from
 // ReadyMode's own Lead File "Leads remaining/Health/Round" screen, which
 // isn't reachable via their API (confirmed by ReadyMode's Integrations
-// team -- see this file's header comment). "Reached" counts distinct
-// phone numbers with at least one logged call event, not total call
-// events, since a lead can be dialed more than once.
+// team -- see this file's header comment).
+//
+// v579 LABELLING FIX (reported live, 2026-09-09). Two of these numbers were
+// read as something they are not:
+//   * "Reached" counts distinct phones with at least one call event, and
+//     ReadyMode only posts an event when a call gets a DISPOSITION. A dial
+//     that rings out logs nothing, so "Not yet reached" was read as "never
+//     dialed" when ReadyMode's own file showed avg 4.41 calls per lead. It
+//     means "no dispositioned call yet". Renamed to say exactly that.
+//   * "Reached" also includes voicemail-only leads (468 of 1,931 on one real
+//     campaign), so it overstates human contact. "Spoke to someone" is now
+//     shown alongside it, computed from dispositions in readymode-api.
+
 function renderRmCampaignProgressCard(c, opts){
   opts = opts || {};
   const dispositionBadges = Object.entries(c.dispositionCounts || {}).sort((a, b) => b[1] - a[1]).slice(0, 6);
   const reachPct = c.leadsPushed ? Math.round((c.leadsReached / c.leadsPushed) * 100) : null;
+  // spokeToSomeone arrives from readymode-api v87 onward. Render an em dash
+  // rather than "undefined" if a cached older response is still in play.
+  const spokePct = (c.leadsPushed && typeof c.spokeToSomeone === 'number')
+    ? Math.round((c.spokeToSomeone / c.leadsPushed) * 100) : null;
+  const spokeStr = typeof c.spokeToSomeone === 'number'
+    ? `${c.spokeToSomeone}${spokePct !== null ? ` (${spokePct}%)` : ''}`
+    : '—';
   const statCards = opts.uncategorized
-    ? `<div class="act-stat-card"><div class="act-stat-label">Distinct numbers reached</div><div class="act-stat-value good">${c.leadsReached}</div></div>
+    ? `<div class="act-stat-card"><div class="act-stat-label">Got a call result</div><div class="act-stat-value good">${c.leadsReached}</div></div>
+       <div class="act-stat-card"><div class="act-stat-label">Spoke to someone</div><div class="act-stat-value good">${spokeStr}</div></div>
        <div class="act-stat-card"><div class="act-stat-label">Total call events</div><div class="act-stat-value">${c.totalCallEvents}</div></div>
-       <div class="act-stat-card"><div class="act-stat-label">Appointments set</div><div class="act-stat-value good">${c.appointmentsSet}</div></div>`
+       <div class="act-stat-card"><div class="act-stat-label">Appointments</div><div class="act-stat-value good">${c.appointmentsSet}</div></div>`
     : `<div class="act-stat-card"><div class="act-stat-label">Leads pushed</div><div class="act-stat-value">${c.leadsPushed}</div></div>
-       <div class="act-stat-card"><div class="act-stat-label">Reached (distinct)</div><div class="act-stat-value good">${c.leadsReached}${reachPct !== null ? ` (${reachPct}%)` : ''}</div></div>
-       <div class="act-stat-card"><div class="act-stat-label">Not yet reached</div><div class="act-stat-value">${c.leadsNotYetReached}</div></div>
-       <div class="act-stat-card"><div class="act-stat-label">Appointments set</div><div class="act-stat-value good">${c.appointmentsSet}</div></div>`;
+       <div class="act-stat-card"><div class="act-stat-label">Got a call result</div><div class="act-stat-value good">${c.leadsReached}${reachPct !== null ? ` (${reachPct}%)` : ''}</div></div>
+       <div class="act-stat-card"><div class="act-stat-label">Spoke to someone</div><div class="act-stat-value good">${spokeStr}</div></div>
+       <div class="act-stat-card"><div class="act-stat-label">No dispositioned call yet</div><div class="act-stat-value">${c.leadsNotYetReached}</div></div>
+       <div class="act-stat-card"><div class="act-stat-label">Appointments</div><div class="act-stat-value good">${c.appointmentsSet}</div></div>`;
   return `
     <div style="border:1px solid var(--border-light); border-radius:10px; padding:14px; margin-bottom:12px; ${opts.uncategorized ? 'border-style:dashed;' : ''}">
       <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px;">
