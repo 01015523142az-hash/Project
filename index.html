@@ -25165,7 +25165,14 @@ function activateCsubSection(key){
     // saw a live Push button that just 403'd from readymode-api. The
     // backend refuses it either way (readymode-api's own v575 gate); this
     // makes the UI say so up front instead of after the click.
-    applyCsubSectionEditGating('readymode_upload_list');
+    // Owner/Admin are never section-gated: readymode-api allows them
+    // unconditionally (isOwnerAdmin), and `admin` is NOT is_protected, so
+    // canEditCsubSection() returns false for any section the admin role has
+    // no explicit grant on -- which would grey the button out for real
+    // admins and make the UI disagree with the backend, the exact fault
+    // v575 fixed on the other side. Same escape hatch csubNewCampaignBtn
+    // already uses.
+    if(!(myIsOwner || myRole === 'admin')) applyCsubSectionEditGating('readymode_upload_list');
   }
 }
 document.querySelectorAll('.csub-subtab-btn').forEach(btn => {
