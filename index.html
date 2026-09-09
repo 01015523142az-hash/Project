@@ -2790,7 +2790,7 @@
             <div style="min-width:200px;"><label>Campaign Name</label><select id="leadsIspdCampaignFilter"><option value="">All campaigns</option></select></div>
             <div style="flex:0; min-width:150px;"><label>Status</label><select id="leadsIspdStatusFilter"><option value="">All statuses</option><option value="pending">Pending</option><option value="accepted">Accepted (Purchased)</option><option value="rejected">Rejected</option><option value="refund">Refund</option></select></div>
             <div style="flex:0; min-width:150px;"><label>PrimeHome Buyers</label><select id="leadsIspdSentFilter"><option value="">Sent or not sent</option><option value="sent">Sent</option><option value="not_sent">Not sent</option></select></div>
-            <div style="flex:0; min-width:170px;"><label>Sent via</label><select id="leadsIspdSentChannelFilter" title="How the lead reached iSpeedToLead. &quot;Postback only&quot; means iSpeedToLead confirmed delivery but this system holds no send record — the postback does not say which channel it came through."><option value="">Any channel</option><option value="gyhomes">Sent to gyhomes</option><option value="primehome">Sent to PrimeHome Buyers</option><option value="postback">Delivered — postback only</option></select></div>
+            <div style="flex:0; min-width:170px;"><label>Sent via</label><select id="leadsIspdSentChannelFilter" title="How the lead reached iSpeedToLead. &quot;Postback only&quot; means iSpeedToLead confirmed delivery but this system holds no send record — the postback does not say which channel it came through."><option value="">Any channel</option><option value="gyhomes">Sent to gyhomes</option><option value="primehome">Sent to PrimeHome Buyers</option><option value="postback">Delivered — postback only</option><option value="manual">Closed by staff — not sendable</option></select></div>
             <div style="min-width:170px;"><label>Sent by</label><select id="leadsIspdSentByFilter"><option value="">Anyone</option></select></div>
             <div><label>Sent from</label><input type="date" id="leadsIspdSentDateFromFilter"></div>
             <div><label>Sent to</label><input type="date" id="leadsIspdSentDateToFilter"></div>
@@ -22466,6 +22466,16 @@ function isIspdRefundLead(r, postback){
 // 08-14/08-15 — the postback predates the lead record, so it cannot be
 // reporting on it. Counting them would have marked exactly 7 leads as
 // delivered that were never sent.
+// v568: a staff assertion that this lead is closed and must not be sent —
+// e.g. rejected on the call because the property had already sold, so it
+// was never submitted and no provider signal exists. Deliberately a
+// separate field from the postback signal, and never written into
+// ispeedtolead_postbacks: that table records what iSpeedToLead actually
+// said, and its amounts feed Finance. A human decision must stay
+// distinguishable from a provider response.
+function ispdManuallyDelivered(r){
+  return !!r.manual_delivery_at;
+}
 function ispdHasPostbackDelivery(r){
   const p = leadsInboundPostbackByLeadId[r.id];
   return !!p && p.matched_via !== 'phone_ineligible';
@@ -27078,7 +27088,9 @@ async function loadLeads(){
   // cause a row to be skipped or double-counted at a page boundary (see
   // v484's own fix for this exact class of bug in Time Management). Error
   // handling/surfacing (console + the visible banner) is unchanged.
-  const LEADS_SELECT_COLS = 'id, user_id, task_id, submission_form_id, count, submitted_at, status, seller_investor_name, seller_phone, extra_fields, review_note, imported, ticket_stage, desouky_chat_message_id, istl_export_status, istl_export_status_at';
+  // v568: manual_delivery_at carries a staff "this is closed, never send"
+  // decision — see ispdManuallyDelivered().
+  const LEADS_SELECT_COLS = 'id, user_id, task_id, submission_form_id, count, submitted_at, status, seller_investor_name, seller_phone, extra_fields, review_note, imported, ticket_stage, desouky_chat_message_id, istl_export_status, istl_export_status_at, manual_delivery_at, manual_delivery_note';
   const LEADS_PAGE_SIZE = 1000;
   const rows = [];
   let leadsFetchError = null;
@@ -27704,7 +27716,7 @@ function renderLeadsQueueTable(){
     const extraFieldsText = extraFieldsLabel(r.task_id, r.submission_form_id, r.extra_fields);
     const viaIspeedtolead = ispeedtoleadByLeadId[r.id] || null;
     const sendStatus = leadsIspeedtoleadSendByLeadId[r.id] || null;
-    const sendStatusLabel = sendStatus ? (sendStatus.success ? `Sent ${new Date(sendStatus.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) })}` : 'Send failed') : (ispdPostbackOnlyDelivery(r) ? 'Delivered (postback)' : 'Not sent');
+    const sendStatusLabel = sendStatus ? (sendStatus.success ? `Sent ${new Date(sendStatus.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) })}` : 'Send failed') : (ispdPostbackOnlyDelivery(r) ? 'Delivered (postback)' : (ispdManuallyDelivered(r) ? 'Closed by staff' : 'Not sent'));
     return {
       agent: agentName(r.user_id), submitted: submittedLabel, count: r.count,
       sellerInvestor: r.seller_investor_name || '—', phone: r.seller_phone || '', extraFieldsText,
@@ -27859,8 +27871,8 @@ function renderIspdReviewTable(){
   // swept into a bulk re-send — sending the buyer something they already
   // have. See ispdHasPostbackDelivery() for why it is never attributed to
   // a channel.
-  if(leadsIspdFilters.sent === 'sent') filtered = filtered.filter(r => (leadsIspeedtoleadSendByLeadId[r.id] || {}).success || ispdHasPostbackDelivery(r));
-  else if(leadsIspdFilters.sent === 'not_sent') filtered = filtered.filter(r => !(leadsIspeedtoleadSendByLeadId[r.id] || {}).success && !ispdHasPostbackDelivery(r));
+  if(leadsIspdFilters.sent === 'sent') filtered = filtered.filter(r => (leadsIspeedtoleadSendByLeadId[r.id] || {}).success || ispdHasPostbackDelivery(r) || ispdManuallyDelivered(r));
+  else if(leadsIspdFilters.sent === 'not_sent') filtered = filtered.filter(r => !(leadsIspeedtoleadSendByLeadId[r.id] || {}).success && !ispdHasPostbackDelivery(r) && !ispdManuallyDelivered(r));
   // v471: "Sent via" — separate from the sent/not-sent filter above,
   // channel-specific (leadsGyhomesSendByLeadId/leadsPrimehomeSendByLeadId
   // are a clean partition of leadsIspeedtoleadSendByLeadId by channel).
@@ -27870,6 +27882,8 @@ function renderIspdReviewTable(){
   // own. Deliberately a THIRD state rather than folded into either
   // channel — a postback does not say which one it came through.
   else if(leadsIspdFilters.sentChannel === 'postback') filtered = filtered.filter(r => ispdPostbackOnlyDelivery(r));
+  // v568: closed by a person, not by any provider signal.
+  else if(leadsIspdFilters.sentChannel === 'manual') filtered = filtered.filter(r => ispdManuallyDelivered(r) && !(leadsIspeedtoleadSendByLeadId[r.id] || {}).success);
   // v260: "Sent by" — same reasoning as the sent/not-sent filter above,
   // applied after leadsRowMatchesFilters since it also reads from
   // leadsIspeedtoleadSendByLeadId rather than a plain lead column.
@@ -27973,7 +27987,7 @@ function renderIspdReviewTable(){
     // same way a plain rejection's does, just relabeled per isRefund.
     const rejectReason = r.status === 'rejected' && r.review_note ? r.review_note : '';
     const sendStatus = leadsIspeedtoleadSendByLeadId[r.id] || null;
-    const sendStatusLabel = sendStatus ? (sendStatus.success ? `Sent ${new Date(sendStatus.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) })}` : 'Send failed') : (ispdPostbackOnlyDelivery(r) ? 'Delivered (postback)' : 'Not sent');
+    const sendStatusLabel = sendStatus ? (sendStatus.success ? `Sent ${new Date(sendStatus.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) })}` : 'Send failed') : (ispdPostbackOnlyDelivery(r) ? 'Delivered (postback)' : (ispdManuallyDelivered(r) ? 'Closed by staff' : 'Not sent'));
     // v140: self-accept restriction removed — see the matching comment in
     // the general Queue Review table above.
     const canEditThisLead = true;
