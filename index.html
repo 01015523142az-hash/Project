@@ -30290,16 +30290,38 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
     // comparison can be done on normalized keys client-side. An exact-string
     // `.in()` (what this used to do) cannot match across formatting
     // differences, which is precisely where duplicates slipped through.
+    // BUG FIX (2026-09-09, caught live after it did real damage): this block
+    // used to be gated on `leadsPrimeHomeBuyersFormId` and, when that was
+    // null or the fetch errored, simply carried on with an EMPTY map — so
+    // every row looked new and the whole file imported as duplicates. Two
+    // consecutive uploads created 341 leads each, 682 duplicates, because
+    // that module-level variable is only ever set inside loadLeads(). The
+    // campaign tagging right below never had the problem: it calls
+    // getIspdDefaultCampaignFormId(), which falls back to its own query.
+    // Hence the tell-tale signature — every duplicate correctly tagged.
+    //
+    // Two changes. Resolve the id the robust way, and FAIL CLOSED: if the
+    // dedupe set cannot be built for any reason, refuse to import at all.
+    // An import that cannot deduplicate is worse than no import.
+    const dedupeFormId = await getIspdDefaultCampaignFormId();
     const existingByAddrKey = {};
-    if(leadsPrimeHomeBuyersFormId){
+    let dedupeReady = false;
+    if(dedupeFormId){
       const PAGE = 1000;
+      let fetchOk = true;
       for(let from = 0; ; from += PAGE){
+        // Deliberately the same plain select this has always used. Selecting
+        // only the address via a jsonb path would be lighter, but that
+        // syntax is unverified here and this block now fails CLOSED — an
+        // untested select that errored would block every import instead of
+        // just skipping dedupe. Payload was never the cause anyway
+        // (~2,800 leads, 2.4MB total); the null form id was.
         const { data: addrLeads, error: addrErr } = await sb.from('leads')
           .select('id, extra_fields, status, submitted_at')
-          .eq('submission_form_id', leadsPrimeHomeBuyersFormId)
+          .eq('submission_form_id', dedupeFormId)
           .order('submitted_at', { ascending: false })
           .range(from, from + PAGE - 1);
-        if(addrErr){ console.error('address-dedupe fetch failed:', addrErr); break; }
+        if(addrErr){ console.error('address-dedupe fetch failed:', addrErr); fetchOk = false; break; }
         if(!addrLeads || !addrLeads.length) break;
         addrLeads.forEach(l => {
           const k = ispdAddrKey((l.extra_fields || {}).form_address);
@@ -30307,6 +30329,17 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
         });
         if(addrLeads.length < PAGE) break;
       }
+      dedupeReady = fetchOk;
+    }
+    if(!dedupeReady){
+      msg.innerHTML = '<div><strong>Import blocked — the duplicate check could not run.</strong></div>'
+        + '<div style="margin-top:6px;">Nothing was imported. Without it every row would be created as a new lead, even the ones already on file.</div>'
+        + '<div style="margin-top:6px;">Open Leads Queue Review → PrimeHome Buyers once so the campaign loads, then try the upload again. If it keeps failing, check the browser console.</div>';
+      msg.className = 'msg error';
+      msg.style.display = 'block';
+      $('ispdUploadPreviewWrap').style.display = 'none';
+      ispdParsedRows = [];
+      return;
     }
 
     // v567: split a multi-address cell BEFORE anything else reads the
