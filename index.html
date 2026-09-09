@@ -29973,11 +29973,25 @@ function ispdConvertRawImport(headerRow, dataRows){
     const goal = ispdRawMapGoal(reason);
     const listed = ispdRawMapListed(notes);
 
-    // record_link only takes one URL — extras are preserved in
-    // Conversation notes instead of silently dropped.
+    // v: the raw import no longer fills in "Call recording link" (user
+    // request, 2026-09-08). It used to take the first URL out of the
+    // source's Call Recording column and put it straight into record_link.
+    //
+    // Deliberately NOT destructive: every link found is still written into
+    // Conversation notes, so nothing from the source file is lost and the
+    // recording can be attached by hand during the per-lead review step --
+    // the same step that already exists for the fields this converter
+    // leaves blank on purpose (Ping ID, Years owned, Type of house).
+    //
+    // Worth knowing: gyhomes' field 120 is a REQUIRED call-recording
+    // upload, so an imported lead now has no recording until someone adds
+    // one, and "Send to gyhomes" will refuse it until they do. That is the
+    // intended trade -- an imported link nobody has checked is worse than
+    // an obviously-empty field -- but it is why the count of gyhomes-ready
+    // imported leads will drop.
     const recLinks = recordingRaw.split(/[,\s]+/).map(u => u.trim()).filter(u => u.startsWith('http'));
-    const recordLink = recLinks[0] || '';
-    const extraLinksNote = recLinks.length > 1 ? `Additional recording link(s): ${recLinks.slice(1).join(', ')}\n\n` : '';
+    const recordLink = '';
+    const extraLinksNote = recLinks.length ? `Recording link(s) from the import file: ${recLinks.join(', ')}\n\n` : '';
 
     const emailClean = ['n/a', 'na', ''].includes(email.toLowerCase()) ? '' : email;
 
@@ -30443,10 +30457,32 @@ const ISPEEDTOLEAD_FIELD_GROUPS = [
 // about their API knows or cares whether the value is a hand-typed id or
 // a URL — so "attach a file" here just means: upload it somewhere with a
 // stable public address, then send THAT address as the field's value.
+// BUG FIX (2026-09-08): ping_id was accept:'*/*' on the theory that a
+// "ping" proof could take any form. In practice it sits directly next to
+// the record_link (audio) picker, and 140 of the 1,950 leads that have a
+// ping_id got an .mp3 put in it -- an agent picking the recording twice.
+// Those are not a cosmetic problem: gyhomes' field 127 is an image upload,
+// so every one of them fails the send with "File type is not allowed"
+// (confirmed live -- see the 2026-09-04 failures in
+// ispeedtolead_submissions). The field is labelled and used as the dialer
+// SCREENSHOT everywhere it is consumed, so constrain the picker to images
+// and stop the mistake at the point it is made.
+const ISPEEDTOLEAD_PING_ID_ACCEPT = 'image/*';
 const ISPEEDTOLEAD_ATTACHMENT_FIELDS = {
   record_link: { accept: 'audio/*,video/*' },
-  ping_id: { accept: '*/*' }, // whatever proof/log/screenshot form a "ping" takes for this workflow
+  ping_id: { accept: ISPEEDTOLEAD_PING_ID_ACCEPT },
 };
+
+// `accept` only filters the file picker's default view -- it is trivially
+// bypassed by switching the dialog to "All files", and does nothing for a
+// pasted URL. This is the actual check.
+const ISPEEDTOLEAD_IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|bmp|heic|heif)(\?|#|$)/i;
+function ispdPingIdLooksLikeImage(value){
+  const v = String(value || '').trim();
+  if(!v) return true;                       // empty is a separate problem, not this one
+  if(!/^https?:\/\//i.test(v)) return true; // a hand-typed id, not a file -- not ours to judge
+  return ISPEEDTOLEAD_IMAGE_EXT_RE.test(v);
+}
 
 function ispeedtoleadFieldInputHtml(f, existingValue){
   const req = f.required ? ' <span style="color:var(--danger);">*</span>' : '';
@@ -32270,6 +32306,18 @@ $('gyhomesModalSendBtn').addEventListener('click', async () => {
     msg.style.display = 'block';
     return;
   }
+  // BUG FIX (2026-09-08): gyhomes' field 127 is an IMAGE upload. A lead
+  // whose Ping ID is an .mp3 (140 of them exist -- an agent picking the
+  // recording twice, see ISPEEDTOLEAD_ATTACHMENT_FIELDS) got all the way
+  // to the backend and came back with either "File type is not allowed"
+  // or, worse, WPForms' generic "This field is required" on BOTH upload
+  // fields -- neither of which tells anyone what to actually fix. Catch it
+  // here and say the real thing.
+  if(!ispdPingIdLooksLikeImage(gyhomesScreenshotUrl)){
+    msg.textContent = "This lead's Ping ID attachment is not an image — gyhomes only accepts a screenshot there, so the send would be rejected. It looks like the call recording was attached twice. Replace the Ping ID with the dialer screenshot in Send to PrimeHome Buyers, then try again.";
+    msg.style.display = 'block';
+    return;
+  }
   const sendBtn = $('gyhomesModalSendBtn');
   sendBtn.disabled = true;
   sendBtn.textContent = 'Sending…';
@@ -32348,6 +32396,14 @@ $('gyhomesModalSendBtn').addEventListener('click', async () => {
       const rawMsg = (data && data.error) || (error && error.message) || 'Failed to send — check the function logs.';
       msg.textContent = typeof rawMsg === 'string' ? rawMsg : JSON.stringify(rawMsg);
       msg.style.display = 'block';
+      // BUG FIX: the history panel was refreshed ONLY on success, so a
+      // failed send left it reading "No send attempts yet" even though the
+      // backend had just recorded the failed attempt in
+      // ispeedtolead_submissions. That is precisely when someone is
+      // looking at this panel — a lead with three failures could show a
+      // scary error above an empty history, making it look like nothing
+      // had ever been tried. Refresh here too.
+      await refreshGyhomesModalHistory(gyhomesModalLead.id);
     }
   } catch(e){
     msg.textContent = e.message || 'Failed to send.';
