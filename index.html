@@ -22451,8 +22451,24 @@ function isIspdRefundLead(r, postback){
 // deliveries, and that attribution is what the Sent via filter, the
 // gyhomes stat card and the per-agent scorecards all read. So this stays
 // deliberately channel-agnostic: it reports "delivered", never "via X".
+// CORRECTNESS FIX (caught while auditing the 8 postback-only leads):
+// a bare "a postback exists" test is NOT delivery evidence. matched_via
+// 'phone_ineligible' is the postback function's own reference-only path
+// (see ispeedtolead-postback's `referenceOnly`): the phone matched a lead
+// that had ALREADY been accepted/rejected, so nothing was applied and
+// `applied` stays false. The dashboard's own Postbacks table labels those
+// "phone (already decided) — most likely iSpeedToLead resold the same lead
+// a second time."
+//
+// Those postbacks are about some other submission that happens to share a
+// phone number. Live proof: 6 of the 7 affected leads were created on
+// 08-16 21:37 in one bulk import, while "their" postbacks arrived on
+// 08-14/08-15 — the postback predates the lead record, so it cannot be
+// reporting on it. Counting them would have marked exactly 7 leads as
+// delivered that were never sent.
 function ispdHasPostbackDelivery(r){
-  return !!leadsInboundPostbackByLeadId[r.id];
+  const p = leadsInboundPostbackByLeadId[r.id];
+  return !!p && p.matched_via !== 'phone_ineligible';
 }
 // True only when the postback is the ONLY evidence of delivery — i.e.
 // there is no send record of our own. That is the case worth labelling
@@ -27140,7 +27156,11 @@ async function loadLeads(){
 
   const ispeedtoleadByLeadId = {};
   if(leadIds.length){
-    const postbacks = await fetchInChunks('ispeedtolead_postbacks', 'matched_lead_id, mapped_status, status_raw, reason, amount, received_at', 'matched_lead_id', leadIds, 'received_at');
+    // v564: matched_via is needed to tell a REAL match from a
+    // correlation-only one — see ispdHasPostbackDelivery(). Without it the
+    // "Delivered (postback)" signal cannot distinguish the two and marks
+    // leads as delivered that never were.
+    const postbacks = await fetchInChunks('ispeedtolead_postbacks', 'matched_lead_id, mapped_status, status_raw, reason, amount, received_at, matched_via', 'matched_lead_id', leadIds, 'received_at');
     postbacks.forEach(p => { if(!ispeedtoleadByLeadId[p.matched_lead_id]) ispeedtoleadByLeadId[p.matched_lead_id] = p; });
   }
 
