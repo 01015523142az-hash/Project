@@ -2860,6 +2860,15 @@
                  status). Hidden entirely for non-Owners rather than just
                  disabled -- see updateLeadsIspdBulkToolbar(). -->
             <button class="btn-secondary" id="leadsIspdBulkDeleteBtn" disabled style="width:auto; padding:6px 14px; font-size:11px; color:var(--danger); display:none;">Delete selected</button>
+            <!-- v572: mark closed / duplicate. Until now manual_delivery_at
+                 could only be set from the database, so a lead that must
+                 never be sent (already sold, or a duplicate carrying its own
+                 send history that cannot safely be deleted) sat in "Not
+                 sent" inviting a send. Deliberately paired with Reopen —
+                 this writes only tracking columns, so it must be as easy to
+                 undo as to apply. -->
+            <button class="btn-secondary" id="leadsIspdBulkCloseBtn" disabled style="width:auto; padding:6px 14px; font-size:11px;" title="Take these out of &quot;Not sent&quot; so they cannot be sent again. Records a reason. Nothing about the lead's own data, status or dates changes.">Mark closed / duplicate</button>
+            <button class="btn-secondary" id="leadsIspdBulkReopenBtn" disabled style="width:auto; padding:6px 14px; font-size:11px;" title="Undo the closed mark and put these back in the sendable queue.">Reopen selected</button>
           </div>
           <div style="overflow-x:auto;">
           <table style="min-width:1300px;">
@@ -28076,6 +28085,12 @@ function updateLeadsIspdBulkToolbar(){
     deleteBtn.style.display = myIsOwner ? '' : 'none';
     deleteBtn.disabled = n === 0;
   }
+  // v572: available to anyone who can edit this section — unlike Delete,
+  // this is reversible and touches no lead data.
+  const closeBtn = $('leadsIspdBulkCloseBtn');
+  const reopenBtn = $('leadsIspdBulkReopenBtn');
+  if(closeBtn) closeBtn.disabled = n === 0;
+  if(reopenBtn) reopenBtn.disabled = n === 0;
 }
 if($('leadsIspdSelectAllCb')) $('leadsIspdSelectAllCb').addEventListener('change', (e) => {
   document.querySelectorAll('.lead-ispd-select-cb').forEach(cb => {
@@ -28140,6 +28155,58 @@ if($('leadsIspdBulkRejectBtn')) $('leadsIspdBulkRejectBtn').addEventListener('cl
   leadsIspdSelectedIds.clear();
   await loadLeads();
 });
+// v572: mark closed / duplicate, and its undo.
+//
+// Fills a real gap: a lead that must never be sent had no way to leave the
+// "Not sent" bucket. Two live cases drove it — 25 leads rejected on the
+// call as already sold, and 9 true duplicates that could NOT be deleted
+// because each carries its own send history and an iSpeedToLead postback
+// (one with a $11.60 purchase against it). Both had to be set straight in
+// the database because no control existed.
+//
+// This writes ONLY manual_delivery_at/_by/_note. It never touches status,
+// submitted_at, review fields or extra_fields — so it cannot rewrite a
+// review decision, and it is not a soft delete. That is also why it is
+// available to anyone with edit rights here rather than Owner-only, and
+// why Reopen sits next to it: an action this cheap to apply must be just
+// as cheap to undo.
+if($('leadsIspdBulkCloseBtn')) $('leadsIspdBulkCloseBtn').addEventListener('click', async () => {
+  const leads = leadsFullData.filter(r => leadsIspdSelectedIds.has(r.id) && !r.manual_delivery_at);
+  if(!leads.length){ alert('None of the selected rows need this — they are already marked closed.'); return; }
+  const reason = prompt(
+    `Why are these ${leads.length} lead(s) being closed? (required, applied to all selected)\n\n`
+    + `Examples: "already sold, never submitted" or "duplicate of <lead id>".\n\n`
+    + `They will leave the "Not sent" bucket and read "Closed by staff". Nothing about the lead's own data, status or dates changes, and Reopen undoes it.`
+  );
+  if(reason === null) return;
+  const reasonTrim = reason.trim();
+  if(!reasonTrim){ alert('A reason is required — it is the only record of why this lead was closed.'); return; }
+  const { data: { user } } = await sb.auth.getUser();
+  const ids = leads.map(l => l.id);
+  const { error } = await sb.from('leads').update({
+    manual_delivery_at: new Date().toISOString(),
+    manual_delivery_by: user ? user.id : null,
+    manual_delivery_note: reasonTrim,
+  }).in('id', ids);
+  if(error){ alert(error.message); return; }
+  logActivity('lead.manual_close', 'lead', null, `Marked ${ids.length} lead(s) closed/duplicate — reason: ${reasonTrim}`);
+  leadsIspdSelectedIds.clear();
+  await loadLeads();
+});
+if($('leadsIspdBulkReopenBtn')) $('leadsIspdBulkReopenBtn').addEventListener('click', async () => {
+  const leads = leadsFullData.filter(r => leadsIspdSelectedIds.has(r.id) && r.manual_delivery_at);
+  if(!leads.length){ alert('None of the selected rows are marked closed.'); return; }
+  if(!confirm(`Reopen ${leads.length} lead(s)? They go back into the sendable queue and the closed reason is cleared.`)) return;
+  const ids = leads.map(l => l.id);
+  const { error } = await sb.from('leads').update({
+    manual_delivery_at: null, manual_delivery_by: null, manual_delivery_note: null,
+  }).in('id', ids);
+  if(error){ alert(error.message); return; }
+  logActivity('lead.manual_close', 'lead', null, `Reopened ${ids.length} lead(s) — closed mark removed`);
+  leadsIspdSelectedIds.clear();
+  await loadLeads();
+});
+
 // v358: bulk delete for PrimeHome Buyers Queue Review -- Owner only (the
 // button itself is hidden for everyone else, see updateLeadsIspdBulkToolbar,
 // but this check guards the actual write too in case of a stale render).
