@@ -30325,12 +30325,47 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
         });
       }
     }
+    // v566: a lead can be delivered without this system holding a send
+    // record — iSpeedToLead confirms it by postback instead. The queue
+    // already treats that as delivery (see ispdHasPostbackDelivery), but
+    // the import did not, so the same lead could be reported here as
+    // "never sent — refreshed so they can be resent" while the queue showed
+    // it as delivered. Acting on the summary would then resend something
+    // the buyer already has. Same test as the queue, so the two agree.
+    //
+    // matched_via 'phone_ineligible' is excluded for the reason spelled out
+    // on ispdHasPostbackDelivery: it is the postback function's
+    // reference-only path, reporting on a different submission that merely
+    // shares a phone number.
+    const deliveredByPostback = new Set();
+    if(matchedIds.length){
+      for(let i = 0; i < matchedIds.length; i += 200){
+        const { data: pbRows } = await sb.from('ispeedtolead_postbacks')
+          .select('matched_lead_id, matched_via, received_at')
+          .in('matched_lead_id', matchedIds.slice(i, i + 200))
+          .order('received_at', { ascending: false });
+        const seen = new Set();
+        (pbRows || []).forEach(pb => {
+          // Latest postback per lead wins, matching how the queue's own map
+          // is built — a lead with one real match plus earlier
+          // reference-only rows still counts as delivered.
+          if(seen.has(pb.matched_lead_id)) return;
+          seen.add(pb.matched_lead_id);
+          if(pb.matched_via !== 'phone_ineligible') deliveredByPostback.add(pb.matched_lead_id);
+        });
+      }
+    }
+
     parsed.forEach(r => {
       r.alreadySentPrimehome = !!(r.matchedLeadId && sentToPrimehome.has(r.matchedLeadId));
       // gyhomes and PrimeHome Buyers are two independent outbound channels,
       // so a gyhomes send does NOT mean this lead is finished — it may still
       // be owed to PrimeHome Buyers. Reported separately for that reason.
       r.alreadySentGyhomes = !!(r.matchedLeadId && sentToGyhomes.has(r.matchedLeadId) && !sentToPrimehome.has(r.matchedLeadId));
+      // Only when there is no send record of our own — otherwise the send
+      // record is the better answer and already covers it.
+      r.deliveredByPostbackOnly = !!(r.matchedLeadId && deliveredByPostback.has(r.matchedLeadId)
+        && !sentToPrimehome.has(r.matchedLeadId) && !sentToGyhomes.has(r.matchedLeadId));
     });
 
     if(rawImportSummary){
@@ -30355,7 +30390,7 @@ function renderIspdPreview(usedCols){
   $('ispdPreviewHead').innerHTML = `<tr><th>Match</th>${usedCols.map(c => `<th>${escapeHtml(c.header)}</th>`).join('')}</tr>`;
   $('ispdPreviewBody').innerHTML = ispdParsedRows.map(r => `
     <tr>
-      <td class="mono" style="white-space:nowrap; color:${(r.duplicateInFile || r.alreadySentPrimehome || r.matchedLeadId) ? 'var(--danger)' : 'var(--text-2)'};" title="${r.alreadySentPrimehome ? 'This property was already delivered to PrimeHome Buyers — skipped so the sent record is not overwritten.' : (r.matchedLeadId ? `This PROPERTY is already on file (matched on ${escapeHtml(r.matchedOn || 'address')})${r.alreadySentGyhomes ? ' and was already sent to gyhomes' : ' and has never been sent anywhere'}. Nothing on the lead will be changed — the import only creates new leads. It is still tagged into this import so you can find it under Imported → My last import.` : (r.duplicateInFile ? 'The same property appears earlier in this file — only the first row creates the lead.' : ''))}">${r.alreadySentPrimehome ? 'Sent to PrimeHome — will skip' : (r.matchedLeadId ? (r.alreadySentGyhomes ? 'On file, sent to gyhomes' : 'On file, never sent — for resend') : (r.duplicateInFile ? 'Duplicate in file — will skip' : 'New lead'))}${r.missing.length ? ` <span style="color:var(--danger);" title="Missing: ${escapeHtml(r.missing.join(', '))}">⚠ ${r.missing.length} missing</span>` : ''}</td>
+      <td class="mono" style="white-space:nowrap; color:${(r.duplicateInFile || r.alreadySentPrimehome || r.matchedLeadId) ? 'var(--danger)' : 'var(--text-2)'};" title="${r.alreadySentPrimehome ? 'This property was already delivered to PrimeHome Buyers — skipped so the sent record is not overwritten.' : (r.matchedLeadId ? `This PROPERTY is already on file (matched on ${escapeHtml(r.matchedOn || 'address')})${r.alreadySentGyhomes ? ' and was already sent to gyhomes' : (r.deliveredByPostbackOnly ? ' and iSpeedToLead already confirmed delivery by postback (channel unknown)' : ' and has never been sent anywhere')}. Nothing on the lead will be changed — the import only creates new leads. It is still tagged into this import so you can find it under Imported → My last import.` : (r.duplicateInFile ? 'The same property appears earlier in this file — only the first row creates the lead.' : ''))}">${r.alreadySentPrimehome ? 'Sent to PrimeHome — will skip' : (r.matchedLeadId ? (r.alreadySentGyhomes ? 'On file, sent to gyhomes' : (r.deliveredByPostbackOnly ? 'On file, delivered (postback)' : 'On file, never sent — for resend')) : (r.duplicateInFile ? 'Duplicate in file — will skip' : 'New lead'))}${r.missing.length ? ` <span style="color:var(--danger);" title="Missing: ${escapeHtml(r.missing.join(', '))}">⚠ ${r.missing.length} missing</span>` : ''}</td>
       ${usedCols.map(c => `<td>${escapeHtml((r.__cells[c.key] || '').slice(0, 40))}</td>`).join('')}
     </tr>
   `).join('');
@@ -30411,7 +30446,7 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
   // status: a re-upload must never rewrite a review decision.
   const importBatchId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
   const importStamp = { last_import_batch: importBatchId, last_imported_at: new Date().toISOString(), last_imported_by: user.id };
-  let created = 0, failed = 0, skippedDuplicate = 0, skippedAlreadySent = 0, refreshedGyhomes = 0, refreshedNeverSent = 0;
+  let created = 0, failed = 0, skippedDuplicate = 0, skippedAlreadySent = 0, refreshedGyhomes = 0, refreshedNeverSent = 0, refreshedPostback = 0;
   for(const r of ispdParsedRows){
     const matchedLeadId = r.matchedLeadId || (r.addrKey ? (matchedLeadIdByAddr[r.addrKey] || null) : null);
     // v562: this import is CREATE-ONLY for lead DATA (user request,
@@ -30443,6 +30478,9 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
       const { error } = await sb.from('leads').update(importStamp).eq('id', matchedLeadId);
       if(error){ failed++; console.error('import: batch stamp failed for lead', matchedLeadId, error); }
       else if(r.alreadySentGyhomes) refreshedGyhomes++;
+      // v566: delivered, just not by a send this system recorded — must not
+      // be reported as "never sent", which invites a resend.
+      else if(r.deliveredByPostbackOnly) refreshedPostback++;
       else refreshedNeverSent++;
       continue;
     }
@@ -30484,20 +30522,23 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
       if(error) failed++; else { created++; if(r.addrKey) matchedLeadIdByAddr[r.addrKey] = newLead.id; }
     }
   }
-  logActivity('lead.csv_import', null, null, `CSV/Excel import (create-only): ${created} created, ${refreshedGyhomes} already sent to gyhomes, ${refreshedNeverSent} never sent (refreshed to resend), ${skippedAlreadySent} skipped as already sent to PrimeHome Buyers${skippedDuplicate ? `, ${skippedDuplicate} skipped as duplicate address` : ''}${failed ? `, ${failed} failed` : ''} (batch ${importBatchId})${!defaultCampaignFormId ? ' — WARNING: PrimeHome Buyers campaign could not be resolved, leads went in untagged' : ''}`);
+  logActivity('lead.csv_import', null, null, `CSV/Excel import (create-only): ${created} created, ${refreshedGyhomes} already sent to gyhomes, ${refreshedNeverSent} never sent (refreshed to resend), ${refreshedPostback} delivered by postback, ${skippedAlreadySent} skipped as already sent to PrimeHome Buyers${skippedDuplicate ? `, ${skippedDuplicate} skipped as duplicate address` : ''}${failed ? `, ${failed} failed` : ''} (batch ${importBatchId})${!defaultCampaignFormId ? ' — WARNING: PrimeHome Buyers campaign could not be resolved, leads went in untagged' : ''}`);
 
   // v563: the four-line breakdown staff actually asked for. Every import
   // reports the same shape whether or not a category is empty — a run that
   // says "0 new" is itself the answer to "did this file bring anything in?",
   // and hiding the line would leave that unanswered.
-  const inWorklist = created + refreshedGyhomes + refreshedNeverSent;
+  const inWorklist = created + refreshedGyhomes + refreshedNeverSent + refreshedPostback;
   const importSummaryLines = [
     `New leads created: ${created}`,
     `Already sent to gyhomes: ${refreshedGyhomes}`,
     `Never sent anywhere: ${refreshedNeverSent} — refreshed so they can be resent`,
     `Skipped as already sent to PrimeHome Buyers: ${skippedAlreadySent}`,
   ];
-  if(skippedDuplicate) importSummaryLines.push(`Skipped as duplicate address: ${skippedDuplicate}`);
+  // Printed only when it happens — unlike the four core categories, this
+  // is a rare state and a permanent "0" line would just be noise.
+  if(refreshedPostback) importSummaryLines.push(`Delivered via iSpeedToLead postback (channel unknown): ${refreshedPostback}`);
+  if(skippedDuplicate) importSummaryLines.push(`Skipped as a repeat of the same property in this file: ${skippedDuplicate}`);
   if(failed) importSummaryLines.push(`Failed: ${failed}`);
   msg.innerHTML = importSummaryLines.map(t => `<div>${escapeHtml(t)}</div>`).join('')
     + (inWorklist
