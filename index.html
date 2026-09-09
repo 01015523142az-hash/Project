@@ -3854,6 +3854,27 @@
         </div>
         <input type="file" id="rmListUploadInput" accept=".csv,.xlsx,.xls">
         <div class="msg" id="rmListUploadMsg"></div>
+        <!-- v578 (user request: "make the uploader choose or confirm the column
+             matching by dropdown menu ... like selecting the mapping himself").
+             Auto-detection still runs and preselects every dropdown, but nothing
+             is checked or pushed until the uploader confirms. Guessing header
+             names silently picked the WRONG column on real exports: a skip-trace
+             file carries both a mailing and a property address, and the buyer
+             split files use address_line1, which matched no alias at all and
+             failed outright. A wrong address key matches nothing, so every row
+             reads "clean" and duplicates get pushed -- exactly the failure the
+             dedupe check exists to prevent. Better to show the mapping. -->
+        <div id="rmListMapCard" style="display:none; margin-top:14px; border:1px solid var(--border-light); border-radius:8px; padding:14px;">
+          <div style="font-size:12px; color:var(--text-2); font-weight:600; margin-bottom:4px;">Confirm column mapping</div>
+          <div style="font-size:11px; color:var(--text-dim); margin-bottom:12px; line-height:1.4;">
+            Pre-filled from this file's own headers wherever they were recognised — change anything that looks wrong. <strong>Address</strong> is required for the dedupe check; <strong>Phone</strong> is only needed to push into ReadyMode. Leave City/State/Zip on "— none —" if your Address column already includes them.
+          </div>
+          <div id="rmListMapGrid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:10px;"></div>
+          <div id="rmListMapSample" class="mono" style="font-size:11px; color:var(--text-dim); margin-top:12px; line-height:1.5; word-break:break-word;"></div>
+          <div style="margin-top:12px;">
+            <button class="btn-primary" id="rmListRunCheckBtn" style="width:auto; padding:9px 16px;">Run dedupe check</button>
+          </div>
+        </div>
         <div id="rmListUploadResults" style="display:none; margin-top:14px;">
           <div class="act-stats-row" style="margin-bottom:14px;">
             <div class="act-stat-card"><div class="act-stat-label">Rows in file</div><div class="act-stat-value" id="rmListStatTotal">0</div></div>
@@ -18524,13 +18545,83 @@ function rmCsvDownload(filename, headerRow, rows){
   URL.revokeObjectURL(url);
 }
 
-let rmListCheckResult = null; // { headerRow, rows: [{cells, isDup, matchedStatus}] }
+let rmListCheckResult = null; // { headerRow, results: [{cells, isDup, matchedStatus, lead}] }
+// Parsed file, held between "choose a file" and "Run dedupe check" so the
+// uploader can adjust the column mapping before anything is checked.
+let rmListParsed = null; // { headerRow, dataRows, detectedSource }
+
+const RM_MAP_FIELDS = [
+  { key: 'address', label: 'Address', required: true, hint: 'street, or a full address' },
+  { key: 'city', label: 'City' },
+  { key: 'state', label: 'State' },
+  { key: 'zip', label: 'Zip' },
+  { key: 'firstName', label: 'First name' },
+  { key: 'lastName', label: 'Last name' },
+  { key: 'fullName', label: 'Full name', hint: 'split, if no first/last' },
+  { key: 'phone', label: 'Phone', hint: 'required to push' },
+  { key: 'phone2', label: 'Phone 2' },
+  { key: 'email', label: 'Email' },
+];
+
+// Builds one <select> per mappable field, listing every column in the file.
+// Option value is the column index; -1 means "not mapped".
+function rmRenderMapGrid(headerRow, detected){
+  const grid = $('rmListMapGrid');
+  if(!grid) return;
+  const options = (selectedIdx) => ['<option value="-1"' + (selectedIdx === -1 ? ' selected' : '') + '>-- none --</option>']
+    .concat(headerRow.map((h, i) => {
+      const label = String(h || '').trim() || ('(unnamed column ' + (i + 1) + ')');
+      return '<option value="' + i + '"' + (i === selectedIdx ? ' selected' : '') + '>' + escapeHtml(label) + '</option>';
+    })).join('');
+  grid.innerHTML = RM_MAP_FIELDS.map(f => `
+    <div>
+      <label style="display:block; margin:0 0 3px; font-size:11px; color:var(--text-dim);">
+        ${escapeHtml(f.label)}${f.required ? ' <span style="color:var(--danger);">*</span>' : ''}${f.hint ? ` <span style="opacity:0.75;">(${escapeHtml(f.hint)})</span>` : ''}
+      </label>
+      <select class="rm-map-select" data-map-field="${f.key}" style="width:100%;">${options(typeof detected[f.key] === 'number' ? detected[f.key] : -1)}</select>
+    </div>
+  `).join('');
+  grid.querySelectorAll('.rm-map-select').forEach(sel => sel.addEventListener('change', rmRenderMapSample));
+  rmRenderMapSample();
+}
+
+function rmReadMapping(){
+  const map = {};
+  RM_MAP_FIELDS.forEach(f => { map[f.key] = -1; });
+  document.querySelectorAll('#rmListMapGrid .rm-map-select').forEach(sel => {
+    const n = parseInt(sel.value, 10);
+    map[sel.dataset.mapField] = Number.isFinite(n) ? n : -1;
+  });
+  return map;
+}
+
+// Shows what the current mapping actually produces for the first data row --
+// the quickest way to catch a mapping that is subtly wrong (a mailing address
+// sitting where the property address should be) before running a whole file.
+function rmRenderMapSample(){
+  const el = $('rmListMapSample');
+  if(!el || !rmListParsed || !rmListParsed.dataRows.length) return;
+  const map = rmReadMapping();
+  const row = rmListParsed.dataRows[0];
+  const val = (i) => i > -1 ? String(row[i] || '').trim() : '';
+  const addr = [val(map.address), val(map.city), val(map.state), val(map.zip)].filter(Boolean).join(', ');
+  let who = [val(map.firstName), val(map.lastName)].filter(Boolean).join(' ');
+  if(!who && map.fullName > -1) who = val(map.fullName);
+  el.innerHTML = 'First row reads as &rarr; address: <span style="color:var(--text-2);">'
+    + (addr ? escapeHtml(addr) : '<span style="color:var(--danger);">nothing -- pick an Address column</span>')
+    + '</span> &nbsp;|&nbsp; name: <span style="color:var(--text-2);">' + (who ? escapeHtml(who) : '--')
+    + '</span> &nbsp;|&nbsp; phone: <span style="color:var(--text-2);">' + (val(map.phone) ? escapeHtml(val(map.phone)) : '--') + '</span>';
+}
+
 const rmListUploadInput = document.getElementById('rmListUploadInput');
 if(rmListUploadInput) rmListUploadInput.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   const msg = $('rmListUploadMsg');
   msg.style.display = 'none';
   $('rmListUploadResults').style.display = 'none';
+  $('rmListMapCard').style.display = 'none';
+  rmListParsed = null;
+  rmListCheckResult = null;
   if(!file) return;
   try {
     const buf = await file.arrayBuffer();
@@ -18542,71 +18633,139 @@ if(rmListUploadInput) rmListUploadInput.addEventListener('change', async (e) => 
     const dataRows = rows.slice(1).filter(r => r.some(c => String(c || '').trim() !== ''));
     if(!dataRows.length){ msg.textContent = 'No data rows found below the header.'; msg.className = 'msg error'; msg.style.display = 'block'; return; }
 
-    // Address column detection covers DealMachine's and BatchLeads' common
-    // header names, plus separate City/State/Zip columns some exports
-    // split out instead of one combined address field. DealMachine's real
-    // export (confirmed from an actual file, 2026-09-04) uses
-    // snake_case-with-underscores names like "associated_property_address_full"
-    // / "associated_property_address_line_1" -- those are included alongside
-    // the space-separated generic aliases since norm() only lowercases and
-    // trims, it doesn't convert underscores to spaces.
     const norm = s => String(s || '').trim().toLowerCase();
     const findCol = names => headerRow.findIndex(h => names.includes(norm(h)));
-    const addrFullIdx = findCol(['associated_property_address_full']);
-    const addrIdx = findCol(['associated_property_address_line_1', 'property address', 'address', 'street address', 'mailing address', 'situs address']);
-    if(addrIdx === -1 && addrFullIdx === -1){ msg.textContent = 'No address column found (looked for "Property Address", "Address", "Street Address", "Mailing Address", "Situs Address", DealMachine\'s "associated_property_address_full"/"_line_1").'; msg.className = 'msg error'; msg.style.display = 'block'; return; }
-    const cityIdx = findCol(['associated_property_address_city', 'property city', 'city']);
-    const stateIdx = findCol(['associated_property_address_state', 'property state', 'state']);
-    const zipIdx = findCol(['associated_property_address_zipcode', 'property zip', 'zip', 'zip code', 'postal code']);
-    // Name/contact columns -- only needed for the "push straight to
-    // ReadyMode" path below (the dedupe check itself only needs address),
-    // so these are best-effort: a DealMachine/BatchLeads export missing
-    // one just posts that field blank rather than failing the whole row.
-    const firstNameIdx = findCol(['first_name', 'owner first name', 'first name', 'firstname']);
-    const lastNameIdx = findCol(['last_name', 'owner last name', 'last name', 'lastname']);
-    const fullNameIdx = findCol(['owner name', 'name', 'full name']);
-    const emailIdx = findCol(['email_address_1', 'email 1', 'email1', 'email']);
-    // Phone columns -- covers DealMachine's numbered phone_1/phone_2/phone_3
-    // plus BatchLeads'/generic aliases. NOTE: DealMachine also exports a
-    // per-phone "phone_N_do_not_call" flag, but that's deliberately NOT used
-    // to filter or exclude rows here -- ReadyMode already runs its own DNC
-    // scrubbing on the account side, and DealMachine's own flag isn't
-    // reliably kept up to date, so gating a push on it would both wrongly
-    // exclude callable numbers and wrongly let through numbers DealMachine
-    // hasn't caught yet. Leave DNC compliance to ReadyMode's real-time scrub.
-    const phoneIdx = findCol(['phone_1', 'phone 1', 'phone1', 'phone number 1', 'phone', 'primary phone', 'mobile']);
-    const phone2Idx = findCol(['phone_2', 'phone 2', 'phone2', 'phone number 2', 'secondary phone']);
-    const hasPhoneCol = phoneIdx > -1;
+    // v578: auto-detection is now only a SUGGESTION -- it preselects the
+    // dropdowns and the uploader confirms. Sources are still resolved as a
+    // whole rather than alias-by-alias, because findCol returns whichever
+    // matching header comes first in the FILE: a skip-trace export carries
+    // both Mailing_Street_Address and Property_Street_Address, and a street
+    // taken from one source with a city from another describes an address
+    // that exists nowhere. Tried in order; first source with an address wins.
+    const ADDR_SOURCES = [
+      { name: 'DealMachine',
+        line: ['associated_property_address_line_1'],
+        full: ['associated_property_address_full'],
+        city: ['associated_property_address_city'],
+        state: ['associated_property_address_state'],
+        zip: ['associated_property_address_zipcode'] },
+      { name: 'skip trace (property)',
+        line: ['property_street_address'],
+        full: ['formated_address', 'formatted_address'],
+        city: ['property_city'],
+        state: ['property_state'],
+        zip: ['property_zip_code'] },
+      { name: 'generic',
+        line: ['property address', 'property_address', 'address', 'street address', 'street_address', 'address_line1', 'address_line_1', 'situs address', 'situs_address'],
+        full: ['property address full', 'full address'],
+        city: ['property city', 'city'],
+        state: ['property state', 'state'],
+        zip: ['property zip', 'zip', 'zip code', 'zip_code', 'postal code'] },
+      { name: 'mailing', mailing: true,
+        line: ['mailing address', 'mailing_address', 'mailing_street_address'],
+        full: ['mailing_formated_address'],
+        city: ['mailing_city'],
+        state: ['mailing_state'],
+        zip: ['mailing_zip_code'] },
+    ];
+    const detected = { address: -1, city: -1, state: -1, zip: -1 };
+    let detectedSource = null;
+    for(const src of ADDR_SOURCES){
+      const lineCol = findCol(src.line), fullCol = findCol(src.full);
+      if(lineCol === -1 && fullCol === -1) continue;
+      detectedSource = src.name;
+      if(lineCol > -1){
+        detected.address = lineCol;
+        detected.city = findCol(src.city); detected.state = findCol(src.state); detected.zip = findCol(src.zip);
+        // A source may name its street column but leave city/state/zip on
+        // plain unprefixed headers. Filling those from the generic names is
+        // safe because they are not owned by a competing source -- but NOT
+        // when the mailing block won, where a bare "City" is most likely the
+        // property's and would re-introduce the mismatch described above.
+        if(!src.mailing){
+          if(detected.city === -1) detected.city = findCol(['property city', 'city']);
+          if(detected.state === -1) detected.state = findCol(['property state', 'state']);
+          if(detected.zip === -1) detected.zip = findCol(['property zip', 'zip', 'zip code', 'zip_code', 'postal code']);
+        }
+      } else {
+        // A combined column already contains city/state/zip, so leave those
+        // unmapped -- appending them again would duplicate that text in the
+        // dedupe key.
+        detected.address = fullCol;
+      }
+      break;
+    }
+    detected.firstName = findCol(['first_name', 'owner_first_name', 'owner first name', 'first name', 'firstname']);
+    detected.lastName = findCol(['last_name', 'owner_last_name', 'owner last name', 'last name', 'lastname']);
+    detected.fullName = findCol(['owner_name', 'owner name', 'seller name', 'name', 'full_name', 'full name']);
+    detected.email = findCol(['email_address_1', 'email_1', 'email 1', 'email1', 'email']);
+    // Phone columns -- covers DealMachine's numbered phone_1/phone_2 plus
+    // BatchLeads'/generic aliases. NOTE: DealMachine also exports a per-phone
+    // "phone_N_do_not_call" flag, deliberately NOT used to filter rows here --
+    // ReadyMode runs its own DNC scrubbing account-side and DealMachine's flag
+    // is not reliably current, so gating on it would both wrongly exclude
+    // callable numbers and wrongly pass ones DealMachine has not caught.
+    detected.phone = findCol(['phone_1', 'phone_number_1', 'phone 1', 'phone1', 'phone number 1', 'phone', 'phone number', 'primary phone', 'mobile']);
+    detected.phone2 = findCol(['phone_2', 'phone_number_2', 'phone 2', 'phone2', 'phone number 2', 'secondary phone']);
 
-    msg.textContent = 'Checking against iSpeedToLead’s known addresses…';
+    rmListParsed = { headerRow, dataRows, detectedSource };
+    rmRenderMapGrid(headerRow, detected);
+    $('rmListMapCard').style.display = 'block';
+    msg.textContent = `Read ${dataRows.length} row(s) and ${headerRow.length} column(s).`
+      + (detectedSource
+          ? ` These headers look like a ${detectedSource} export, so the mapping below is pre-filled -- check it, then run the dedupe check.`
+          : ' None of these headers were recognised automatically, so pick the columns below yourself, then run the dedupe check.');
+    msg.className = detectedSource ? 'msg' : 'msg error';
+    msg.style.display = 'block';
+  } catch (err) {
+    console.error('rmListUploadInput: failed to parse file:', err);
+    msg.textContent = `Couldn't read that file: ${err instanceof Error ? err.message : String(err)}`;
+    msg.className = 'msg error'; msg.style.display = 'block';
+  } finally {
+    e.target.value = '';
+  }
+});
+
+document.getElementById('rmListRunCheckBtn')?.addEventListener('click', async () => {
+  const msg = $('rmListUploadMsg');
+  if(!rmListParsed){ msg.textContent = 'Choose a file first.'; msg.className = 'msg error'; msg.style.display = 'block'; return; }
+  const map = rmReadMapping();
+  if(map.address === -1){
+    msg.textContent = 'Pick which column holds the address -- the dedupe check has nothing to compare without it.';
+    msg.className = 'msg error'; msg.style.display = 'block'; return;
+  }
+  const { headerRow, dataRows } = rmListParsed;
+  const btn = $('rmListRunCheckBtn');
+  btn.disabled = true;
+  try {
+    msg.textContent = 'Checking against iSpeedToLead known addresses...';
     msg.className = 'msg'; msg.style.display = 'block';
 
     const knownByKey = await rmFetchKnownIspeedtoleadAddresses();
 
+    const cell = (r, i) => i > -1 ? String(r[i] || '').trim() : '';
     const results = dataRows.map(r => {
-      // If a real address_line_1 exists, use it (street only) and append
-      // city/state/zip separately; otherwise fall back to the combined
-      // "_full" field as-is, since it already contains city/state/zip and
-      // appending them again would duplicate that text.
-      const rawAddr = addrIdx > -1 ? String(r[addrIdx] || '').trim() : String(r[addrFullIdx] || '').trim();
-      const city = cityIdx > -1 ? String(r[cityIdx] || '').trim() : '';
-      const state = stateIdx > -1 ? String(r[stateIdx] || '').trim() : '';
-      const zip = zipIdx > -1 ? String(r[zipIdx] || '').trim() : '';
-      const fullAddr = addrIdx > -1 ? [rawAddr, city, state, zip].filter(Boolean).join(', ') : rawAddr;
+      const rawAddr = cell(r, map.address);
+      const city = cell(r, map.city);
+      const state = cell(r, map.state);
+      const zip = cell(r, map.zip);
+      // City/State/Zip left unmapped collapses this to the address column on
+      // its own, which is exactly what a combined "full address" column wants.
+      const fullAddr = [rawAddr, city, state, zip].filter(Boolean).join(', ');
       const key = rmDedupeKey(fullAddr || rawAddr);
       const match = key ? knownByKey.get(key) : null;
-      let firstName = firstNameIdx > -1 ? String(r[firstNameIdx] || '').trim() : '';
-      let lastName = lastNameIdx > -1 ? String(r[lastNameIdx] || '').trim() : '';
-      if(!firstName && !lastName && fullNameIdx > -1){
-        const parts = String(r[fullNameIdx] || '').trim().split(/\s+/);
+      let firstName = cell(r, map.firstName);
+      let lastName = cell(r, map.lastName);
+      if(!firstName && !lastName && map.fullName > -1){
+        const parts = cell(r, map.fullName).split(/\s+/);
         firstName = parts.shift() || '';
         lastName = parts.join(' ');
       }
       const lead = {
         firstName, lastName,
-        phone: phoneIdx > -1 ? String(r[phoneIdx] || '').trim() : '',
-        phone2: phone2Idx > -1 ? String(r[phone2Idx] || '').trim() : '',
-        email: emailIdx > -1 ? String(r[emailIdx] || '').trim() : '',
+        phone: cell(r, map.phone),
+        phone2: cell(r, map.phone2),
+        email: cell(r, map.email),
         address: rawAddr, city, state, zip,
       };
       return { cells: r, rawAddr: fullAddr || rawAddr, isDup: !!match, matchedStatus: match ? match.status : null, lead };
@@ -18614,6 +18773,7 @@ if(rmListUploadInput) rmListUploadInput.addEventListener('change', async (e) => 
 
     rmListCheckResult = { headerRow, results };
     const dupCount = results.filter(r => r.isDup).length;
+    const noAddrCount = results.filter(r => !r.rawAddr).length;
     $('rmListStatTotal').textContent = String(results.length);
     $('rmListStatDup').textContent = String(dupCount);
     $('rmListStatClean').textContent = String(results.length - dupCount);
@@ -18621,21 +18781,22 @@ if(rmListUploadInput) rmListUploadInput.addEventListener('change', async (e) => 
       <tr style="border-top:1px solid var(--border-light);">
         <td style="padding:5px 8px;">${escapeHtml(r.rawAddr)}</td>
         <td style="padding:5px 8px; ${r.isDup ? 'color:var(--danger);' : 'color:var(--focus);'}">${r.isDup ? 'Duplicate' : 'Clean'}</td>
-        <td style="padding:5px 8px; color:var(--text-dim);">${r.matchedStatus ? escapeHtml(r.matchedStatus) : '—'}</td>
+        <td style="padding:5px 8px; color:var(--text-dim);">${r.matchedStatus ? escapeHtml(r.matchedStatus) : '&mdash;'}</td>
       </tr>
-    `).join('') + (results.length > 500 ? `<tr><td colspan="3" style="padding:6px 8px; color:var(--text-dim);">… and ${results.length - 500} more row(s), not shown here but included in the downloads below.</td></tr>` : '');
+    `).join('') + (results.length > 500 ? `<tr><td colspan="3" style="padding:6px 8px; color:var(--text-dim);">... and ${results.length - 500} more row(s), not shown here but included in the downloads below.</td></tr>` : '');
     $('rmListUploadResults').style.display = 'block';
     $('rmListPushMsg').style.display = 'none';
     $('rmListPushResults').style.display = 'none';
-    msg.textContent = `Checked ${results.length} row(s) against ${knownByKey.size} known iSpeedToLead address(es) — ${dupCount} duplicate(s) found.`
-      + (hasPhoneCol ? '' : ' Note: no phone column was found in this file — a phone number is required to push into ReadyMode, so the "Push clean list to ReadyMode" button below will fail until the file includes one.');
+    msg.textContent = `Checked ${results.length} row(s) against ${knownByKey.size} known iSpeedToLead address(es) -- ${dupCount} duplicate(s) found.`
+      + (noAddrCount ? ` ${noAddrCount} row(s) had nothing in the mapped Address column and could not be checked -- they are counted as clean, so re-check the mapping if that number looks wrong.` : '')
+      + (map.phone > -1 ? '' : ' Note: no Phone column is mapped -- ReadyMode requires a phone per lead, so "Push clean list to ReadyMode" will reject every row until you map one.');
     msg.className = 'msg ok';
   } catch (err) {
-    console.error('rmListUploadInput: failed to parse/check file:', err);
-    msg.textContent = `Couldn't read that file: ${err instanceof Error ? err.message : String(err)}`;
+    console.error('rmListRunCheckBtn: dedupe check failed:', err);
+    msg.textContent = `Couldn't run the check: ${err instanceof Error ? err.message : String(err)}`;
     msg.className = 'msg error'; msg.style.display = 'block';
   } finally {
-    e.target.value = '';
+    btn.disabled = false;
   }
 });
 
