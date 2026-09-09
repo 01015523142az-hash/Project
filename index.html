@@ -30427,7 +30427,29 @@ $('ispdUploadInput').addEventListener('change', async (e) => {
       }
     }
 
+    // v569: the summary said "Never sent anywhere: 54 — refreshed so they
+    // can be resent" while the queue's Not sent filter showed 6. Both were
+    // right about their own definition; the import's was just far broader
+    // than anything actionable. Of that 54: 25 were closed by staff
+    // (manual_delivery_at — the import had no idea the flag existed), 23
+    // were on call-back (which the review table excludes outright), and
+    // only the remainder were genuinely workable. Telling someone 54 leads
+    // are ready to resend when 6 are is worse than saying nothing.
+    // Fetch what is needed to split them the same way the queue does.
+    const leadStateById = {};
+    if(matchedIds.length){
+      for(let i = 0; i < matchedIds.length; i += 200){
+        const { data: stateRows } = await sb.from('leads')
+          .select('id, status, manual_delivery_at')
+          .in('id', matchedIds.slice(i, i + 200));
+        (stateRows || []).forEach(x => { leadStateById[x.id] = x; });
+      }
+    }
+
     parsed.forEach(r => {
+      const st = r.matchedLeadId ? leadStateById[r.matchedLeadId] : null;
+      r.closedByStaff = !!(st && st.manual_delivery_at);
+      r.onCallBack    = !!(st && st.status === 'call_back');
       r.alreadySentPrimehome = !!(r.matchedLeadId && sentToPrimehome.has(r.matchedLeadId));
       // gyhomes and PrimeHome Buyers are two independent outbound channels,
       // so a gyhomes send does NOT mean this lead is finished — it may still
@@ -30517,7 +30539,7 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
   // status: a re-upload must never rewrite a review decision.
   const importBatchId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now());
   const importStamp = { last_import_batch: importBatchId, last_imported_at: new Date().toISOString(), last_imported_by: user.id };
-  let created = 0, failed = 0, skippedDuplicate = 0, skippedAlreadySent = 0, refreshedGyhomes = 0, refreshedNeverSent = 0, refreshedPostback = 0;
+  let created = 0, failed = 0, skippedDuplicate = 0, skippedAlreadySent = 0, refreshedGyhomes = 0, refreshedNeverSent = 0, refreshedPostback = 0, refreshedClosed = 0, refreshedCallBack = 0;
   for(const r of ispdParsedRows){
     const matchedLeadId = r.matchedLeadId || (r.addrKey ? (matchedLeadIdByAddr[r.addrKey] || null) : null);
     // v562: this import is CREATE-ONLY for lead DATA (user request,
@@ -30552,6 +30574,12 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
       // v566: delivered, just not by a send this system recorded — must not
       // be reported as "never sent", which invites a resend.
       else if(r.deliveredByPostbackOnly) refreshedPostback++;
+      // v569: closed by staff, and on call-back, are both genuinely
+      // "not sent" — but neither is resendable, so counting them under
+      // "never sent, refreshed so they can be resent" overstates the
+      // workable set by an order of magnitude.
+      else if(r.closedByStaff) refreshedClosed++;
+      else if(r.onCallBack) refreshedCallBack++;
       else refreshedNeverSent++;
       continue;
     }
@@ -30593,22 +30621,26 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
       if(error) failed++; else { created++; if(r.addrKey) matchedLeadIdByAddr[r.addrKey] = newLead.id; }
     }
   }
-  logActivity('lead.csv_import', null, null, `CSV/Excel import (create-only): ${created} created, ${refreshedGyhomes} already sent to gyhomes, ${refreshedNeverSent} never sent (refreshed to resend), ${refreshedPostback} delivered by postback, ${skippedAlreadySent} skipped as already sent to PrimeHome Buyers${skippedDuplicate ? `, ${skippedDuplicate} skipped as duplicate address` : ''}${failed ? `, ${failed} failed` : ''} (batch ${importBatchId})${!defaultCampaignFormId ? ' — WARNING: PrimeHome Buyers campaign could not be resolved, leads went in untagged' : ''}`);
+  logActivity('lead.csv_import', null, null, `CSV/Excel import (create-only): ${created} created, ${refreshedGyhomes} already sent to gyhomes, ${refreshedNeverSent} never sent (workable), ${refreshedPostback} delivered by postback, ${refreshedClosed} closed by staff, ${refreshedCallBack} on call-back, ${skippedAlreadySent} skipped as already sent to PrimeHome Buyers${skippedDuplicate ? `, ${skippedDuplicate} skipped as duplicate address` : ''}${failed ? `, ${failed} failed` : ''} (batch ${importBatchId})${!defaultCampaignFormId ? ' — WARNING: PrimeHome Buyers campaign could not be resolved, leads went in untagged' : ''}`);
 
   // v563: the four-line breakdown staff actually asked for. Every import
   // reports the same shape whether or not a category is empty — a run that
   // says "0 new" is itself the answer to "did this file bring anything in?",
   // and hiding the line would leave that unanswered.
-  const inWorklist = created + refreshedGyhomes + refreshedNeverSent + refreshedPostback;
+  const inWorklist = created + refreshedGyhomes + refreshedNeverSent + refreshedPostback + refreshedClosed + refreshedCallBack;
   const importSummaryLines = [
     `New leads created: ${created}`,
     `Already sent to gyhomes: ${refreshedGyhomes}`,
-    `Never sent anywhere: ${refreshedNeverSent} — refreshed so they can be resent`,
+    `Never sent anywhere: ${refreshedNeverSent} — refreshed and ready to work`,
     `Skipped as already sent to PrimeHome Buyers: ${skippedAlreadySent}`,
   ];
   // Printed only when it happens — unlike the four core categories, this
   // is a rare state and a permanent "0" line would just be noise.
   if(refreshedPostback) importSummaryLines.push(`Delivered via iSpeedToLead postback (channel unknown): ${refreshedPostback}`);
+  // v569: shown so the four core numbers reconcile with the queue's own
+  // "Not sent" count instead of quietly exceeding it.
+  if(refreshedClosed) importSummaryLines.push(`Closed by staff, not sendable: ${refreshedClosed}`);
+  if(refreshedCallBack) importSummaryLines.push(`On call-back, not ready to send: ${refreshedCallBack}`);
   // v567: rows whose Property Address cell held more than one address. The
   // first was imported and the rest saved into Conversation notes; someone
   // still has to decide whether those are separate leads.
