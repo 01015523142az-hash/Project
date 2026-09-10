@@ -3865,7 +3865,7 @@
       <div class="card" style="margin-top:16px;">
         <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Upload list for ReadyMode — dedupe check</h3>
         <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.4;">
-          Upload a raw property list (DealMachine, BatchLeads, or similar export — CSV or Excel) before loading it into ReadyMode's dialer. This checks every address against leads already known to iSpeedToLead (any PrimeHome Buyers submission, any status) and flags ones that would just come back "Duplicate address/phone number" if resubmitted, so agents aren't cold-calling a property already in the pipeline. Direct upload straight into ReadyMode isn't wired up yet — their inbound Channel/TPI API access is still pending from their Integrations team — so this produces a cleaned CSV for ReadyMode's own manual upload in the meantime.
+          Upload a raw property list (DealMachine, BatchLeads, skip-trace or similar export — CSV or Excel) before loading it into ReadyMode's dialer. Every address is checked against <strong>two</strong> sources: leads already known to iSpeedToLead (any PrimeHome Buyers submission, any status), and every lead this dashboard has already pushed into a ReadyMode channel. The first stops agents cold-calling a property already in the pipeline; the second stops the same property being dialled twice because two lists overlapped. If either check cannot run, the whole check is refused rather than reporting everything clean. Direct upload straight into ReadyMode isn't wired up yet — their inbound Channel/TPI API access is still pending from their Integrations team — so this produces a cleaned CSV for ReadyMode's own manual upload in the meantime.
         </div>
         <input type="file" id="rmListUploadInput" accept=".csv,.xlsx,.xls">
         <div class="msg" id="rmListUploadMsg"></div>
@@ -3893,7 +3893,8 @@
         <div id="rmListUploadResults" style="display:none; margin-top:14px;">
           <div class="act-stats-row" style="margin-bottom:14px;">
             <div class="act-stat-card"><div class="act-stat-label">Rows in file</div><div class="act-stat-value" id="rmListStatTotal">0</div></div>
-            <div class="act-stat-card"><div class="act-stat-label">Duplicate addresses</div><div class="act-stat-value bad" id="rmListStatDup">0</div></div>
+            <div class="act-stat-card"><div class="act-stat-label">Already in iSpeedToLead</div><div class="act-stat-value bad" id="rmListStatDup">0</div></div>
+            <div class="act-stat-card"><div class="act-stat-label">Already pushed to ReadyMode</div><div class="act-stat-value bad" id="rmListStatPushed">0</div></div>
             <div class="act-stat-card"><div class="act-stat-label">Clean — ready to upload</div><div class="act-stat-value good" id="rmListStatClean">0</div></div>
           </div>
           <button class="btn-primary" id="rmListDownloadCleanBtn" style="width:auto; padding:9px 16px;">Download clean list (CSV)</button>
@@ -18525,24 +18526,80 @@ function rmDedupeKey(address){
   return `${streetOnly}|${zip}`;
 }
 
+// v582: returns a Map on success and NULL on failure -- the caller MUST fail
+// closed on null rather than treating an empty result as "nothing matched".
+//
+// This used to read leadsPrimeHomeBuyersFormId, which is assigned in exactly
+// one place: inside loadLeads(), which only runs when the Leads TAB is
+// opened. So going straight to Campaigns -> ReadyMode Upload List without
+// visiting Leads first left it null, this returned an EMPTY map, and every
+// row in the file reported "Clean" against a check that had silently
+// compared against nothing. That is worse than no check at all, because the
+// preview looks healthy -- and it is the same failure that pushed 682
+// duplicate leads through the PrimeHome importer until that one was fixed
+// this same way. Moving this card into Campaigns (v574) made it far easier
+// to hit, since staff can now reach it without ever touching Leads.
 async function rmFetchKnownIspeedtoleadAddresses(){
   // Every PrimeHome Buyers submission, any status -- see header comment
   // above for why status doesn't matter here. Paginated in chunks since
   // this can be a few thousand rows.
   const byKey = new Map(); // dedupeKey -> { address, status }
-  if(!leadsPrimeHomeBuyersFormId) return byKey;
+  // Resolved independently of loadLeads(): this helper checks leadsAllForms,
+  // then queries, then creates the form as a last resort.
+  const formId = await getIspdDefaultCampaignFormId();
+  if(!formId) return null;
   const PAGE = 1000;
   for(let from = 0; ; from += PAGE){
     const { data, error } = await sb.from('leads')
       .select('status, extra_fields')
-      .eq('submission_form_id', leadsPrimeHomeBuyersFormId)
+      .eq('submission_form_id', formId)
       .range(from, from + PAGE - 1);
-    if(error || !data || !data.length) break;
+    // A query error mid-pagination would otherwise return a PARTIAL map,
+    // which under-reports duplicates just as silently. Fail closed.
+    if(error) return null;
+    if(!data || !data.length) break;
     data.forEach(r => {
       const addr = (r.extra_fields || {}).form_address;
       if(!addr) return;
       const key = rmDedupeKey(addr);
       if(key && !byKey.has(key)) byKey.set(key, { address: addr, status: r.status });
+    });
+    if(data.length < PAGE) break;
+  }
+  return byKey;
+}
+
+// v582: the second dedupe source -- leads THIS dashboard has already pushed
+// into ReadyMode. The iSpeedToLead check above only knows the PrimeHome
+// Buyers pipeline, so a list that overlaps one already sent to a ReadyMode
+// channel read entirely "Clean" and got pushed a second time. Nothing had
+// prevented that; the only reason it had not happened yet is that each list
+// so far happened to be distinct (verified: 0 repeats across 11,541 pushes
+// to Mississippi Trial Number 1).
+//
+// Every channel is checked, not just the one selected below, and the match
+// reports WHICH channel it went to -- pushing the same property into a second
+// campaign is worth seeing rather than silently allowing. Same null-on-error
+// contract as above.
+async function rmFetchPreviouslyPushedAddresses(){
+  const byKey = new Map(); // dedupeKey -> { channel, pushedAt, address }
+  const PAGE = 1000;
+  for(let from = 0; ; from += PAGE){
+    const { data, error } = await sb.from('readymode_lead_pushes')
+      .select('channel_name, pushed_at, address, city, state, zip')
+      .eq('success', true)
+      .range(from, from + PAGE - 1);
+    if(error) return null;
+    if(!data || !data.length) break;
+    data.forEach(r => {
+      const full = [r.address, r.city, r.state, r.zip].filter(Boolean).join(', ');
+      const key = rmDedupeKey(full);
+      if(!key) return;
+      const prev = byKey.get(key);
+      // Keep the most recent push, so the preview shows the latest send.
+      if(!prev || String(r.pushed_at || '') > String(prev.pushedAt || '')){
+        byKey.set(key, { channel: r.channel_name, pushedAt: r.pushed_at, address: full });
+      }
     });
     if(data.length < PAGE) break;
   }
@@ -18560,7 +18617,7 @@ function rmCsvDownload(filename, headerRow, rows){
   URL.revokeObjectURL(url);
 }
 
-let rmListCheckResult = null; // { headerRow, results: [{cells, isDup, matchedStatus, lead}] }
+let rmListCheckResult = null; // { headerRow, results: [{cells, isDup, pushedBefore, isClean, matchedStatus, lead}] }
 // Parsed file, held between "choose a file" and "Run dedupe check" so the
 // uploader can adjust the column mapping before anything is checked.
 let rmListParsed = null; // { headerRow, dataRows, detectedSource }
@@ -18753,10 +18810,22 @@ document.getElementById('rmListRunCheckBtn')?.addEventListener('click', async ()
   const btn = $('rmListRunCheckBtn');
   btn.disabled = true;
   try {
-    msg.textContent = 'Checking against iSpeedToLead known addresses...';
+    msg.textContent = 'Checking against iSpeedToLead and previous ReadyMode pushes...';
     msg.className = 'msg'; msg.style.display = 'block';
 
+    // Both sources fail CLOSED: a null means the check could not be run, and
+    // reporting every row "Clean" off the back of that is how duplicates get
+    // pushed. Refuse the run instead of producing a confident wrong answer.
     const knownByKey = await rmFetchKnownIspeedtoleadAddresses();
+    if(!knownByKey){
+      msg.textContent = "Couldn't load the known iSpeedToLead addresses, so the dedupe check cannot run -- nothing has been checked. Open the Leads tab once and try again; if it keeps failing, your role may not have access to the PrimeHome Buyers campaign.";
+      msg.className = 'msg error'; msg.style.display = 'block'; return;
+    }
+    const pushedByKey = await rmFetchPreviouslyPushedAddresses();
+    if(!pushedByKey){
+      msg.textContent = "Couldn't load the ReadyMode push history, so the dedupe check cannot run -- nothing has been checked. Try again in a moment.";
+      msg.className = 'msg error'; msg.style.display = 'block'; return;
+    }
 
     const cell = (r, i) => i > -1 ? String(r[i] || '').trim() : '';
     const results = dataRows.map(r => {
@@ -18769,6 +18838,7 @@ document.getElementById('rmListRunCheckBtn')?.addEventListener('click', async ()
       const fullAddr = [rawAddr, city, state, zip].filter(Boolean).join(', ');
       const key = rmDedupeKey(fullAddr || rawAddr);
       const match = key ? knownByKey.get(key) : null;
+      const pushedMatch = key ? pushedByKey.get(key) : null;
       let firstName = cell(r, map.firstName);
       let lastName = cell(r, map.lastName);
       if(!firstName && !lastName && map.fullName > -1){
@@ -18783,26 +18853,44 @@ document.getElementById('rmListRunCheckBtn')?.addEventListener('click', async ()
         email: cell(r, map.email),
         address: rawAddr, city, state, zip,
       };
-      return { cells: r, rawAddr: fullAddr || rawAddr, isDup: !!match, matchedStatus: match ? match.status : null, lead };
+      // isClean is the single source of truth for what gets pushed and what
+      // lands in the "clean" download -- both reasons for exclusion feed it,
+      // so adding a third source later cannot leave one of them behind.
+      return {
+        cells: r,
+        rawAddr: fullAddr || rawAddr,
+        isDup: !!match,
+        pushedBefore: pushedMatch || null,
+        isClean: !match && !pushedMatch,
+        matchedStatus: match ? match.status : null,
+        lead,
+      };
     });
 
     rmListCheckResult = { headerRow, results };
     const dupCount = results.filter(r => r.isDup).length;
+    const pushedCount = results.filter(r => r.pushedBefore).length;
+    const cleanCount = results.filter(r => r.isClean).length;
     const noAddrCount = results.filter(r => !r.rawAddr).length;
     $('rmListStatTotal').textContent = String(results.length);
     $('rmListStatDup').textContent = String(dupCount);
-    $('rmListStatClean').textContent = String(results.length - dupCount);
+    if($('rmListStatPushed')) $('rmListStatPushed').textContent = String(pushedCount);
+    $('rmListStatClean').textContent = String(cleanCount);
     $('rmListPreviewBody').innerHTML = results.slice(0, 500).map(r => `
       <tr style="border-top:1px solid var(--border-light);">
         <td style="padding:5px 8px;">${escapeHtml(r.rawAddr)}</td>
-        <td style="padding:5px 8px; ${r.isDup ? 'color:var(--danger);' : 'color:var(--focus);'}">${r.isDup ? 'Duplicate' : 'Clean'}</td>
-        <td style="padding:5px 8px; color:var(--text-dim);">${r.matchedStatus ? escapeHtml(r.matchedStatus) : '&mdash;'}</td>
+        <td style="padding:5px 8px; ${r.isClean ? 'color:var(--focus);' : 'color:var(--danger);'}">${r.isDup ? 'In iSpeedToLead' : (r.pushedBefore ? 'Already pushed' : 'Clean')}</td>
+        <td style="padding:5px 8px; color:var(--text-dim);">${r.isDup
+          ? escapeHtml(r.matchedStatus || 'known lead')
+          : (r.pushedBefore
+              ? escapeHtml(`${r.pushedBefore.channel || 'ReadyMode'}${r.pushedBefore.pushedAt ? ' \u2014 ' + new Date(r.pushedBefore.pushedAt).toLocaleDateString() : ''}`)
+              : '&mdash;')}</td>
       </tr>
     `).join('') + (results.length > 500 ? `<tr><td colspan="3" style="padding:6px 8px; color:var(--text-dim);">... and ${results.length - 500} more row(s), not shown here but included in the downloads below.</td></tr>` : '');
     $('rmListUploadResults').style.display = 'block';
     $('rmListPushMsg').style.display = 'none';
     $('rmListPushResults').style.display = 'none';
-    msg.textContent = `Checked ${results.length} row(s) against ${knownByKey.size} known iSpeedToLead address(es) -- ${dupCount} duplicate(s) found.`
+    msg.textContent = `Checked ${results.length} row(s) against ${knownByKey.size} known iSpeedToLead address(es) and ${pushedByKey.size} address(es) already pushed to ReadyMode -- ${cleanCount} clean, ${dupCount} already in iSpeedToLead, ${pushedCount} already pushed to a ReadyMode channel.`
       + (noAddrCount ? ` ${noAddrCount} row(s) had nothing in the mapped Address column and could not be checked -- they are counted as clean, so re-check the mapping if that number looks wrong.` : '')
       + (map.phone > -1 ? '' : ' Note: no Phone column is mapped -- ReadyMode requires a phone per lead, so "Push clean list to ReadyMode" will reject every row until you map one.');
     msg.className = 'msg ok';
@@ -18817,14 +18905,14 @@ document.getElementById('rmListRunCheckBtn')?.addEventListener('click', async ()
 
 document.getElementById('rmListDownloadCleanBtn')?.addEventListener('click', () => {
   if(!rmListCheckResult) return;
-  const clean = rmListCheckResult.results.filter(r => !r.isDup).map(r => r.cells);
+  const clean = rmListCheckResult.results.filter(r => r.isClean).map(r => r.cells);
   if(!clean.length){ alert('Nothing to download — every row was flagged as a duplicate.'); return; }
   rmCsvDownload('readymode-upload-clean.csv', rmListCheckResult.headerRow, clean);
   logActivity('integration.readymode_list_dedupe', null, null, `Downloaded a cleaned ReadyMode upload list (${clean.length} row(s), duplicates removed)`);
 });
 document.getElementById('rmListDownloadDupBtn')?.addEventListener('click', () => {
   if(!rmListCheckResult) return;
-  const dups = rmListCheckResult.results.filter(r => r.isDup).map(r => r.cells);
+  const dups = rmListCheckResult.results.filter(r => !r.isClean).map(r => r.cells);
   if(!dups.length){ alert('No duplicates were flagged.'); return; }
   rmCsvDownload('readymode-upload-duplicates.csv', rmListCheckResult.headerRow, dups);
 });
@@ -18850,7 +18938,7 @@ document.getElementById('rmListPushBtn')?.addEventListener('click', async () => 
     pushMsg.className = 'msg error'; pushMsg.style.display = 'block';
     return;
   }
-  const cleanLeads = rmListCheckResult.results.filter(r => !r.isDup).map(r => r.lead);
+  const cleanLeads = rmListCheckResult.results.filter(r => r.isClean).map(r => r.lead);
   if(!cleanLeads.length){ alert('Nothing to push — every row was flagged as a duplicate.'); return; }
   const withPhone = cleanLeads.filter(l => l.phone);
   if(!withPhone.length){
