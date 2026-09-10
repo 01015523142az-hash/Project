@@ -31269,7 +31269,13 @@ async function saveLeadPhone(phoneEl){
 // through this instead of re-inlining the notifyClientsForFormId call, so
 // the notification logic can't drift out of sync between call sites.
 function notifyIfLeadAccepted(lead, status){
-  if(status === 'accepted') notifyClientsForFormId(lead.submission_form_id, 'lead_received', leadsFormNameFn ? leadsFormNameFn(lead.submission_form_id) : null);
+  if(status !== 'accepted') return;
+  // v583: skip if it was ALREADY accepted. Re-saving an accepted lead (an
+  // edited field, a re-click) is not a new delivery and must not text the
+  // client again. `lead` here is the pre-update row, so its status is the
+  // value before this write.
+  if(lead && lead.status === 'accepted') return;
+  notifyClientsForFormId(lead.submission_form_id, 'lead_received', leadsFormNameFn ? leadsFormNameFn(lead.submission_form_id) : null);
 }
 
 async function setLeadStatus(lead, status, agentLabel, extraUpdate){
@@ -32114,6 +32120,45 @@ $('leadsQueueReviewModalOverlay').addEventListener('click', (e) => { if(e.target
 // the lead row's own columns + extra_fields before applying the status
 // change — same columns saveLeadPhone()/collectIspeedToLeadFields() already
 // write to, just gathered from this modal's inputs instead.
+// v583: FIX — one click, one SMS.
+//
+// Every lead action button ran its handler unguarded: not awaited, never
+// disabled. The handler itself sent the client notification FIRST and only
+// closed the modal after `await loadLeads()` -- a full re-fetch of the whole
+// leads table, which takes seconds. So the operator clicked, saw nothing
+// happen, and clicked again. Each click ran the entire action again,
+// including another SMS.
+//
+// Measured on 2026-09-10 before this fix: one lead sent 7 "ticket_received"
+// texts in 10 seconds, and activity_log holds 7 separate clicks 3-4s apart --
+// human re-clicking cadence, not a retry loop. Two other leads took 7
+// call-backs each and another took 3 accepts. The DB trigger was never at
+// fault; it uses `select distinct client_id` and cannot duplicate.
+//
+// Keyed off the button element rather than a per-modal flag so the guard
+// survives the modal being closed and reopened, and always re-enables in a
+// finally so a thrown handler can't leave the button dead. Deliberately does
+// NOT restore textContent -- the Send-as-Ticket button relabels itself to
+// "Confirm Send as Ticket" on the first click, and resetting the label here
+// would break that two-step flow.
+function guardedClick(btnId, handler){
+  const btn = document.getElementById(btnId);
+  if(!btn) return;
+  btn.addEventListener('click', async (ev) => {
+    if(btn.dataset.busy === '1') return;
+    btn.dataset.busy = '1';
+    btn.disabled = true;
+    try {
+      await handler(ev);
+    } catch (err) {
+      console.error(`guardedClick(${btnId}) failed:`, err);
+    } finally {
+      delete btn.dataset.busy;
+      btn.disabled = false;
+    }
+  });
+}
+
 async function saveLeadsQueueReviewFieldsAndSetStatus(status){
   const lead = leadsQueueReviewModalLead;
   if(!lead) return;
@@ -32195,8 +32240,8 @@ async function saveLeadsQueueReviewFieldsAndSetStatus(status){
   logActivity('lead.review', 'lead', lead.id, `Marked ${status} — ${lead.count} lead(s)${status === 'rejected' ? ` — reason: ${reviewNote}` : ''}`);
   closeLeadsQueueReviewModal();
 }
-$('leadsQueueReviewAcceptBtn').addEventListener('click', () => saveLeadsQueueReviewFieldsAndSetStatus('accepted'));
-$('leadsQueueReviewRejectBtn').addEventListener('click', () => saveLeadsQueueReviewFieldsAndSetStatus('rejected'));
+guardedClick('leadsQueueReviewAcceptBtn', () => saveLeadsQueueReviewFieldsAndSetStatus('accepted'));
+guardedClick('leadsQueueReviewRejectBtn', () => saveLeadsQueueReviewFieldsAndSetStatus('rejected'));
 
 // v393: "Send as Ticket" — pushes an already-normal (already
 // campaign-tagged) lead to that same campaign's client for a Yes/No
@@ -32218,15 +32263,33 @@ async function sendLeadAsTicket(lead, notes){
   const msgEl = $('leadsQueueReviewModalMsg');
   const { data: { user } } = await sb.auth.getUser();
   const extraFields = { ...(lead.extra_fields || {}), ticket_notes: notes };
-  const { error } = await sb.from('leads').update({
+  // v583: the update is CONDITIONAL on the lead not already being a ticket,
+  // and the notification only fires if a row actually changed. The button
+  // guard above stops one person double-clicking; this stops everything else
+  // -- two reviewers acting on the same lead at once, a retried request, a
+  // stale modal left open in another tab. The DB decides, not the UI.
+  //
+  // `.neq()` alone would be wrong: ticket_stage is NULL on a normal lead and
+  // `NULL <> 'client_review'` is NULL, not true, so the row would never match
+  // and sending a ticket would silently do nothing. The explicit null branch
+  // is required.
+  const { data: updatedRows, error } = await sb.from('leads').update({
     ticket_stage: 'client_review',
     status: 'pending',
     review_note: null,
     reviewed_by: user ? user.id : null,
     reviewed_at: new Date().toISOString(),
     extra_fields: extraFields,
-  }).eq('id', lead.id);
+  }).eq('id', lead.id)
+    .or('ticket_stage.is.null,ticket_stage.neq.client_review')
+    .select('id');
   if(error){ msgEl.textContent = error.message; msgEl.style.display = ''; return; }
+  if(!updatedRows || !updatedRows.length){
+    msgEl.textContent = 'This lead is already waiting on the client — no second ticket was sent.';
+    msgEl.style.display = '';
+    await loadLeads();
+    return;
+  }
   // v153/v107 pattern: same notification kind + both-channels send the
   // Ticket-accept flow already uses for "this needs a client Yes/No".
   notifyClientsForFormId(lead.submission_form_id, 'ticket_received', leadsFormNameFn ? leadsFormNameFn(lead.submission_form_id) : null);
@@ -32235,7 +32298,7 @@ async function sendLeadAsTicket(lead, notes){
   logActivity('lead.sent_as_ticket', 'lead', lead.id, `Sent as ticket for client Yes/No — ${lead.count} lead(s)`);
   closeLeadsQueueReviewModal();
 }
-$('leadsQueueReviewSendTicketBtn').addEventListener('click', () => {
+guardedClick('leadsQueueReviewSendTicketBtn', async () => {
   const lead = leadsQueueReviewModalLead;
   if(!lead) return;
   const wrap = $('leadsQueueReviewTicketNotesWrap');
@@ -32254,7 +32317,7 @@ $('leadsQueueReviewSendTicketBtn').addEventListener('click', () => {
     return;
   }
   msgEl.style.display = 'none';
-  sendLeadAsTicket(lead, notes);
+  await sendLeadAsTicket(lead, notes);
 });
 
 // ===========================================================================
@@ -32304,7 +32367,7 @@ function closeSendToCallBackModal(){
 $('sendToCallBackCancelBtn').addEventListener('click', closeSendToCallBackModal);
 $('sendToCallBackModalOverlay').addEventListener('click', (e) => { if(e.target.id === 'sendToCallBackModalOverlay') closeSendToCallBackModal(); });
 
-$('sendToCallBackSubmitBtn').addEventListener('click', async () => {
+guardedClick('sendToCallBackSubmitBtn', async () => {
   const lead = sendToCallBackLead;
   if(!lead) return;
   const msg = $('sendToCallBackMsg');
