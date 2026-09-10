@@ -22182,8 +22182,11 @@ async function loadCallActivity(){
       // polls GET_STATUS (its 15s usage cache — see background.js
       // getMonthlyLeadsTotal()). Re-running loadCallActivity() after each
       // action just refreshes this table's own view of the same data.
-      if(acceptBtn) acceptBtn.addEventListener('click', async () => { await setLeadStatus(r, 'accepted', agentLabel); loadCallActivity(); });
-      if(rejectBtn) rejectBtn.addEventListener('click', async () => { await setLeadStatus(r, 'rejected', agentLabel); loadCallActivity(); });
+      // v584: guarded — setLeadStatus() notifies the client on accept, and
+      // this button sat unguarded through the same slow await the modal
+      // buttons did, so a second click sent a second SMS + email.
+      if(acceptBtn) guardedClick(acceptBtn, async () => { await setLeadStatus(r, 'accepted', agentLabel); loadCallActivity(); });
+      if(rejectBtn) guardedClick(rejectBtn, async () => { await setLeadStatus(r, 'rejected', agentLabel); loadCallActivity(); });
       if(delBtn) delBtn.addEventListener('click', async () => {
         if(!confirm(`Permanently delete this submission — ${agentLabel}, ${taskNameById[r.task_id] || 'task'}? This cannot be undone.`)) return;
         await deleteLead(r, `${agentLabel} — ${taskNameById[r.task_id] || 'Staff Work'}`);
@@ -28287,7 +28290,7 @@ function renderLeadsQueueTable(){
     if(reviewBtn) reviewBtn.addEventListener('click', () => openLeadsQueueReviewModal(r, agentName(r.user_id)));
     if(callBackBtn) callBackBtn.addEventListener('click', () => openSendToCallBackModal(r, agentName(r.user_id)));
     if(recallBtn) recallBtn.addEventListener('click', () => recallAcceptedLeadToQueue(r, agentName(r.user_id)));
-    if(rejectBtn) rejectBtn.addEventListener('click', () => setLeadStatus(r, 'rejected', agentName(r.user_id)));
+    if(rejectBtn) guardedClick(rejectBtn, () => setLeadStatus(r, 'rejected', agentName(r.user_id)));
     if(delBtn) delBtn.addEventListener('click', () => deleteLead(r, `${agentName(r.user_id)} — ${r.count} lead(s)`));
     if(phoneEl){
       phoneEl.addEventListener('blur', () => saveLeadPhone(phoneEl));
@@ -28518,7 +28521,7 @@ function renderIspdReviewTable(){
     // your request. See openIspeedToLeadModal/that button's own listener.
     if(ispeedtoleadBtn) ispeedtoleadBtn.addEventListener('click', () => openIspeedToLeadModal(r, agentName(r.user_id)));
     if(callBackBtn) callBackBtn.addEventListener('click', () => openSendToCallBackModal(r, agentName(r.user_id)));
-    if(rejectBtn) rejectBtn.addEventListener('click', () => setLeadStatus(r, 'rejected', agentName(r.user_id)));
+    if(rejectBtn) guardedClick(rejectBtn, () => setLeadStatus(r, 'rejected', agentName(r.user_id)));
     body.appendChild(tr);
   });
   applyLeadsSectionEditGating('queue_review_ispeedtolead');
@@ -28838,7 +28841,7 @@ function renderTicketsReviewTable(){
     const recallBtn = tr.querySelector('.ticket-recall-btn');
     const redirectBtn = tr.querySelector('.ticket-redirect-btn');
     if(acceptBtn) acceptBtn.addEventListener('click', () => openTicketAcceptModal(r));
-    if(rejectBtn) rejectBtn.addEventListener('click', () => setLeadStatus(r, 'rejected', agentName(r.user_id), { ticket_stage: null }));
+    if(rejectBtn) guardedClick(rejectBtn, () => setLeadStatus(r, 'rejected', agentName(r.user_id), { ticket_stage: null }));
     if(recallBtn) recallBtn.addEventListener('click', () => recallTicketToQueue(r, agentName(r.user_id)));
     if(redirectBtn) redirectBtn.addEventListener('click', () => openTicketAcceptModal(r));
     body.appendChild(tr);
@@ -32141,8 +32144,12 @@ $('leadsQueueReviewModalOverlay').addEventListener('click', (e) => { if(e.target
 // NOT restore textContent -- the Send-as-Ticket button relabels itself to
 // "Confirm Send as Ticket" on the first click, and resetting the label here
 // would break that two-step flow.
-function guardedClick(btnId, handler){
-  const btn = document.getElementById(btnId);
+// v584: takes an ELEMENT as well as an id. The accept/reject buttons in the
+// Call Activity, Queue Review, PrimeHome and Tickets tables are rebuilt on
+// every render and have no stable id, so they can only be guarded by
+// reference. Same guard either way -- the busy flag lives on the element.
+function guardedClick(btnOrId, handler){
+  const btn = typeof btnOrId === 'string' ? document.getElementById(btnOrId) : btnOrId;
   if(!btn) return;
   btn.addEventListener('click', async (ev) => {
     if(btn.dataset.busy === '1') return;
