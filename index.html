@@ -3829,6 +3829,21 @@
           Live per-campaign dialing progress, built from ReadyMode's own call-result webhook as calls actually happen — not a manual export. "Leads pushed" comes from our own push audit log (Integrations → ReadyMode → Lead push history); a campaign whose leads were uploaded manually in ReadyMode (not through this dashboard) will show 0 pushed even while calls are happening, since we only know what we ourselves sent. ReadyMode's own file-level "Leads remaining/Health/Round" numbers still aren't available via their API — this is a different, always-current view built from the real-time call events instead.
         </div>
         <button class="btn-secondary" id="rmRefreshCampaignProgressBtn" style="width:auto; padding:7px 14px; margin-bottom:10px;">Refresh</button>
+        <!-- v581 (user request: "make the card match readymode's file"). The
+             call-result webhook only ever sees leads ReadyMode actually
+             dialled, so it structurally cannot match the file: on one real
+             campaign it missed 10,374 leads dialled 4-5 times that never
+             connected, plus 271 whose DNC status was inherited at upload
+             without a single dial. Importing ReadyMode's own per-lead export
+             is the only way these numbers can agree. -->
+        <div style="border:1px solid var(--border-light); border-radius:8px; padding:12px; margin-bottom:14px;">
+          <div style="font-size:12px; color:var(--text-2); font-weight:600; margin-bottom:4px;">Import ReadyMode progress export</div>
+          <div style="font-size:11px; color:var(--text-dim); margin-bottom:10px; line-height:1.45;">
+            In ReadyMode open the Lead File and use <strong>Export a progress file</strong>, then upload the CSV here. It carries per-lead <em>Status</em> and <em>Times Called</em>, which is what makes these cards agree with ReadyMode's own screen — the live call-result feed below can only see leads that produced a dispositioned call. The campaign is read from the file's own "Lead File Campaign" column.
+          </div>
+          <input type="file" id="rmProgressUploadInput" class="edit-only" accept=".csv,.xlsx,.xls">
+          <div class="msg" id="rmProgressUploadMsg" style="margin-top:8px;"></div>
+        </div>
         <div id="rmCampaignProgressList"><div class="empty">Loading…</div></div>
       </div>
     </div>
@@ -19004,16 +19019,36 @@ function renderRmCampaignProgressCard(c, opts){
   const spokeStr = typeof c.spokeToSomeone === 'number'
     ? `${c.spokeToSomeone}${spokePct !== null ? ` (${spokePct}%)` : ''}`
     : '—';
+  // c.file is ReadyMode's own progress export, present only once one has been
+  // imported for this campaign (readymode-api v88+). Everything below degrades
+  // to the webhook-only view when it is absent.
+  const f = c.file || null;
+  const fileNotReachedPct = (f && f.leads) ? Math.round((f.notYetReached / f.leads) * 100) : null;
+  const fileOutcomeBadges = f
+    ? Object.entries(f.outcomes || {})
+        .filter(([k]) => String(k).trim().toLowerCase() !== 'not yet reached')
+        .sort((a, b) => b[1] - a[1]).slice(0, 8)
+    : [];
   const statCards = opts.uncategorized
     ? `<div class="act-stat-card"><div class="act-stat-label">Got a call result</div><div class="act-stat-value good">${c.leadsReached}</div></div>
        <div class="act-stat-card"><div class="act-stat-label">Spoke to someone</div><div class="act-stat-value good">${spokeStr}</div></div>
        <div class="act-stat-card"><div class="act-stat-label">Total call events</div><div class="act-stat-value">${c.totalCallEvents}</div></div>
        <div class="act-stat-card"><div class="act-stat-label">Appointments</div><div class="act-stat-value good">${c.appointmentsSet}</div></div>`
-    : `<div class="act-stat-card"><div class="act-stat-label">Leads pushed</div><div class="act-stat-value">${c.leadsPushed}</div></div>
-       <div class="act-stat-card"><div class="act-stat-label">Got a call result</div><div class="act-stat-value good">${c.leadsReached}${reachPct !== null ? ` (${reachPct}%)` : ''}</div></div>
-       <div class="act-stat-card"><div class="act-stat-label">Spoke to someone</div><div class="act-stat-value good">${spokeStr}</div></div>
-       <div class="act-stat-card"><div class="act-stat-label">No dispositioned call yet</div><div class="act-stat-value">${c.leadsNotYetReached}</div></div>
-       <div class="act-stat-card"><div class="act-stat-label">Appointments</div><div class="act-stat-value good">${c.appointmentsSet}</div></div>`;
+    : (f
+       // A progress export has been imported, so show ReadyMode's OWN file
+       // numbers -- these are the ones that match their screen. The live
+       // webhook figures stay visible underneath rather than being dropped,
+       // since they answer a different question (who did we actually speak
+       // to) that the file cannot.
+       ? `<div class="act-stat-card"><div class="act-stat-label">Leads in ReadyMode file</div><div class="act-stat-value">${f.leads}</div></div>
+          <div class="act-stat-card"><div class="act-stat-label">Not yet reached</div><div class="act-stat-value">${f.notYetReached}${fileNotReachedPct !== null ? ` (${fileNotReachedPct}%)` : ''}</div></div>
+          <div class="act-stat-card"><div class="act-stat-label">Got an outcome</div><div class="act-stat-value good">${f.withOutcome}</div></div>
+          <div class="act-stat-card"><div class="act-stat-label">Appointments</div><div class="act-stat-value good">${f.positives}</div></div>`
+       : `<div class="act-stat-card"><div class="act-stat-label">Leads pushed</div><div class="act-stat-value">${c.leadsPushed}</div></div>
+          <div class="act-stat-card"><div class="act-stat-label">Got a call result</div><div class="act-stat-value good">${c.leadsReached}${reachPct !== null ? ` (${reachPct}%)` : ''}</div></div>
+          <div class="act-stat-card"><div class="act-stat-label">Spoke to someone</div><div class="act-stat-value good">${spokeStr}</div></div>
+          <div class="act-stat-card"><div class="act-stat-label">No dispositioned call yet</div><div class="act-stat-value">${c.leadsNotYetReached}</div></div>
+          <div class="act-stat-card"><div class="act-stat-label">Appointments</div><div class="act-stat-value good">${c.appointmentsSet}</div></div>`);
   return `
     <div style="border:1px solid var(--border-light); border-radius:10px; padding:14px; margin-bottom:12px; ${opts.uncategorized ? 'border-style:dashed;' : ''}">
       <div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap; gap:8px;">
@@ -19024,6 +19059,12 @@ function renderRmCampaignProgressCard(c, opts){
       <div class="act-stats-row" style="margin-top:10px; margin-bottom:0;">
         ${statCards}
       </div>
+      ${f ? `
+        <div style="margin-top:10px; padding-top:10px; border-top:1px dashed var(--border-light); font-size:11px; color:var(--text-dim); line-height:1.6;">
+          <div><strong style="color:var(--text-2);">From ReadyMode's file</strong> — ${f.totalDialAttempts.toLocaleString()} dial attempt(s) across ${f.dialledAtLeastOnce.toLocaleString()} lead(s), averaging ${f.avgDialsPerDialledLead} each.${f.neverDialled ? ` ${f.neverDialled} lead(s) show 0 dials — ReadyMode carried their status over from an existing Lead Profile at upload.` : ''}${f.importedAt ? ` Imported ${new Date(f.importedAt).toLocaleString([], nonAgentDisplayTz() ? { timeZone: nonAgentDisplayTz() } : {})}.` : ''}</div>
+          ${fileOutcomeBadges.length ? `<div style="margin-top:6px; display:flex; flex-wrap:wrap; gap:5px;">${fileOutcomeBadges.map(([k, n]) => `<span class="mono" style="font-size:10px; padding:2px 7px; border:1px solid var(--border-light); border-radius:999px;">${escapeHtml(k)}: ${n}</span>`).join('')}</div>` : ''}
+          <div style="margin-top:6px;">Live call events (a different question — who was actually spoken to): ${c.leadsReached} lead(s) produced a call result, ${spokeStr} spoke to someone.</div>
+        </div>` : ''}
       ${dispositionBadges.length ? `
         <div style="margin-top:10px;">
           ${dispositionBadges.map(([d, n]) => `<span class="lead-ispeedtolead-badge" style="margin-right:6px; margin-bottom:4px; display:inline-block;">${escapeHtml(d)}: ${n}</span>`).join('')}
@@ -19046,6 +19087,116 @@ async function loadRmCampaignProgress(){
 }
 const rmRefreshCampaignProgressBtn = document.getElementById('rmRefreshCampaignProgressBtn');
 if(rmRefreshCampaignProgressBtn) rmRefreshCampaignProgressBtn.addEventListener('click', () => loadRmCampaignProgress());
+
+// v581: ReadyMode's own "Export a progress file" CSV. Parsed and chunked
+// here rather than posted whole -- a real export is ~4MB / 11,673 rows, far
+// past a comfortable edge-function request body, so this mirrors the
+// client-side chunking the ReadyMode push already uses.
+//
+// Column names are taken from a REAL export (2026-09-09), whose header is:
+//   Phone,"Alt. Phone","First Name","Last Name",Address,City,State,Country,
+//   Zip,Email,"Batch Name","Original File Name","Upload Date",Status,
+//   "Original Status","Status (time)","Status (agent)","Lead File Campaign",
+//   "Profile Campaign","Times Called (Dialer)",u_assigntime,"Last Dispo",
+//   "Removed Date","Consent Date",Ph#3..Ph#10
+const rmProgressUploadInput = document.getElementById('rmProgressUploadInput');
+if(rmProgressUploadInput) rmProgressUploadInput.addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  const msg = $('rmProgressUploadMsg');
+  msg.style.display = 'none';
+  if(!file) return;
+  const input = e.target;
+  input.disabled = true;
+  try {
+    msg.textContent = 'Reading file…';
+    msg.className = 'msg'; msg.style.display = 'block';
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+    if(rows.length < 2){ msg.textContent = 'That file has no data rows.'; msg.className = 'msg error'; return; }
+    const headerRow = rows[0].map(h => String(h || '').trim());
+    const norm = v => String(v || '').trim().toLowerCase();
+    const col = names => headerRow.findIndex(h => names.includes(norm(h)));
+    const iPhone = col(['phone']);
+    if(iPhone === -1){
+      msg.textContent = 'No "Phone" column found — this does not look like a ReadyMode progress export.';
+      msg.className = 'msg error'; return;
+    }
+    const iStatus = col(['status']);
+    const iTimes = col(['times called (dialer)', 'times called']);
+    if(iStatus === -1 || iTimes === -1){
+      msg.textContent = 'This file is missing "Status" and/or "Times Called (Dialer)" — those two are the whole point of the progress export, so ReadyMode\'s numbers could not be reproduced without them.';
+      msg.className = 'msg error'; return;
+    }
+    const iCampaign = col(['lead file campaign', 'batch name', 'original file name']);
+    const iFirst = col(['first name']), iLast = col(['last name']);
+    const iAddr = col(['address']), iCity = col(['city']), iState = col(['state']), iZip = col(['zip', 'zip code']);
+    const iLastDispo = col(['last dispo']);
+    const iStatusTime = col(['status (time)']), iStatusAgent = col(['status (agent)']);
+    const iUpload = col(['upload date']), iRemoved = col(['removed date']);
+
+    const cell = (r, i) => i > -1 ? String(r[i] || '').trim() : '';
+    const dataRows = rows.slice(1).filter(r => r.some(c => String(c || '').trim() !== ''));
+
+    // The campaign name comes from the file itself so it always matches the
+    // channel name the pushes were logged under; there is no free-text box to
+    // get subtly wrong (a mismatch would silently create a second campaign).
+    const campaignCounts = {};
+    dataRows.forEach(r => { const v = cell(r, iCampaign); if(v) campaignCounts[v] = (campaignCounts[v] || 0) + 1; });
+    const campaignName = Object.entries(campaignCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '';
+    if(!campaignName){
+      msg.textContent = 'Could not read a campaign name from this file (looked for "Lead File Campaign", "Batch Name", "Original File Name").';
+      msg.className = 'msg error'; return;
+    }
+    const distinctCampaigns = Object.keys(campaignCounts).length;
+
+    const payload = dataRows.map(r => ({
+      phone: cell(r, iPhone),
+      firstName: cell(r, iFirst),
+      lastName: cell(r, iLast),
+      address: cell(r, iAddr),
+      city: cell(r, iCity),
+      state: cell(r, iState),
+      zip: cell(r, iZip),
+      status: cell(r, iStatus),
+      timesCalled: cell(r, iTimes),
+      lastDispo: cell(r, iLastDispo),
+      statusAgent: cell(r, iStatusAgent),
+      statusTime: cell(r, iStatusTime),
+      uploadDate: cell(r, iUpload),
+      removedDate: cell(r, iRemoved),
+    }));
+
+    const CHUNK = 1000;
+    let imported = 0, deduped = 0, skipped = 0;
+    for(let off = 0; off < payload.length; off += CHUNK){
+      const chunk = payload.slice(off, off + CHUNK);
+      msg.textContent = `Importing row ${off + 1}-${off + chunk.length} of ${payload.length} for "${campaignName}"…`;
+      const res = await callRmApi({ action: 'import_progress_csv', campaignName, filename: file.name, rows: chunk });
+      if(!res.ok){
+        msg.textContent = `Stopped at row ${off + 1}: ${res.error || 'import failed.'} ${imported} row(s) were imported before this.`;
+        msg.className = 'msg error'; return;
+      }
+      imported += res.imported || 0;
+      deduped += res.deduped || 0;
+      skipped += res.skippedNoPhone || 0;
+    }
+    msg.textContent = `Imported ${imported} lead(s) for "${campaignName}".`
+      + (deduped ? ` ${deduped} duplicate phone(s) collapsed — the row carrying a real outcome won.` : '')
+      + (skipped ? ` ${skipped} row(s) skipped with no usable phone number.` : '')
+      + (distinctCampaigns > 1 ? ` Note: this file names ${distinctCampaigns} campaigns; everything was filed under the most common one.` : '');
+    msg.className = 'msg ok';
+    loadRmCampaignProgress();
+  } catch (err) {
+    console.error('rmProgressUploadInput: import failed:', err);
+    msg.textContent = `Couldn't read that file: ${err instanceof Error ? err.message : String(err)}`;
+    msg.className = 'msg error'; msg.style.display = 'block';
+  } finally {
+    input.disabled = false;
+    input.value = '';
+  }
+});
 
 // v1.2.7: view_scope moved from a single value to a comma-separated list
 // of combinable scopes (e.g. "self,specific_role"), so a role can be
@@ -25333,6 +25484,11 @@ function activateCsubSection(key){
     initCampaignResourcesSection();
   } else if(key === 'campaign_progress'){
     loadRmCampaignProgress();
+    // This pane now carries an .edit-only control (the progress-file import),
+    // and that class does nothing unless the gating is applied for the
+    // section -- the same gap that left the ReadyMode push button live for
+    // view-only roles until v576. Owner/Admin are never section-gated.
+    if(!(myIsOwner || myRole === 'admin')) applyCsubSectionEditGating('campaign_progress');
   } else if(key === 'readymode_upload_list'){
     // The channel dropdown on the dedupe card and the push-history list
     // were previously filled by the Integrations tab's own bulk load, which
