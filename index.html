@@ -9245,9 +9245,11 @@ const STAFF_NOTIF_MAX = 50;
 let staffNotifUnread = 0;
 let staffNotifOpen = false;
 
-function pushStaffNotification({ icon, title, body, onClick, silent }){
+function pushStaffNotification({ icon, title, body, onClick, silent, durableId, at }){
   const id = `n${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
-  staffNotifications.unshift({ id, icon, title, body, onClick, at: Date.now() });
+  // v592: durableId ties an entry to its staff_notifications row, so
+  // clicking or clearing it marks that row read.
+  staffNotifications.unshift({ id, icon, title, body, onClick, durableId, at: at || Date.now() });
   if(staffNotifications.length > STAFF_NOTIF_MAX) staffNotifications.length = STAFF_NOTIF_MAX;
   if(!staffNotifOpen) staffNotifUnread++;
   renderNotifCenter();
@@ -9383,6 +9385,7 @@ function initNotifCenter(){
     }
   });
   clearBtn.addEventListener('click', () => {
+    markStaffNotificationsRead(staffNotifications.map(n => n.durableId).filter(Boolean));
     staffNotifications = [];
     staffNotifUnread = 0;
     renderNotifCenter();
@@ -9508,10 +9511,53 @@ function staffNotifKindAllowed(kind){
 // column"); client dispute/feedback replies live in lead_dispute_messages.
 // Both tables already have realtime enabled (used by the client portal's own
 // notification center in the other direction) — no migration needed here.
+// v592: the durable half of the bell. Everything above is in-memory and can
+// only show what happens while this tab is open. staff_notifications rows
+// are written by the server for things due while nobody is looking -- a
+// dialer follow-up coming due is the first -- so unread ones load at sign-in
+// and new ones arrive over realtime. Opening or clearing one marks it read,
+// so it does not come back at the next sign-in.
+const STAFF_NOTIF_KIND_ICONS = { dialer_follow_up: '📞' };
+const shownDurableNotifIds = new Set();
+function showDurableStaffNotification(row, silent){
+  if(!row || shownDurableNotifIds.has(row.id)) return;
+  shownDurableNotifIds.add(row.id);
+  pushStaffNotification({
+    icon: STAFF_NOTIF_KIND_ICONS[row.kind] || '🔔',
+    title: row.title,
+    body: row.body || '',
+    durableId: row.id,
+    at: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+    silent,
+    onClick: () => {
+      markStaffNotificationsRead([row.id]);
+      // The dialer is its own origin, so a new tab rather than a tab switch.
+      if(row.url) window.open(row.url, '_blank');
+    },
+  });
+}
+async function loadDurableStaffNotifications(){
+  if(!myUserId) return;
+  const { data, error } = await sb.from('staff_notifications')
+    .select('id, kind, title, body, url, created_at')
+    .eq('user_id', myUserId).is('read_at', null)
+    .order('created_at', { ascending: true }).limit(STAFF_NOTIF_MAX);
+  if(error){ console.error('staff_notifications load failed', error); return; }
+  // Silent: these are not new, they were waiting. They still count as unread.
+  (data || []).forEach(row => showDurableStaffNotification(row, true));
+}
+function markStaffNotificationsRead(ids){
+  if(!ids || !ids.length) return;
+  sb.from('staff_notifications').update({ read_at: new Date().toISOString() })
+    .in('id', ids).is('read_at', null)
+    .then(({ error }) => { if(error) console.error('staff_notifications mark read failed', error); });
+}
+
 let staffOpsChannel = null;
 async function subscribeStaffOpsRealtime(){
   if(staffOpsChannel) return;
   await fetchStaffNotifRolesConfig();
+  loadDurableStaffNotifications();
   staffOpsChannel = sb.channel('staff-ops-notifications')
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'leads' }, (payload) => {
       const lead = payload.new;
@@ -9786,6 +9832,11 @@ async function subscribeStaffOpsRealtime(){
         body: client.company_name ? `${client.full_name} — ${client.company_name}` : (client.full_name || client.email || 'A new client account was created.'),
         onClick: () => { activateTab('usermanagement'); activateUmSection('clients'); },
       });
+    })
+    // v592: durable notifications addressed to this user (see
+    // showDurableStaffNotification above).
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'staff_notifications', filter: `user_id=eq.${myUserId}` }, (payload) => {
+      showDurableStaffNotification(payload.new, false);
     })
     .subscribe();
 }
