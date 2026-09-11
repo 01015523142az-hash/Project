@@ -2676,7 +2676,12 @@
         <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:14px; text-transform:uppercase; letter-spacing:1px;">Tickets</h3>
         <table>
           <thead>
-            <tr><th>User</th><th>Submitted at</th><th>Seller Name</th><th>Phone</th><th>Campaign Name (as submitted)</th><th>Stage</th><th>Status</th><th>Actions</th></tr>
+            <!-- v: was "Campaign Name (as submitted)". This column now shows
+                 the campaign the ticket is CURRENTLY attached to (which a
+                 redirect changes), with the agent's original answer shown
+                 underneath only when it differs -- so the header can no
+                 longer claim "as submitted". -->
+            <tr><th>User</th><th>Submitted at</th><th>Seller Name</th><th>Phone</th><th>Campaign</th><th>Stage</th><th>Status</th><th>Actions</th></tr>
           </thead>
           <tbody id="leadsTicketsBody"></tbody>
         </table>
@@ -28893,7 +28898,45 @@ function renderTicketsReviewTable(){
     const submittedLabel = new Date(r.submitted_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) });
     const meta = LEAD_STATUS_META[r.status] || LEAD_STATUS_META.pending;
     const stageMeta = TICKET_STAGE_META[r.ticket_stage] || { label: r.ticket_stage, color: 'var(--text-dim)' };
-    const submittedCampaignName = (r.extra_fields && r.extra_fields.campaign_name) || '—';
+    // BUG FIX (user report, 2026-09-11, with screenshot: this column read "—"
+    // on 3 of the 4 tickets on screen, and the one row that DID show a name
+    // showed the wrong one). Two separate faults:
+    //  1. It read the LITERAL extra_fields key 'campaign_name'. That key only
+    //     exists when the agent's form happened to ask a question keyed
+    //     exactly that, so every other ticket rendered "—" despite being
+    //     attached to a perfectly real campaign via submission_form_id.
+    //     Live-confirmed: 3 of the 4 tickets on screen were all attached to
+    //     "Mississippi Trial Number 1" and every one of them showed "—".
+    //  2. It never consulted submission_form_id at all -- which is the LIVE
+    //     campaign assignment, the thing openTicketAcceptModal()'s confirm
+    //     handler rewrites when a ticket is accepted into, or redirected to,
+    //     a different campaign. So after a redirect this column kept showing
+    //     the agent's original free-text answer forever. Live-confirmed:
+    //     Wendy Carter's ticket had already been moved to "PrimeHome Buyers"
+    //     but still displayed the submitted text "Mississippi Trial Number 1".
+    // Now shows the CURRENT campaign -- what the ticket is actually attached
+    // to right now -- and keeps the agent's original answer beneath it only
+    // when the two differ, so a redirect reads as a visible change instead of
+    // silently overwriting history. The generic seeded "Ticket" form is not a
+    // campaign, so it never counts as one here (the same leadsTicketFormId
+    // exclusion openTicketAcceptModal already applies to its campaign list).
+    const currentFormName = (r.submission_form_id && r.submission_form_id !== leadsTicketFormId)
+      ? leadsFormNameFn(r.submission_form_id)
+      : '';
+    const currentCampaign = (currentFormName && currentFormName !== 'No campaign') ? currentFormName : '';
+    // The agent's own free-text answer, matched by LABEL rather than by raw
+    // key -- same reasoning as openTicketAcceptModal()'s v113 comment: these
+    // are ordinary editable Submission Forms Creator fields, so an admin
+    // renaming the key must not silently blank this column. Falls back to the
+    // legacy literal key for leads whose form definition is long gone.
+    const campaignEntries = leadsExtraFieldsEntriesFn(r.task_id, r.submission_form_id, r.extra_fields) || [];
+    const labelledCampaign = campaignEntries.find(e => csubNormalizeLabel(e.label) === csubNormalizeLabel('Campaign Name'));
+    const submittedCampaignName = String((labelledCampaign && labelledCampaign.value) || (r.extra_fields && r.extra_fields.campaign_name) || '').trim();
+    const campaignCell = currentCampaign
+      ? escapeHtml(currentCampaign) + (submittedCampaignName && csubNormalizeLabel(submittedCampaignName) !== csubNormalizeLabel(currentCampaign)
+          ? `<div style="font-size:10px; color:var(--text-dim); margin-top:2px;">submitted as: ${escapeHtml(submittedCampaignName)}</div>`
+          : '')
+      : (submittedCampaignName ? escapeHtml(submittedCampaignName) : '—');
     // v140: self-accept restriction removed — see the matching comment in
     // the general Queue Review table above.
     const canEditThisLead = true;
@@ -28903,7 +28946,7 @@ function renderTicketsReviewTable(){
       <td class="mono">${submittedLabel}</td>
       <td>${escapeHtml(r.seller_investor_name || '—')}</td>
       <td class="mono">${escapeHtml(r.seller_phone || '—')}</td>
-      <td>${escapeHtml(submittedCampaignName)}</td>
+      <td>${campaignCell}</td>
       <td><span style="color:${stageMeta.color};">${escapeHtml(stageMeta.label)}</span></td>
       <td><span class="dot ${meta.dot}"></span><span class="${meta.text}">${meta.label}</span></td>
       <td>
