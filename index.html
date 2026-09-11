@@ -22314,14 +22314,22 @@ async function loadCallActivity(){
     }
 
     const [submittedRows, reviewedRows, ispdRows, hourRows] = await Promise.all([
-      fetchByIds('leads', 'id, user_id, reviewed_by, status, seller_phone_norm, seller_investor_name, review_note, reject_reason_category, reviewed_at', 'user_id', 'submitted_at'),
-      fetchByIds('leads', 'id, reviewed_by, status, seller_phone_norm, seller_investor_name, review_note, reject_reason_category, reviewed_at', 'reviewed_by', 'reviewed_at'),
+      // v: addr/addr_alt pull ONLY the address string out of extra_fields
+      // rather than the whole jsonb blob -- these rows carry ~25 keys each
+      // including long free-text notes, and this report can fetch the entire
+      // org's leads at once, so selecting extra_fields wholesale here would
+      // be a large payload for one string. PostgREST's JSON-key select is
+      // verified against the live API. form_address is the real field (it is
+      // populated on 100% of leads); property_address exists on a handful of
+      // older rows only, hence the fallback.
+      fetchByIds('leads', 'id, user_id, reviewed_by, status, seller_phone_norm, seller_investor_name, review_note, reject_reason_category, reviewed_at, addr:extra_fields->>form_address, addr_alt:extra_fields->>property_address', 'user_id', 'submitted_at'),
+      fetchByIds('leads', 'id, reviewed_by, status, seller_phone_norm, seller_investor_name, review_note, reject_reason_category, reviewed_at, addr:extra_fields->>form_address, addr_alt:extra_fields->>property_address', 'reviewed_by', 'reviewed_at'),
       fetchByIds('ispeedtolead_submissions', 'submitted_by, channel, success', 'submitted_by', 'created_at'),
       fetchByIds('time_entries', 'user_id, start_time, end_time, idle_seconds, break_seconds', 'user_id', 'start_time', true),
     ]);
 
     const perAgent = {};
-    relevantAgents.forEach(p => { perAgent[p.id] = { submitted: 0, accepted: 0, rejected: 0, primehome: 0, gyhomes: 0, hoursSec: 0, acceptedPhones: new Set(), creditedLeadIds: new Set(), rejectedLeads: [] }; });
+    relevantAgents.forEach(p => { perAgent[p.id] = { submitted: 0, accepted: 0, rejected: 0, primehome: 0, gyhomes: 0, hoursSec: 0, acceptedPropertyKeys: new Set(), creditedLeadIds: new Set(), rejectedLeads: [] }; });
     // v: totals dedupe. One lead can now legitimately credit TWO rows of
     // this table -- the agent who SUBMITTED it and the reviewer who
     // ACCEPTED it (see both creditOutcome call sites below) -- so plainly
@@ -22337,11 +22345,47 @@ async function loadCallActivity(){
     // BUG FIX (user report, 2026-09): a lead resubmitted 2-3x for the same
     // property (a true duplicate — see the 2026-09 iSpeedToLead backfill)
     // used to count as multiple separate "accepted" leads here, one per row,
-    // just because each got its own Accept click. Dedupe by phone per agent
-    // so a group of duplicate rows only credits the agent once — one
-    // property, one credit — matching what the sales bonus formula (which
-    // reads this same 'accepted' status) actually assumes. A lead with no
-    // phone on file can't collide with anything, so it always counts.
+    // just because each got its own Accept click. Dedupe per agent so a group
+    // of duplicate rows only credits the agent once — one property, one
+    // credit — matching what the sales bonus formula (which reads this same
+    // 'accepted' status) actually assumes.
+    //
+    // BUG FIX (user request, 2026-09-11): that dedupe was keyed on PHONE,
+    // which is the wrong identity. A lead is a PROPERTY, and one owner
+    // routinely has several — a landlord selling three houses is three real
+    // leads that share one phone number, and keying on the phone silently
+    // collapsed them into a single credit, docking the agent for the other
+    // two. Now keyed on the property address, via the same rmDedupeKey()
+    // the ReadyMode/iSpeedToLead dedupe already uses (normalized street +
+    // zip, with street-type and state abbreviation maps, so "123 North Main
+    // Street, Cranston, Rhode Island" and "123 N Main St, Cranston, RI"
+    // collapse correctly). Measured against production: this returns 4
+    // accepted leads to one team leader and changes nobody else.
+    //
+    // Phone remains a LAST-RESORT key for a row with no address at all,
+    // rather than "count everything separately" — without an address there
+    // is no property identity to compare, so the old signal is the only one
+    // left. Verified to be a theoretical path today: form_address is
+    // populated on 100% of leads (2327/2327 over 180 days).
+    // v: "3774 Tessland Road Rd" is a real production typo. It normalizes to
+    // "3774 tessland rd rd" (rmDedupeKey maps "road"->"rd", leaving the
+    // duplicate) and so would NOT match "3774 Tessland Rd" -- the same
+    // property credited twice. Collapse a repeated ADJACENT street-type
+    // token, which is never a legitimate address. Deliberately narrow:
+    // collapsing any repeated word would corrupt real names like the city of
+    // Walla Walla. Applied HERE rather than inside the shared rmDedupeKey(),
+    // because that helper also guards the ReadyMode duplicate-push path --
+    // widening what it treats as "the same property" there could suppress a
+    // genuine lead, which is the more expensive mistake.
+    const STREET_TYPE_TOKENS = new Set(Object.values(RM_STREET_TYPE_ABBR));
+    function collapseRepeatedStreetType(key){
+      return key.split(' ').filter((t, i, arr) => !(i > 0 && t === arr[i - 1] && STREET_TYPE_TOKENS.has(t))).join(' ');
+    }
+    function propertyKeyFor(r){
+      const addr = String(r.addr || r.addr_alt || '').trim();
+      if(addr) return 'a:' + collapseRepeatedStreetType(rmDedupeKey(addr));
+      return r.seller_phone_norm ? 'p:' + r.seller_phone_norm : '';
+    }
     function creditOutcome(agent, r){
       // BUG FIX (user request, 2026-09): a rejection whose reason is
       // literally "Duplicate address/phone number" isn't a bad lead —
@@ -22368,9 +22412,10 @@ async function loadCallActivity(){
       // reviewer.
       if(agent.creditedLeadIds.has(r.id)) return;
       if(effectiveStatus === 'accepted'){
-        if(r.seller_phone_norm){
-          if(agent.acceptedPhones.has(r.seller_phone_norm)) return;
-          agent.acceptedPhones.add(r.seller_phone_norm);
+        const propertyKey = propertyKeyFor(r);
+        if(propertyKey){
+          if(agent.acceptedPropertyKeys.has(propertyKey)) return;
+          agent.acceptedPropertyKeys.add(propertyKey);
         }
         agent.creditedLeadIds.add(r.id);
         creditedAcceptedIds.add(r.id);
