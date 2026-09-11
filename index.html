@@ -18620,6 +18620,58 @@ function rmDedupeKey(address){
   return `${streetOnly}|${zip}`;
 }
 
+// ===== One definition of "an agent earned credit for this lead" =====
+// v (user request, 2026-09-11): Activity -> Staff Activity and the payroll /
+// bonus figure in Reports used to answer that question DIFFERENTLY, which is
+// how the same agent could read 3 in one place and 10 in the other. Both now
+// go through these two helpers, so the two reports cannot drift apart again
+// without someone editing this block on purpose.
+//
+// A rejection categorised exactly "Duplicate address/phone number" counts as
+// ACCEPTED. It is not a bad lead -- iSpeedToLead's own Lead Summary on these
+// routinely reads "Good Lead" -- it merely already existed in their system,
+// often because another agent (or an earlier resubmission) got there first.
+// Docking the agent who genuinely found it would be wrong. NOTE this now
+// applies to PAY as well, which reverses the original decision to scope it to
+// Staff Activity alone; that was changed deliberately and on request.
+// Matched on reject_reason_category (the short category iSpeedToLead returns)
+// and never on review_note, which carries the elaborated summary text and
+// would stop matching the moment that wording drifts.
+const LEAD_DUPLICATE_REJECT_CATEGORY = 'Duplicate address/phone number';
+function leadCountsAsAccepted(lead){
+  if(!lead) return false;
+  if(lead.status === 'accepted') return true;
+  return lead.status === 'rejected' && lead.reject_reason_category === LEAD_DUPLICATE_REJECT_CATEGORY;
+}
+
+// A lead is a PROPERTY, so credit is deduped per property, never per phone --
+// one owner routinely sells several houses and they are separate leads.
+// Built on rmDedupeKey() (normalized street + zip) so this agrees with the
+// ReadyMode/iSpeedToLead dedupe about what "the same property" means.
+//
+// The extra collapse: "3774 Tessland Road Rd" is a real production typo that
+// rmDedupeKey turns into "3774 tessland rd rd" (it maps "road"->"rd" and
+// leaves the duplicate), which would not match "3774 Tessland Rd" -- the same
+// property counted twice. Only a repeated ADJACENT STREET-TYPE token is
+// collapsed, which is never a legitimate address; collapsing any repeated
+// word would corrupt real names like the city of Walla Walla. This lives here
+// rather than inside rmDedupeKey() itself because that key also guards the
+// ReadyMode duplicate-push path, where widening "the same property" can
+// suppress a genuine lead -- the more expensive mistake.
+//
+// Phone is a LAST-RESORT key for a row carrying no address at all: without an
+// address there is no property identity to compare. Theoretical today --
+// form_address is populated on 100% of leads.
+const LEAD_STREET_TYPE_TOKENS = new Set(Object.values(RM_STREET_TYPE_ABBR));
+function collapseRepeatedStreetType(key){
+  return key.split(' ').filter((t, i, arr) => !(i > 0 && t === arr[i - 1] && LEAD_STREET_TYPE_TOKENS.has(t))).join(' ');
+}
+function leadPropertyKey(address, phoneNorm){
+  const addr = String(address || '').trim();
+  if(addr) return 'a:' + collapseRepeatedStreetType(rmDedupeKey(addr));
+  return phoneNorm ? 'p:' + phoneNorm : '';
+}
+
 // v582: returns a Map on success and NULL on failure -- the caller MUST fail
 // closed on null rather than treating an empty result as "nothing matched".
 //
@@ -21123,15 +21175,50 @@ async function computeAgentStats(agentId, rangeStartMs, rangeEndMs){
     ? Math.round(sampleRows.reduce((a,s) => a + (s.activity_pct || 0), 0) / sampleRows.length)
     : null;
 
-  // Only ACCEPTED leads count toward reports and the sales bonus formula
-  // — pending/rejected submissions are excluded until an admin verifies
-  // them on the Leads tab. See leads.status in schema.sql.
-  const { data: leadRows } = await sb.from('leads')
-    .select('count')
+  // Leads that count toward reports and the sales bonus formula. Pending
+  // submissions are still excluded until a human verifies them on the Leads
+  // tab. See leads.status in schema.sql.
+  //
+  // v (user request, 2026-09-11): this figure and Activity -> Staff Activity's
+  // Accepted column were computed by two different rules, which is how the
+  // same agent could read 3 here and 10 there. Both now go through the shared
+  // leadCountsAsAccepted() / leadPropertyKey() helpers. Two deliberate changes
+  // to what gets PAID, chosen explicitly:
+  //   1. A rejection categorised "Duplicate address/phone number" now COUNTS
+  //      (see leadCountsAsAccepted). This is material: it takes one agent's
+  //      September figure from 3 to 10. No pay actually moves today only
+  //      because that agent's salary tiers start at 40 leads.
+  //   2. Credit is deduped per PROPERTY, so one property resubmitted and
+  //      accepted twice is paid once. Measured over all history: exactly one
+  //      such group exists, and it belongs to someone with no lead-based comp,
+  //      so no past payroll figure moves because of this half.
+  //
+  // Both statuses are fetched and the decision made HERE rather than in a
+  // server-side .or() filter: RLS makes such a filter impossible to verify
+  // properly from outside this app, and one that silently excluded rows would
+  // quietly underpay somebody. Paged through fetchAllRows() because this now
+  // pulls rejected rows too -- a busy agent's month can approach PostgREST's
+  // 1000-row cap, which would truncate a payroll number in silence.
+  const leadRows = await fetchAllRows((from, to) => sb.from('leads')
+    .select('id, count, status, reject_reason_category, seller_phone_norm, addr:extra_fields->>form_address, addr_alt:extra_fields->>property_address')
     .eq('user_id', agentId)
-    .eq('status', 'accepted')
-    .gte('submitted_at', startISO).lte('submitted_at', endISO);
-  const leadsCount = (leadRows || []).reduce((t, r) => t + (r.count || 0), 0);
+    .in('status', ['accepted', 'rejected'])
+    .gte('submitted_at', startISO).lte('submitted_at', endISO)
+    .order('id', { ascending: true }).range(from, to));
+  const paidPropertyKeys = new Set();
+  const leadsCount = (leadRows || []).reduce((total, r) => {
+    if(!leadCountsAsAccepted(r)) return total;
+    const key = leadPropertyKey(r.addr || r.addr_alt, r.seller_phone_norm);
+    if(key){
+      if(paidPropertyKeys.has(key)) return total;
+      paidPropertyKeys.add(key);
+    }
+    // `count` is still summed rather than counting rows: it is 1 on every row
+    // today, but the column exists so one submission can stand for several
+    // leads, and switching to a row count would silently change that if it is
+    // ever used.
+    return total + (r.count || 0);
+  }, 0);
 
   return {
     grossSec, idleSec, breakSec, productiveSec, payableSec,
@@ -22405,24 +22492,13 @@ async function loadCallActivity(){
     // is no property identity to compare, so the old signal is the only one
     // left. Verified to be a theoretical path today: form_address is
     // populated on 100% of leads (2327/2327 over 180 days).
-    // v: "3774 Tessland Road Rd" is a real production typo. It normalizes to
-    // "3774 tessland rd rd" (rmDedupeKey maps "road"->"rd", leaving the
-    // duplicate) and so would NOT match "3774 Tessland Rd" -- the same
-    // property credited twice. Collapse a repeated ADJACENT street-type
-    // token, which is never a legitimate address. Deliberately narrow:
-    // collapsing any repeated word would corrupt real names like the city of
-    // Walla Walla. Applied HERE rather than inside the shared rmDedupeKey(),
-    // because that helper also guards the ReadyMode duplicate-push path --
-    // widening what it treats as "the same property" there could suppress a
-    // genuine lead, which is the more expensive mistake.
-    const STREET_TYPE_TOKENS = new Set(Object.values(RM_STREET_TYPE_ABBR));
-    function collapseRepeatedStreetType(key){
-      return key.split(' ').filter((t, i, arr) => !(i > 0 && t === arr[i - 1] && STREET_TYPE_TOKENS.has(t))).join(' ');
-    }
+    // v: the property key and the "counts as accepted" rule both live at the
+    // top of this file now (leadPropertyKey / leadCountsAsAccepted), shared
+    // with the payroll figure in Reports so the two reports can no longer
+    // disagree about one agent's number. See those helpers for the reasoning
+    // behind the property key and the street-type collapse.
     function propertyKeyFor(r){
-      const addr = String(r.addr || r.addr_alt || '').trim();
-      if(addr) return 'a:' + collapseRepeatedStreetType(rmDedupeKey(addr));
-      return r.seller_phone_norm ? 'p:' + r.seller_phone_norm : '';
+      return leadPropertyKey(r.addr || r.addr_alt, r.seller_phone_norm);
     }
     function creditOutcome(agent, r){
       // BUG FIX (user request, 2026-09): a rejection whose reason is
@@ -22441,7 +22517,7 @@ async function loadCallActivity(){
       // ELABORATED Lead Summary text when one's available (see the 2026-09
       // Lead Summary fix) and would silently stop matching "Duplicate
       // address/phone number" verbatim the moment that text diverges.
-      const effectiveStatus = (r.status === 'rejected' && r.reject_reason_category === 'Duplicate address/phone number') ? 'accepted' : r.status;
+      const effectiveStatus = leadCountsAsAccepted(r) ? 'accepted' : r.status;
       // v: one lead must never credit the SAME agent twice. Newly reachable
       // now that a lead credits its submitter AND its reviewer: an agent who
       // reviews their own submission (allowed since v140 removed the
