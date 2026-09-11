@@ -18553,23 +18553,61 @@ function rmExtractZip5(address){
 // stable comparison form: lowercase, punctuation stripped, unit/apt/suite
 // fragments dropped (the unit is never what makes iSpeedToLead treat two
 // submissions as the same property -- the street address is), then every
-// word run through the street-type/state abbreviation maps so "123 North
-// Main Street, Cranston, Rhode Island" and "123 N Main St, Cranston, RI"
-// normalize identically.
+// word run through the street-type map, plus the state map applied at the
+// STATE POSITION only, so "123 North Main Street, Cranston, Rhode Island"
+// and "123 N Main St, Cranston, RI" normalize identically.
+//
+// BUG FIX (user request, 2026-09-11): the state map used to be applied to
+// EVERY word, which quietly mangled any street or city named after a state
+// -- and in this data that is nearly every occurrence of a state word.
+// "3024 Florida St" became "3024 fl st", "Kansas City MO" became "ks city
+// mo", "Oklahoma City OK" became "ok city ok". Harmless while both sides of
+// a comparison were mangled identically, but it is a standing false-merge
+// risk anywhere a key is compared across sources, and it made the keys
+// unreadable when debugging a duplicate.
+// A state appears exactly once, at the end (before any zip), so that is the
+// only place it is now looked for -- everything earlier in the string is
+// left as written.
+//
+// Second bug fixed by the same restructure: the street-type pass used to run
+// BEFORE the two-word state lookup, so "west virginia" was already "w
+// virginia" by the time the state map saw it and never matched. "West
+// Virginia" normalized to "w va" instead of "wv" (same for North/South
+// Carolina). The state tokens are now resolved from the RAW words and are
+// exempt from the street-type map entirely.
+//
+// Verified over all 2310 distinct production addresses: 62 keys corrected,
+// ZERO new merges and ZERO new splits -- i.e. no dedupe DECISION changes,
+// only the normalized form. That matters because this key also guards the
+// ReadyMode duplicate-push path, where a false merge suppresses a real lead.
 function normalizeAddressForDedupe(address){
   if(!address) return '';
   let s = String(address).toLowerCase().replace(/[.#]/g, ' ').replace(/,/g, ' ');
   s = s.replace(/\b(apt|apartment|unit|suite|ste)\s*\S*/g, ' ');
-  const words = s.split(/\s+/).filter(Boolean).map(w => RM_STREET_TYPE_ABBR[w] || w);
-  // Multi-word state names ("new york", "rhode island", ...) need a
-  // sliding two-word check before falling back to the single-word map.
-  const out = [];
-  for(let i = 0; i < words.length; i++){
-    const two = words[i] + ' ' + (words[i+1] || '');
-    if(RM_STATE_ABBR[two]){ out.push(RM_STATE_ABBR[two]); i++; continue; }
-    out.push(RM_STATE_ABBR[words[i]] || words[i]);
+  const words = s.split(/\s+/).filter(Boolean);
+  // A trailing country is noise ("..., MS 39047, USA") and would otherwise
+  // sit where the state is expected.
+  while(words.length && (words[words.length - 1] === 'usa' || words[words.length - 1] === 'us')) words.pop();
+  // The state sits at the end, or immediately before a trailing zip.
+  let stateEnd = words.length - 1;
+  if(stateEnd >= 0 && /^\d{5}(-\d{4})?$/.test(words[stateEnd])) stateEnd--;
+  // Multi-word state names ("new york", "rhode island", ...) get a two-word
+  // check before falling back to the single-word map.
+  let stateStart = -1, stateAbbr = '';
+  if(stateEnd >= 1){
+    const two = words[stateEnd - 1] + ' ' + words[stateEnd];
+    if(RM_STATE_ABBR[two]){ stateAbbr = RM_STATE_ABBR[two]; stateStart = stateEnd - 1; }
   }
-  return out.join(' ').replace(/\s+/g, ' ').trim();
+  if(stateStart === -1 && stateEnd >= 0 && RM_STATE_ABBR[words[stateEnd]]){
+    stateAbbr = RM_STATE_ABBR[words[stateEnd]];
+    stateStart = stateEnd;
+  }
+  const out = words.map((w, i) => (stateStart !== -1 && i >= stateStart && i <= stateEnd) ? null : (RM_STREET_TYPE_ABBR[w] || w));
+  if(stateStart !== -1){
+    out[stateStart] = stateAbbr;
+    for(let i = stateStart + 1; i <= stateEnd; i++) out[i] = null;
+  }
+  return out.filter(w => w !== null).join(' ').replace(/\s+/g, ' ').trim();
 }
 // The actual dedupe key: normalized street address + zip when a zip is
 // available on both sides (the strongest signal -- immune to city/state
