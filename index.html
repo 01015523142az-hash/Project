@@ -22309,14 +22309,26 @@ async function loadCallActivity(){
     }
 
     const [submittedRows, reviewedRows, ispdRows, hourRows] = await Promise.all([
-      fetchByIds('leads', 'user_id, reviewed_by, status, seller_phone_norm, seller_investor_name, review_note, reject_reason_category, reviewed_at', 'user_id', 'submitted_at'),
-      fetchByIds('leads', 'reviewed_by, status, seller_phone_norm, seller_investor_name, review_note, reject_reason_category, reviewed_at', 'reviewed_by', 'reviewed_at'),
+      fetchByIds('leads', 'id, user_id, reviewed_by, status, seller_phone_norm, seller_investor_name, review_note, reject_reason_category, reviewed_at', 'user_id', 'submitted_at'),
+      fetchByIds('leads', 'id, reviewed_by, status, seller_phone_norm, seller_investor_name, review_note, reject_reason_category, reviewed_at', 'reviewed_by', 'reviewed_at'),
       fetchByIds('ispeedtolead_submissions', 'submitted_by, channel, success', 'submitted_by', 'created_at'),
       fetchByIds('time_entries', 'user_id, start_time, end_time, idle_seconds, break_seconds', 'user_id', 'start_time', true),
     ]);
 
     const perAgent = {};
-    relevantAgents.forEach(p => { perAgent[p.id] = { submitted: 0, accepted: 0, rejected: 0, primehome: 0, gyhomes: 0, hoursSec: 0, acceptedPhones: new Set(), rejectedLeads: [] }; });
+    relevantAgents.forEach(p => { perAgent[p.id] = { submitted: 0, accepted: 0, rejected: 0, primehome: 0, gyhomes: 0, hoursSec: 0, acceptedPhones: new Set(), creditedLeadIds: new Set(), rejectedLeads: [] }; });
+    // v: totals dedupe. One lead can now legitimately credit TWO rows of
+    // this table -- the agent who SUBMITTED it and the reviewer who
+    // ACCEPTED it (see both creditOutcome call sites below) -- so plainly
+    // summing the columns would count that lead twice in the stat cards
+    // above. These sets hold the distinct lead ids that actually earned a
+    // credit, and the Accepted/Rejected cards are sized off them instead,
+    // so a lead counts exactly once no matter how many rows show it.
+    // Stated plainly because it otherwise reads as a bug: when a lead
+    // credits both its submitter and its reviewer, the Accepted card is
+    // DELIBERATELY lower than the sum of the Accepted column.
+    const creditedAcceptedIds = new Set();
+    const creditedRejectedIds = new Set();
     // BUG FIX (user report, 2026-09): a lead resubmitted 2-3x for the same
     // property (a true duplicate — see the 2026-09 iSpeedToLead backfill)
     // used to count as multiple separate "accepted" leads here, one per row,
@@ -22343,13 +22355,24 @@ async function loadCallActivity(){
       // Lead Summary fix) and would silently stop matching "Duplicate
       // address/phone number" verbatim the moment that text diverges.
       const effectiveStatus = (r.status === 'rejected' && r.reject_reason_category === 'Duplicate address/phone number') ? 'accepted' : r.status;
+      // v: one lead must never credit the SAME agent twice. Newly reachable
+      // now that a lead credits its submitter AND its reviewer: an agent who
+      // reviews their own submission (allowed since v140 removed the
+      // self-accept restriction) matches BOTH fetches below and would
+      // otherwise score the same lead once as submitter and again as
+      // reviewer.
+      if(agent.creditedLeadIds.has(r.id)) return;
       if(effectiveStatus === 'accepted'){
         if(r.seller_phone_norm){
           if(agent.acceptedPhones.has(r.seller_phone_norm)) return;
           agent.acceptedPhones.add(r.seller_phone_norm);
         }
+        agent.creditedLeadIds.add(r.id);
+        creditedAcceptedIds.add(r.id);
         agent.accepted++;
       } else if(effectiveStatus === 'rejected'){
+        agent.creditedLeadIds.add(r.id);
+        creditedRejectedIds.add(r.id);
         agent.rejected++;
         agent.rejectedLeads.push(r);
       }
@@ -22371,7 +22394,29 @@ async function loadCallActivity(){
       // the SUBMITTING agent for exactly the reviewed_by-null rows; anything
       // a human actually reviewed still credits the reviewer below, via
       // reviewedRows, so nothing here double-counts.
-      if(!r.reviewed_by) creditOutcome(agent, r);
+      //
+      // BUG FIX (user report, 2026-09-11: "staff activity doesn't show
+      // accepted manual leads on lead queue review"): that reviewed_by-null
+      // condition was itself the next bug. It made submitter credit and
+      // reviewer credit MUTUALLY EXCLUSIVE, so the moment a human accepted a
+      // lead in Leads Queue Review the submitting agent lost the credit for
+      // it -- permanently, and precisely for the leads a person vouched for.
+      // Live-confirmed against production: of the 8 leads accepted by a real
+      // reviewer, ALL 8 were submitted by role 'agent' and every one of those
+      // agents showed Accepted = 0. Worse, 5 of the 8 were credited to NOBODY
+      // AT ALL, because their reviewer was an owner/admin and PROTECTED_ROLES
+      // strips those two from staffProfiles above -- so reviewedRows never
+      // fetched them either and the accepted lead simply vanished from this
+      // report.
+      // Credit the submitter for their lead's outcome ALWAYS. This also makes
+      // this table finally agree with how PAY has always counted the very
+      // same thing: computeSalesPay()'s leadsCount query credits user_id for
+      // status='accepted' with no reviewed_by condition whatsoever, so an
+      // agent could be paid a lead bonus for an accepted lead this report
+      // insisted they never got. Reviewers keep their own credit below;
+      // double counting is handled by creditedLeadIds (per agent) and the
+      // creditedAccepted/RejectedIds sets (totals).
+      creditOutcome(agent, r);
     });
     reviewedRows.forEach(r => {
       const agent = perAgent[r.reviewed_by];
@@ -22396,10 +22441,18 @@ async function loadCallActivity(){
     let totals = { submitted: 0, accepted: 0, rejected: 0, primehome: 0, gyhomes: 0, hoursSec: 0 };
     const rows = relevantAgents.map(p => {
       const s = perAgent[p.id];
-      totals.submitted += s.submitted; totals.accepted += s.accepted; totals.rejected += s.rejected;
+      totals.submitted += s.submitted;
       totals.primehome += s.primehome; totals.gyhomes += s.gyhomes; totals.hoursSec += s.hoursSec;
       return { agent: p, stats: s };
     }).sort((a, b) => (a.agent.full_name || a.agent.email || '').localeCompare(b.agent.full_name || b.agent.email || ''));
+
+    // v: Accepted/Rejected come from the distinct-lead sets, NOT from summing
+    // the per-agent columns, so a lead credited to both its submitter and its
+    // reviewer still counts once here. Submitted/PrimeHome/gyhomes/hours stay
+    // plain sums -- those are per-person facts that cannot describe one shared
+    // lead, so they have nothing to dedupe.
+    totals.accepted = creditedAcceptedIds.size;
+    totals.rejected = creditedRejectedIds.size;
 
     if($('actStatSaAgents')){
       $('actStatSaAgents').textContent = rows.length;
