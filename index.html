@@ -18672,6 +18672,39 @@ function leadPropertyKey(address, phoneNorm){
   return phoneNorm ? 'p:' + phoneNorm : '';
 }
 
+// v: and the COUNTING itself, once, for the same reason the two rules above
+// are shared. Three places ask "how many leads has this agent earned credit
+// for" -- the payroll/bonus figure, and the "Leads today"/"Leads this month"
+// readouts on a user's detail card -- and they answered it three different
+// ways, which is the whole class of bug this pass exists to end.
+//
+// The address arrives via a JSON-key select rather than the whole
+// extra_fields blob: those rows carry ~25 keys each including long free-text
+// notes, and these queries can span an agent's entire month.
+const CREDITED_LEAD_COLS = 'id, count, status, reject_reason_category, seller_phone_norm, '
+  + 'addr:extra_fields->>form_address, addr_alt:extra_fields->>property_address';
+
+// Callers fetch with .in('status', CREDITED_LEAD_STATUSES) and let
+// leadCountsAsAccepted() make the real decision here -- deciding it in code
+// rather than in a server-side filter, because RLS makes such a filter hard to
+// verify from outside and one that silently excluded rows would undercount.
+const CREDITED_LEAD_STATUSES = ['accepted', 'rejected'];
+
+function creditedLeadCount(rows){
+  const seen = new Set();
+  return (rows || []).reduce((total, r) => {
+    if(!leadCountsAsAccepted(r)) return total;
+    const key = leadPropertyKey(r.addr || r.addr_alt, r.seller_phone_norm);
+    if(key){
+      if(seen.has(key)) return total;
+      seen.add(key);
+    }
+    // `count` is summed rather than counting rows: it is 1 on every row today,
+    // but the column exists so one submission can stand for several leads.
+    return total + (r.count || 0);
+  }, 0);
+}
+
 // v582: returns a Map on success and NULL on failure -- the caller MUST fail
 // closed on null rather than treating an empty result as "nothing matched".
 //
@@ -21200,25 +21233,12 @@ async function computeAgentStats(agentId, rangeStartMs, rangeEndMs){
   // pulls rejected rows too -- a busy agent's month can approach PostgREST's
   // 1000-row cap, which would truncate a payroll number in silence.
   const leadRows = await fetchAllRows((from, to) => sb.from('leads')
-    .select('id, count, status, reject_reason_category, seller_phone_norm, addr:extra_fields->>form_address, addr_alt:extra_fields->>property_address')
+    .select(CREDITED_LEAD_COLS)
     .eq('user_id', agentId)
-    .in('status', ['accepted', 'rejected'])
+    .in('status', CREDITED_LEAD_STATUSES)
     .gte('submitted_at', startISO).lte('submitted_at', endISO)
     .order('id', { ascending: true }).range(from, to));
-  const paidPropertyKeys = new Set();
-  const leadsCount = (leadRows || []).reduce((total, r) => {
-    if(!leadCountsAsAccepted(r)) return total;
-    const key = leadPropertyKey(r.addr || r.addr_alt, r.seller_phone_norm);
-    if(key){
-      if(paidPropertyKeys.has(key)) return total;
-      paidPropertyKeys.add(key);
-    }
-    // `count` is still summed rather than counting rows: it is 1 on every row
-    // today, but the column exists so one submission can stand for several
-    // leads, and switching to a row count would silently change that if it is
-    // ever used.
-    return total + (r.count || 0);
-  }, 0);
+  const leadsCount = creditedLeadCount(leadRows);
 
   return {
     grossSec, idleSec, breakSec, productiveSec, payableSec,
@@ -36648,10 +36668,20 @@ async function renderDetail(agent){
   // filters to. Previously this counted every submission regardless of
   // status, so it could read higher than what the agent's bonus was
   // actually computed from.
-  const { data: leadsToday } = await sb.from('leads')
-    .select('count')
-    .eq('user_id', agent.id).eq('status', 'accepted').gte('submitted_at', wdStartISO);
-  $('leadsToday').textContent = (leadsToday || []).reduce((t,r) => t + (r.count||0), 0);
+  //
+  // v: and that alignment broke again the moment the bonus figure changed.
+  // This still counted status='accepted' with no dedupe while payroll had
+  // moved on, so the readout sitting under "only accepted leads count toward
+  // the target" disagreed with the number the target is actually measured by.
+  // Both now go through creditedLeadCount(), so they cannot drift apart again
+  // without someone editing that one function.
+  const leadsToday = await fetchAllRows((from, to) => sb.from('leads')
+    .select(CREDITED_LEAD_COLS)
+    .eq('user_id', agent.id)
+    .in('status', CREDITED_LEAD_STATUSES)
+    .gte('submitted_at', wdStartISO)
+    .order('id', { ascending: true }).range(from, to));
+  $('leadsToday').textContent = creditedLeadCount(leadsToday);
 
   // "This week's limit" — Monday-cutover work-week, active-only, matching the
   // extension's weekly enforcement.
@@ -36660,10 +36690,21 @@ async function renderDetail(agent){
   $('weekUsedDetail').textContent = fmtShort(weekUsedSec);
 
   // v395: same accepted-only fix as leadsToday above.
-  const { data: leadsMonth } = await sb.from('leads')
-    .select('count')
-    .eq('user_id', agent.id).eq('status', 'accepted').gte('submitted_at', startOfMonthISO());
-  $('leadsMonthDetail').textContent = (leadsMonth || []).reduce((t,r) => t + (r.count||0), 0);
+  // v: and the same shared-rule fix — see leadsToday's comment.
+  //
+  // PAGED, and not as a formality. Counting the rejected rows too roughly
+  // quadruples what this fetch returns: the busiest real month measured 600
+  // rows against PostgREST's silent 1000-row default cap. Unpaged, this would
+  // have kept working right up until a heavier month quietly truncated a
+  // number an agent is measured by -- the same failure the activity_samples
+  // audit found feeding the payroll report.
+  const leadsMonth = await fetchAllRows((from, to) => sb.from('leads')
+    .select(CREDITED_LEAD_COLS)
+    .eq('user_id', agent.id)
+    .in('status', CREDITED_LEAD_STATUSES)
+    .gte('submitted_at', startOfMonthISO())
+    .order('id', { ascending: true }).range(from, to));
+  $('leadsMonthDetail').textContent = creditedLeadCount(leadsMonth);
 
   const dayMs = 24*3600*1000;
   const track = $('detailTimeline');
