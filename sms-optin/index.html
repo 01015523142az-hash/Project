@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text updates — PropTech AI</title>
+
+<!--
+  v618. PropTech AI's opt-in web form.
+
+  THIS PAGE IS EVIDENCE, not just a lead form. The 10DLC campaign declares that
+  subscribers opt in here, and the carrier opens this URL and compares it to
+  the filing. Everything below follows from that:
+
+    * the consent checkbox is UNTICKED by default and is not required to
+      submit -- consent cannot be a condition of doing business;
+    * the wording sent to the server is read out of the DOM, so the record is
+      the wording the person actually saw, not a constant in a function that
+      might drift from the page;
+    * message frequency, "msg & data rates may apply", STOP and HELP all
+      appear next to the box, because carriers check for them;
+    * the consent covers customer care AND marketing, because the campaign use
+      case is Mixed. PrimeHome's first filing was rejected for consent language
+      narrower than its use case -- see docs/10DLC-CAMPAIGN-RESUBMISSION.md.
+
+  HOSTING: this is a single self-contained file with no build step and no
+  dependencies, so it can go anywhere proptechnologyai.com is served from --
+  a static host, a Wix embed, or GitHub Pages. It must end up on a real
+  PropTech AI URL before the campaign is filed, because the filing points at it.
+
+  The endpoint is deployed --no-verify-jwt; there is no key in this page.
+-->
+
+<style>
+  :root{
+    --ink:#111418; --muted:#5b6570; --line:#dfe4ea; --bg:#f6f8fa;
+    --brand:#0c6b6b; --brand-ink:#fff; --err:#b3261e; --ok:#0f7b4f;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .wrap{max-width:640px;margin:0 auto;padding:40px 20px 64px}
+  header{margin-bottom:28px}
+  .brand{font-weight:800;letter-spacing:-.3px;font-size:19px}
+  h1{font-size:26px;line-height:1.25;margin:18px 0 8px;letter-spacing:-.5px}
+  .sub{color:var(--muted);margin:0}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:24px}
+  label{display:block;font-weight:600;font-size:14px;margin:16px 0 6px}
+  .req{color:var(--err)}
+  input[type=text],input[type=tel],input[type=email],textarea,select{
+    width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9px;
+    font:inherit;background:#fff;color:var(--ink)}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--brand);
+    box-shadow:0 0 0 3px rgba(12,107,107,.12)}
+  textarea{min-height:96px;resize:vertical}
+  .hint{color:var(--muted);font-size:13px;margin-top:5px}
+  .consent{margin-top:22px;padding:16px;border:1px solid var(--line);
+    border-radius:11px;background:#fbfcfd}
+  .consent label{display:flex;gap:11px;align-items:flex-start;font-weight:400;
+    font-size:14.5px;margin:0;cursor:pointer}
+  .consent input{margin-top:3px;width:18px;height:18px;flex:0 0 auto;accent-color:var(--brand)}
+  .consent .terms{margin:10px 0 0;color:var(--muted);font-size:12.5px}
+  .optional{display:inline-block;font-size:11px;font-weight:700;text-transform:uppercase;
+    letter-spacing:.6px;color:var(--muted);background:#eef1f4;border-radius:99px;
+    padding:2px 8px;margin-bottom:9px}
+  button{margin-top:22px;width:100%;padding:13px 18px;border:0;border-radius:10px;
+    background:var(--brand);color:var(--brand-ink);font:inherit;font-weight:700;cursor:pointer}
+  button:disabled{opacity:.55;cursor:not-allowed}
+  .msg{margin-top:14px;padding:12px 14px;border-radius:10px;font-size:14.5px;display:none}
+  .msg.err{display:block;background:#fdecea;color:var(--err)}
+  .msg.ok{display:block;background:#e8f5ee;color:var(--ok)}
+  footer{margin-top:26px;color:var(--muted);font-size:13px;text-align:center}
+  footer a{color:var(--muted)}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+  @media(max-width:520px){.two{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">PropTech AI</div>
+    <h1>Get text updates from PropTech AI</h1>
+    <p class="sub">
+      Leave your details and we will be in touch about cold calling for your
+      acquisitions. Tick the box below if you would like us to text you.
+    </p>
+  </header>
+
+  <div class="card">
+    <form id="f" novalidate>
+      <div class="two">
+        <div>
+          <label for="first_name">First name <span class="req">*</span></label>
+          <input id="first_name" name="first_name" type="text" autocomplete="given-name" required>
+        </div>
+        <div>
+          <label for="last_name">Last name</label>
+          <input id="last_name" name="last_name" type="text" autocomplete="family-name">
+        </div>
+      </div>
+
+      <label for="company">Company</label>
+      <input id="company" name="company" type="text" autocomplete="organization">
+
+      <div class="two">
+        <div>
+          <label for="phone">Mobile number</label>
+          <input id="phone" name="phone" type="tel" inputmode="tel" autocomplete="tel"
+                 placeholder="(312) 555-0123">
+        </div>
+        <div>
+          <label for="email">Email</label>
+          <input id="email" name="email" type="email" autocomplete="email"
+                 placeholder="you@company.com">
+        </div>
+      </div>
+      <p class="hint">Give us at least one — whichever you would rather we used.</p>
+
+      <label for="notes">Anything we should know?</label>
+      <textarea id="notes" name="notes"
+        placeholder="Markets you buy in, how many callers you are considering — optional."></textarea>
+
+      <!-- The consent block. Unticked by default, never required. -->
+      <div class="consent">
+        <span class="optional">Optional</span>
+        <label>
+          <input type="checkbox" id="sms_consent" name="sms_consent">
+          <span id="consent_text">I agree to receive text messages from PropTech AI at the
+            mobile number provided, including customer care messages about this
+            enquiry (scheduling, onboarding and follow-up questions) and marketing
+            messages about PropTech AI services, offers and promotions.
+            Consent is not a condition of purchase.
+            Message frequency may vary.
+            Message and data rates may apply.
+            Reply STOP to opt out.
+            Reply HELP for help.
+            We will not share your mobile information with third parties for marketing purposes.</span>
+        </label>
+        <p class="terms">
+          See our <a href="https://proptechnologyai.com/privacy" target="_blank" rel="noopener">Privacy Policy</a>
+          and <a href="https://proptechnologyai.com/terms" target="_blank" rel="noopener">Terms of Service</a>.
+        </p>
+      </div>
+
+      <button type="submit" id="send">Send my details</button>
+      <div class="msg" id="msg" role="status" aria-live="polite"></div>
+    </form>
+  </div>
+
+  <footer>
+    Questions? <a href="mailto:support@proptechnologyai.com">support@proptechnologyai.com</a>
+    &nbsp;·&nbsp; <a href="https://proptechnologyai.com/opt-out">Unsubscribe from texts</a>
+  </footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  var ENDPOINT = 'https://kqfoniinytvuddxiwvkc.supabase.co/functions/v1/proptech-campaign-submit';
+
+  var form = document.getElementById('f');
+  var btn = document.getElementById('send');
+  var msg = document.getElementById('msg');
+
+  function show(kind, text) {
+    msg.className = 'msg ' + kind;
+    msg.textContent = text;
+  }
+
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    show('', '');
+
+    var first = document.getElementById('first_name').value.trim();
+    var phone = document.getElementById('phone').value.trim();
+    var email = document.getElementById('email').value.trim();
+
+    // Checked here as well as on the server so somebody is not made to wait on
+    // a round trip to be told they left their name out.
+    if (!first) { show('err', 'Please tell us your name.'); return; }
+    if (!phone && !email) {
+      show('err', 'Please give a mobile number or an email address so we can reply.');
+      return;
+    }
+
+    var consented = document.getElementById('sms_consent').checked;
+
+    btn.disabled = true;
+    var original = btn.textContent;
+    btn.textContent = 'Sending…';
+
+    fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        first_name: first,
+        last_name: document.getElementById('last_name').value.trim(),
+        company: document.getElementById('company').value.trim(),
+        phone: phone,
+        email: email,
+        notes: document.getElementById('notes').value.trim(),
+        sms_consent: consented,
+        // Read out of the DOM, so what is stored is the wording actually on
+        // screen. If the copy above is edited, the record follows it without
+        // anyone remembering to change a constant somewhere else.
+        consent_text: consented
+          ? document.getElementById('consent_text').textContent.replace(/\s+/g, ' ').trim()
+          : null,
+        source_url: window.location.href
+      })
+    })
+      .then(function (r) { return r.json().catch(function () { return {}; }); })
+      .then(function (res) {
+        btn.disabled = false;
+        btn.textContent = original;
+        if (!res || !res.ok) {
+          show('err', (res && res.error) || 'Something went wrong. Please email support@proptechnologyai.com.');
+          return;
+        }
+        form.reset();
+        show('ok', 'Thank you — we have your details and will be in touch shortly.');
+      })
+      .catch(function () {
+        btn.disabled = false;
+        btn.textContent = original;
+        show('err', 'We could not reach the server. Please email support@proptechnologyai.com.');
+      });
+  });
+})();
+</script>
+</body>
+</html>
