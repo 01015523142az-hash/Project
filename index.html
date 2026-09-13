@@ -11716,6 +11716,7 @@ function renderClientChatMessages(clientId){
   const key = 'client:' + clientId;
   const conv = chatConversations[key] || { messages: [] };
   const box = $('chatMessages');
+  const wasAtBottom = chatAtBottom(box); // v632: read BEFORE innerHTML is replaced
   const clientChatTz = nonAgentDisplayTz();
   // v626: who sent the previous message, for the sequential check below.
   let prevSender = null;
@@ -11772,8 +11773,11 @@ function renderClientChatMessages(clientId){
     `;
   }).join('') || '<div class="empty" style="padding:16px 0;">No messages yet.</div>';
   if(chatIsPeerTyping(key)) box.innerHTML += chatTypingBubbleHtml();
-  box.scrollTop = box.scrollHeight;
-  clientChatResolveVisibleAttachments(box);
+  // v632: see chatAtBottom() -- pin only if they were already at the bottom,
+  // and re-pin once the attachments have resolved and their images loaded.
+  if(wasAtBottom) chatPinToBottom(box);
+  Promise.resolve(clientChatResolveVisibleAttachments(box))
+    .then(() => chatKeepPinned(box, wasAtBottom));
   chatWireClientEditControls(box, clientId);
 }
 function chatWireClientEditControls(box, clientId){
@@ -12004,6 +12008,7 @@ let chatEditingMessageId = null;
 function renderChatThread(){
   const conv = chatConversations[chatActiveConv] || { messages: [] };
   const box = $('chatMessages');
+  const wasAtBottom = chatAtBottom(box); // v632: read BEFORE innerHTML is replaced
   // v626: showSenderLabel is gone. It gated the old below-the-bubble name to
   // team/group threads only; the header above the bubble now shows on every
   // incoming non-sequential message including DMs, so there is nothing left
@@ -12064,8 +12069,10 @@ function renderChatThread(){
     box.innerHTML += `<div class="chat-offline-hint">📴 ${escapeHtml(chatOfflineHint.name)} is offline — they'll see this when they're back.</div>`;
   }
   if(chatIsPeerTyping(chatActiveConv)) box.innerHTML += chatTypingBubbleHtml();
-  box.scrollTop = box.scrollHeight;
-  chatResolveVisibleAttachments();
+  // v632: see chatAtBottom().
+  if(wasAtBottom) chatPinToBottom(box);
+  Promise.resolve(chatResolveVisibleAttachments(box))
+    .then(() => chatKeepPinned(box, wasAtBottom));
   chatWireEditControls(box);
 }
 
@@ -12157,6 +12164,54 @@ async function chatResolveAttachmentUrl(path){
   chatAttachmentUrlCache[path] = data.signedUrl;
   return data.signedUrl;
 }
+
+// ---------------------------------------------------------------------------
+// v632: "the chat scrolls up by itself after ~15 seconds".
+//
+// It was not scrolling up. It was being RE-RENDERED and then pinned to a
+// height that had not finished growing yet.
+//
+// The sequence: a re-render replaces innerHTML, so every already-resolved
+// image attachment reverts to the short "Loading attachment..." placeholder.
+// `box.scrollTop = box.scrollHeight` then runs IMMEDIATELY, against that
+// short height. The attachments resolve asynchronously afterwards (each one
+// awaits a signed URL) and the images then load, and the content grows by
+// however tall those images are -- with nothing re-scrolling. The view is
+// left stranded that far above the bottom, which looks exactly like the
+// thread scrolling up on its own.
+//
+// What re-renders while nobody is touching anything: the chat_reads realtime
+// subscription re-renders the open thread on ANY read-receipt row changing,
+// including other people's. Hence "wait about 15 seconds".
+//
+// Two things are wrong with the old one-liner and both are fixed here:
+//
+//   1. It pinned to the bottom UNCONDITIONALLY. Someone who had deliberately
+//      scrolled up to read history got yanked back down by an unrelated
+//      person's read receipt. Now the position is only restored if they were
+//      already at the bottom when the re-render started.
+//   2. It scrolled once, before the content had its final height. Now it
+//      re-pins after attachments resolve AND after each image actually
+//      loads, which is the point the height really settles.
+function chatAtBottom(box, slack){
+  if(!box) return true;
+  return (box.scrollHeight - box.scrollTop - box.clientHeight) <= (slack === undefined ? 80 : slack);
+}
+function chatPinToBottom(box){ if(box) box.scrollTop = box.scrollHeight; }
+// Re-pins as late-arriving content changes the height. Images are the ones
+// that matter -- an <img> has zero height until it decodes, so the growth
+// happens well after the markup is in the DOM.
+function chatKeepPinned(box, wasAtBottom){
+  if(!box || !wasAtBottom) return;
+  chatPinToBottom(box);
+  const imgs = box.querySelectorAll('img');
+  imgs.forEach(img => {
+    if(img.complete) return;
+    img.addEventListener('load',  () => chatPinToBottom(box), { once: true });
+    img.addEventListener('error', () => chatPinToBottom(box), { once: true });
+  });
+}
+
 async function chatResolveVisibleAttachments(container){
   const els = Array.from((container || $('chatMessages')).querySelectorAll('.chat-msg-attachment'));
   for(const el of els){
