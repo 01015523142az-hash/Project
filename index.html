@@ -1858,6 +1858,179 @@
   /* Reference caps the bubble column at 85%/78% rather than letting a long
      line run the full panel width. */
   .chat-panel .chat-msg-row{ max-width:85%; }
+
+  /* =========================================================================
+     v627: CALLING, to the same reference.
+
+     Three surfaces, and the reference treats them as one family:
+       IncomingCallBanner -> .call-banner   (top-RIGHT card, was top-centre)
+       FloatingCallBar    -> .call-bar      (bottom-centre pill, was top-centre)
+       CallModal footer   -> the bar's controls
+
+     WHY THE POSITIONS MOVE, since that is the biggest behavioural change
+     here: the reference deliberately keeps an incoming call out of the way
+     of an active one -- a ringing card in the top-right, a live call pinned
+     along the bottom -- so both can be on screen at once without one hiding
+     the other. Both currently sit top-centre and overlap, which is why
+     #incomingMeetBanner needed a hardcoded top:110px nudge to dodge
+     #incomingCallBanner.
+
+     GEOMETRY CHECKED AGAINST THE CHAT WIDGET, not assumed: the bar occupies
+     24-72px from the bottom edge; the chat panel's floor is 100px and the
+     FAB is at the right edge, so nothing collides on desktop. The narrow
+     -screen case is handled at the end of this block.
+
+     ACCEPT STAYS GREEN AND DECLINE STAYS RED. The reference uses emerald for
+     accept because emerald is its brand colour, but here green/red are
+     SEMANTIC, like --danger elsewhere in this file -- a gold "accept" next
+     to a gold everything-else would be the one button you must not misread.
+     ========================================================================= */
+
+  /* ---- incoming call card ---- */
+  .call-banner{
+    top:24px; right:24px; left:auto; transform:none;
+    width:min(384px, calc(100vw - 32px)); min-width:0;
+    border:2px solid var(--chat-accent-2); border-radius:16px;
+    background:color-mix(in srgb, var(--card) 95%, transparent);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    box-shadow:0 24px 50px -12px rgba(0,0,0,.7);
+    animation:callBannerIn .2s cubic-bezier(0.16,1,0.3,1);
+  }
+  @keyframes callBannerIn{
+    from{ opacity:0; transform:translateY(-24px); }
+    to{ opacity:1; transform:none; }
+  }
+  /* The 14px dot becomes the reference's 48px icon tile with a ping ring.
+     The glyph comes from ::before so the markup is untouched. */
+  .call-banner-pulse{
+    position:relative; width:48px; height:48px; border-radius:50%;
+    background:rgba(201,166,107,.18); color:var(--chat-accent-2);
+    display:flex; align-items:center; justify-content:center;
+    animation:none; /* the old opacity flash is replaced by the ring below */
+  }
+  .call-banner-pulse::before{
+    content:'\260E'; font-size:22px; line-height:1;
+    animation:callGlyphPulse 1.4s ease-in-out infinite;
+  }
+  .call-banner-pulse::after{
+    content:''; position:absolute; inset:-4px; border-radius:50%;
+    border:2px solid var(--chat-accent-2);
+    animation:chatFabPing 1.6s cubic-bezier(0,0,0.2,1) infinite;
+    pointer-events:none;
+  }
+  @keyframes callGlyphPulse{ 0%,100%{ opacity:1; } 50%{ opacity:.45; } }
+
+  /* The reference stacks a small uppercase accent label ABOVE the name.
+     `order` does that without reordering the markup (and without touching
+     the ids the call code writes into). */
+  .call-banner-info{ display:flex; flex-direction:column; min-width:0; }
+  /* NOT uppercased, deliberately. The reference's eyebrow is a fixed short
+     category ("Incoming Voice Call"); this element is written at runtime and
+     is sometimes a whole sentence -- "Adding you to a call with Mariam,
+     Eslam…" (see the incomingCallSub assignment). Uppercasing prose with
+     wide tracking would wrap badly and read as shouting, so it keeps the
+     reference's HIERARCHY -- small accent label above a bold name -- in
+     sentence case, and clamps rather than overflowing the 384px card. */
+  .call-banner-sub{
+    order:-1; margin:0 0 2px; font-family:var(--sans); font-size:11px;
+    font-weight:600; letter-spacing:.01em; color:var(--chat-accent-2);
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden;
+  }
+  .call-banner-name{
+    font-size:14px; font-weight:700; color:var(--text);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+
+  /* Round 40px answer/decline buttons. The visible label is replaced by a
+     glyph; the text stays in the DOM inside .call-btn-label (clipped, not
+     display:none) so screen readers still announce "Accept"/"Decline",
+     and both buttons carry a title for pointer users. */
+  .call-banner-btn{
+    width:40px; height:40px; padding:0; border-radius:50%;
+    display:inline-flex; align-items:center; justify-content:center;
+    font-size:18px; line-height:1; flex-shrink:0;
+    box-shadow:0 6px 14px -4px rgba(0,0,0,.5);
+  }
+  .call-btn-label{
+    position:absolute; width:1px; height:1px; overflow:hidden;
+    clip-path:inset(50%); white-space:nowrap;
+  }
+  .call-banner-accept::before{ content:'\260E'; }
+  .call-banner-decline::before{ content:'\2715'; font-size:16px; font-weight:700; }
+  /* The Meet invitation's accept is "Join", not "Answer" -- a camera reads
+     correctly there where a handset would suggest a voice call. */
+  #acceptMeetBtn::before{ content:'\1F4F9'; font-size:16px; }
+  .call-banner-accept{ background:var(--good); color:#06301A; }
+  .call-banner-decline{ background:var(--danger); color:#fff; }
+  .call-banner-btn:hover{ filter:brightness(1.1); }
+
+  /* ---- active call bar ---- */
+  .call-bar{
+    top:auto; bottom:24px; left:50%; transform:translateX(-50%);
+    border-radius:999px; padding:8px 14px; gap:10px;
+    border:1px solid rgba(201,166,107,.40);
+    background:color-mix(in srgb, var(--card) 95%, transparent);
+    backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);
+    box-shadow:0 20px 44px -12px rgba(0,0,0,.6);
+    animation:callBarIn .2s cubic-bezier(0.16,1,0.3,1);
+  }
+  @keyframes callBarIn{
+    from{ opacity:0; transform:translateX(-50%) translateY(16px); }
+    to{ opacity:1; transform:translateX(-50%); }
+  }
+  /* Live dot gains the reference's ping halo. */
+  .call-bar-dot{ position:relative; }
+  .call-bar-dot::after{
+    content:''; position:absolute; inset:-3px; border-radius:50%;
+    border:2px solid var(--good);
+    animation:chatFabPing 1.6s cubic-bezier(0,0,0.2,1) infinite;
+    pointer-events:none;
+  }
+  .call-bar-dot.connecting::after{ border-color:var(--away); }
+  .call-bar-timer{ font-family:var(--mono); font-size:11px; }
+  .call-bar-icon-btn{ transition:filter .15s ease, background .15s ease; }
+  .call-bar-icon-btn:hover{ filter:brightness(1.15); }
+  /* Reference: muted is rose, presenting is the accent, hang up is rose. */
+  /* PRE-EXISTING BUG, found while checking this redesign on screen rather
+     than in the file: .call-bar-add was the only .call-bar-* control with no
+     background rule, so it fell through to the browser's default button
+     chrome -- a light-grey #F0F0F0 disc with black text, sitting in a row of
+     dark ones. It was wrong before v627 too; the darker bar just makes it
+     impossible to miss. Same inset treatment as its neighbours. */
+  .call-bar-add{ background:var(--inset); color:var(--text); }
+
+  .call-bar-mute.muted{ background:var(--danger); color:#fff; }
+  .call-bar-screenshare.active{
+    background:linear-gradient(to top right, var(--chat-accent-1), var(--chat-accent-2));
+    color:#1A1206;
+  }
+  /* The count stays on the accent, NOT on --danger. I had it red briefly;
+     that was wrong. Red means "something is wrong" everywhere else in this
+     file (muted mic, hang up, decline), and "3 people are on this call" is
+     neutral information -- the reference renders it as plain muted text
+     beside a Users icon for exactly that reason. */
+  .call-bar-participants-count{
+    background:var(--chat-accent-2); color:#1A1206;
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    .call-banner, .call-bar{ animation:none; }
+    .call-banner-pulse::before, .call-banner-pulse::after, .call-bar-dot::after{ animation:none; }
+    .call-banner-pulse::after, .call-bar-dot::after{ opacity:.4; }
+  }
+
+  /* Narrow screens: the chat panel goes full width below 520px and its
+     floor no longer clears a centred bar, so the bar is pinned to the
+     gutters just above the FAB row instead of sitting under it. */
+  @media (max-width:520px){
+    .call-banner{ top:12px; right:12px; width:calc(100vw - 24px); }
+    .call-bar{
+      left:12px; right:12px; transform:none; bottom:88px;
+      justify-content:center; flex-wrap:wrap;
+    }
+    @keyframes callBarIn{ from{ opacity:0; transform:translateY(16px); } to{ opacity:1; transform:none; } }
+  }
 </style>
 </head>
 <body>
@@ -7471,20 +7644,27 @@
     <div class="call-banner-name" id="incomingCallName"></div>
     <div class="call-banner-sub" id="incomingCallSub">Incoming call…</div>
   </div>
-  <button class="call-banner-btn call-banner-decline" id="declineCallBtn">Decline</button>
-  <button class="call-banner-btn call-banner-accept" id="acceptCallBtn">Accept</button>
+  <!-- v627: the visible label is now a glyph (see .call-banner-btn), so the
+       word moves into a clipped span that screen readers still read, and
+       each button carries a title for pointer users. Removing the text
+       outright would have left two unlabelled circles. -->
+  <button class="call-banner-btn call-banner-decline" id="declineCallBtn" title="Decline" aria-label="Decline call"><span class="call-btn-label">Decline</span></button>
+  <button class="call-banner-btn call-banner-accept" id="acceptCallBtn" title="Accept" aria-label="Accept call"><span class="call-btn-label">Accept</span></button>
 </div>
 
-<!-- Offset below incomingCallBanner (top:110px vs its top:20px) so the
-     two don't visually overlap in the rare case both are showing at once. -->
-<div id="incomingMeetBanner" class="call-banner" style="display:none; top:110px;">
+<!-- v627: the hardcoded top:110px nudge is GONE. It existed only because
+     both banners sat top-centre and would have covered each other; they
+     now stack down the right-hand edge, which is what the reference does
+     and what makes two simultaneous invitations legible. 84px = the card's
+     top (24px) + its height + a gap. -->
+<div id="incomingMeetBanner" class="call-banner" style="display:none; top:116px;">
   <div class="call-banner-pulse"></div>
   <div class="call-banner-info">
     <div class="call-banner-name" id="incomingMeetName"></div>
     <div class="call-banner-sub">Invited you to a Google Meet</div>
   </div>
-  <button class="call-banner-btn call-banner-decline" id="declineMeetBtn">Decline</button>
-  <button class="call-banner-btn call-banner-accept" id="acceptMeetBtn">Join</button>
+  <button class="call-banner-btn call-banner-decline" id="declineMeetBtn" title="Decline" aria-label="Decline Meet invitation"><span class="call-btn-label">Decline</span></button>
+  <button class="call-banner-btn call-banner-accept" id="acceptMeetBtn" title="Join" aria-label="Join Meet"><span class="call-btn-label">Join</span></button>
 </div>
 
 <div id="activeCallBar" class="call-bar" style="display:none;">
