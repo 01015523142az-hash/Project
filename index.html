@@ -2000,6 +2000,33 @@
      impossible to miss. Same inset treatment as its neighbours. */
   .call-bar-add{ background:var(--inset); color:var(--text); }
 
+  /* ---- v628: SVG icons ---- */
+  /* currentColor is the point: these inherit the button's own colour, so
+     mute genuinely goes white-on-red and screen-share dark-on-gold. The
+     emoji they replace carried their own colour and ignored state. */
+  .call-icon{ width:17px; height:17px; display:block; flex-shrink:0; }
+  .call-banner-btn .call-icon{ width:19px; height:19px; }
+  /* Mic / MicOff swap. Both are in the DOM; exactly one is shown. */
+  .call-bar-mute .call-icon-mic-off{ display:none; }
+  .call-bar-mute.muted .call-icon-mic-on{ display:none; }
+  .call-bar-mute.muted .call-icon-mic-off{ display:block; }
+
+  /* ---- v628: the DIALING state ---- */
+  /* Before this, "Calling…" and "04:12" were styled identically -- the only
+     difference was an 8px dot changing colour. Whether the other person has
+     actually picked up is the one thing worth knowing at a glance while you
+     wait, so a call that has not connected gets the reference's pulsing
+     amber treatment on the label and the bar's edge. */
+  .call-bar.connecting{ border-color:color-mix(in srgb, var(--away) 55%, transparent); }
+  .call-bar.connecting .call-bar-timer{
+    color:var(--away); font-weight:600;
+    animation:callDialPulse 1.4s ease-in-out infinite;
+  }
+  @keyframes callDialPulse{ 0%,100%{ opacity:1; } 50%{ opacity:.45; } }
+  @media (prefers-reduced-motion:reduce){
+    .call-bar.connecting .call-bar-timer{ animation:none; }
+  }
+
   .call-bar-mute.muted{ background:var(--danger); color:#fff; }
   .call-bar-screenshare.active{
     background:linear-gradient(to top right, var(--chat-accent-1), var(--chat-accent-2));
@@ -7673,17 +7700,32 @@
     <div id="activeCallName" style="font-weight:600;"></div>
     <div class="call-bar-timer" id="activeCallStatus">Calling…</div>
   </div>
-  <button class="call-bar-icon-btn call-bar-mute" id="callMuteBtn" title="Mute">&#127908;</button>
+  <!-- v628: emoji glyphs replaced with inline SVG, matching the reference's
+       lucide icon set (Mic / MicOff / Users / UserPlus / ScreenShare /
+       Minimize2 / Maximize2 / PhoneOff).
+
+       WHY THIS IS NOT COSMETIC: an emoji is rendered by the OS font, so
+       🎤 and 🖥 looked different on every machine on the floor, carried
+       their own colour that ignored the button state, and sat on a
+       different baseline to everything else. These inherit currentColor,
+       so the mute button genuinely turns white-on-red when muted and the
+       screen-share icon goes dark-on-gold when presenting -- which the
+       emoji could not do. stroke-width 1.8 and a 20px box match the
+       reference's `w-4 h-4` lucide defaults at this button size. -->
+  <!-- Both mic states ship in the markup and CSS shows one, because the
+       reference swaps the ICON (Mic <-> MicOff) and not just the colour --
+       a red circle with an unslashed mic still reads as "press to mute". -->
+  <button class="call-bar-icon-btn call-bar-mute" id="callMuteBtn" title="Mute"><svg class="call-icon call-icon-mic-on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></svg><svg class="call-icon call-icon-mic-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9v3a3 3 0 0 0 5.1 2.1"/><path d="M15 10.5V5a3 3 0 0 0-5.9-.8"/><path d="M19 10v2a7 7 0 0 1-1.3 4"/><path d="M5 10v2a7 7 0 0 0 10.5 6"/><path d="M12 19v3"/><path d="M2 2l20 20"/></svg></button>
   <!-- v395: "who's on this call" roster — see renderCallParticipantsPanel().
        Count badge reflects everyone in voiceCallRoster except rows already
        declined/no_answer/left/ended, so it tracks "currently ringing or
        connected" the way Google Meet's participant count would. -->
-  <button class="call-bar-icon-btn call-bar-participants" id="callParticipantsBtn" title="See who's on this call" style="display:none;">&#128101;<span class="call-bar-participants-count" id="callParticipantsCount" style="display:none;"></span></button>
-  <button class="call-bar-icon-btn call-bar-add" id="callAddBtn" title="Add someone to this call">&#10133;</button>
-  <button class="call-bar-icon-btn call-bar-screenshare" id="callScreenShareBtn" title="Share your screen" style="display:none;">&#128421;</button>
-  <button class="call-bar-icon-btn call-bar-minimize" id="callMinimizeBtn" title="Minimize screen share preview" style="display:none;">&#8211;</button>
-  <button class="call-bar-icon-btn call-bar-maximize" id="callMaximizeBtn" title="Maximize screen share preview" style="display:none;">&#9974;</button>
-  <button class="call-bar-icon-btn call-bar-hangup" id="callHangupBtn" title="Hang up">&#9742;</button>
+  <button class="call-bar-icon-btn call-bar-participants" id="callParticipantsBtn" title="See who's on this call" style="display:none;"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="call-bar-participants-count" id="callParticipantsCount" style="display:none;"></span></button>
+  <button class="call-bar-icon-btn call-bar-add" id="callAddBtn" title="Add someone to this call"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg></button>
+  <button class="call-bar-icon-btn call-bar-screenshare" id="callScreenShareBtn" title="Share your screen" style="display:none;"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/><path d="M12 12V8"/><path d="M10 10l2-2 2 2"/></svg></button>
+  <button class="call-bar-icon-btn call-bar-minimize" id="callMinimizeBtn" title="Minimize screen share preview" style="display:none;"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></svg></button>
+  <button class="call-bar-icon-btn call-bar-maximize" id="callMaximizeBtn" title="Maximize screen share preview" style="display:none;"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg></button>
+  <button class="call-bar-icon-btn call-bar-hangup" id="callHangupBtn" title="Hang up"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.7 5.3A16 16 0 0 1 13 5a2 2 0 0 1 2 1.7l.3 1.8a2 2 0 0 1-.6 1.8l-1 1"/><path d="M14.2 14.2l-1 1a2 2 0 0 1-1.8.6l-1.8-.3A2 2 0 0 1 8 13.5c0-.8.1-1.6.3-2.3"/><path d="M2 2l20 20"/><path d="M5.6 9.6A16 16 0 0 0 5 13a2 2 0 0 0 1.7 2l1.8.3"/></svg></button>
 </div>
 <!-- v106: "Add to call" picker — lists DM-eligible colleagues (chatDirectory)
      who aren't already on this call; picking one rings them in, same
@@ -9651,26 +9693,29 @@ function chatPlayNotificationSound(){
   try{
     if(!chatAudioCtx) chatAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if(chatAudioCtx.state === 'suspended') chatAudioCtx.resume();
-    // Short chip-style tick, then a brighter landing note a beat later —
-    // that nasal square-wave "blip" is most of what reads as "MSN" rather
-    // than a smooth modern chime.
-    const notes = [
-      { freq: 932.33,  type: 'square',   at: 0,    dur: 0.09, vol: 0.11 }, // A#5 tick
-      { freq: 1244.51, type: 'triangle', at: 0.11, dur: 0.24, vol: 0.17 }  // D#6 landing note
-    ];
-    notes.forEach(n => {
-      const start = chatAudioCtx.currentTime + n.at;
+    // v628: the reference's incoming chime, value for value. Two SINE
+    // notes that GLIDE upward rather than two fixed pitches:
+    //   880 -> 1318.5Hz over 80ms, then 1760 -> 1975.5Hz from +100ms.
+    // The glide is the whole character -- it is what makes this read as a
+    // modern app chime instead of the square-wave MSN "blip" it replaces
+    // (A#5 tick + D#6 landing note, kept here in the comment in case
+    // anyone wants it back).
+    const now = chatAudioCtx.currentTime;
+    const glide = (fromHz, toHz, startAt, glideEnd, peak, decayEnd) => {
       const osc = chatAudioCtx.createOscillator();
       const gain = chatAudioCtx.createGain();
-      osc.type = n.type;
-      osc.frequency.value = n.freq;
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(n.vol, start + 0.012);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + n.dur);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(fromHz, now + startAt);
+      osc.frequency.exponentialRampToValueAtTime(toHz, now + glideEnd);
+      gain.gain.setValueAtTime(0, now + startAt);
+      gain.gain.linearRampToValueAtTime(peak, now + startAt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + decayEnd);
       osc.connect(gain).connect(chatAudioCtx.destination);
-      osc.start(start);
-      osc.stop(start + n.dur + 0.02);
-    });
+      osc.start(now + startAt);
+      osc.stop(now + decayEnd + 0.01);
+    };
+    glide(880,  1318.5, 0,   0.08, 0.20, 0.25);
+    glide(1760, 1975.5, 0.1, 0.18, 0.25, 0.45);
   }catch(e){ console.error('Chat notification sound failed', e); }
 }
 
@@ -12471,32 +12516,101 @@ function voicePlaySequence(notes){
 // pattern is what reads as an MSN Messenger–style call alert. It's an
 // original pattern in that spirit, not a reproduction of Microsoft's
 // copyrighted audio.
-const VOICE_RING_NOTES     = [{ freq: 830.61, at: 0,    dur: 0.10, vol: 0.15, type: 'square' }, { freq: 1108.73, at: 0.12, dur: 0.10, vol: 0.15, type: 'square' }, { freq: 830.61, at: 0.30, dur: 0.10, vol: 0.15, type: 'square' }, { freq: 1108.73, at: 0.42, dur: 0.16, vol: 0.17, type: 'square' }];
-const VOICE_RINGBACK_NOTES = [{ freq: 698.46, at: 0,    dur: 0.30, vol: 0.12, type: 'triangle' }, { freq: 698.46, at: 0.45, dur: 0.30, vol: 0.12, type: 'triangle' }];
 const VOICE_CONNECT_NOTES  = [{ freq: 659.25, at: 0,    dur: 0.14, vol: 0.18 }, { freq: 987.77, at: 0.09, dur: 0.4, vol: 0.2 }];
 const VOICE_HANGUP_NOTES   = [{ freq: 659.25, at: 0,    dur: 0.14, vol: 0.16 }, { freq: 440.00, at: 0.09, dur: 0.4, vol: 0.18 }];
 
+// ---------- v628: call audio, matched to the design reference ----------
+//
+// The MSN-style square-wave blips (VOICE_RING_NOTES) and the two triangle
+// notes (VOICE_RINGBACK_NOTES) are GONE, replaced by the reference's own
+// synthesis, value for value:
+//
+//   incoming  -- a C-major arpeggio, C5 E5 G5 C6, each note 0.15s after the
+//                last, every 2500ms. Warm and clearly "someone is calling
+//                you", where the square wave read as a game console.
+//   ringback  -- 440Hz + 480Hz sounded TOGETHER for 1.2s every 3500ms.
+//                That pair is not arbitrary: it is the actual North
+//                American telephone ringback cadence, which is why it
+//                reads instantly as "the line is ringing at their end"
+//                rather than as a notification.
+//
+// ENVELOPES ARE EXPONENTIAL, not the linear ramp voicePlayTone() uses.
+// That is most of the difference in character -- a linear fade sounds
+// synthetic, an exponential one sounds like something was struck. It is
+// why these two sounds do not go through voicePlayTone().
+//
+// Still fully synthesized, no audio files: same reasoning as the original
+// code, and the same reason nothing here reproduces anyone's copyrighted
+// audio.
+const VOICE_INCOMING_ARPEGGIO = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
+const VOICE_RINGBACK_PAIR = [440, 480];                            // US ringback
+
 let voiceRingInterval = null;
-// kind 'incoming': the 3-note ascending chime, repeating every 2.4s — for
-// the person RECEIVING a call.
-// kind 'ringback': the softer 2-note pattern, repeating every 3s — for
-// the CALLER, while waiting for the other side to answer, same idea as
-// the tone you hear in your own ear on a real call before it connects.
+let voiceRingGain = null;
+
+function voiceRingPlayIncoming(){
+  const ctx = voiceAudioCtx;
+  if(!ctx || !voiceRingGain) return;
+  VOICE_INCOMING_ARPEGGIO.forEach((freq, idx) => {
+    const at = ctx.currentTime + idx * 0.15;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.1, at);
+    g.gain.exponentialRampToValueAtTime(0.001, at + 0.35);
+    osc.connect(g);
+    g.connect(voiceRingGain);
+    osc.start(at);
+    osc.stop(at + 0.4);
+  });
+}
+
+function voiceRingPlayRingback(){
+  const ctx = voiceAudioCtx;
+  if(!ctx || !voiceRingGain) return;
+  const oscs = VOICE_RINGBACK_PAIR.map(freq => {
+    const osc = ctx.createOscillator();
+    osc.frequency.value = freq;
+    osc.connect(voiceRingGain);
+    osc.start();
+    return osc;
+  });
+  // 1.2s of tone, then silence until the next cycle -- the gap is what
+  // makes it a ring rather than a drone.
+  setTimeout(() => { oscs.forEach(o => { try{ o.stop(); }catch(e){} }); }, 1200);
+}
+
+// kind 'incoming': the arpeggio, for the person RECEIVING a call.
+// kind 'ringback': the 440+480 pair, for the CALLER while waiting.
 function voiceStartRingtone(kind){
   voiceStopRingtone();
   if(!voiceAudioCtx) voicePrimeAudioContext();
   if(!voiceAudioCtx) return;
-  const notes = kind === 'incoming' ? VOICE_RING_NOTES : VOICE_RINGBACK_NOTES;
-  const cycleMs = kind === 'incoming' ? 2400 : 3000;
+  if(voiceAudioCtx.state === 'suspended') voiceAudioCtx.resume().catch(() => {});
+
+  const incoming = kind === 'incoming';
+  // One gain node per ringing session, torn down in voiceStopRingtone().
+  // The reference does the same, and it is what makes "stop" instant: a
+  // ringback oscillator is mid-1.2s-tone when someone answers, and
+  // disconnecting the shared gain cuts it immediately rather than leaving
+  // a tone hanging over the connect chime.
+  voiceRingGain = voiceAudioCtx.createGain();
+  voiceRingGain.gain.value = incoming ? 0.12 : 0.08;
+  voiceRingGain.connect(voiceAudioCtx.destination);
+
   const playCycle = () => {
-    if(!voiceAudioCtx || voiceAudioCtx.state === 'closed') return;
-    voicePlaySequence(notes);
+    if(!voiceAudioCtx || voiceAudioCtx.state === 'closed' || !voiceRingGain) return;
+    if(incoming) voiceRingPlayIncoming(); else voiceRingPlayRingback();
   };
   playCycle();
-  voiceRingInterval = setInterval(playCycle, cycleMs);
+  voiceRingInterval = setInterval(playCycle, incoming ? 2500 : 3500);
 }
 function voiceStopRingtone(){
   if(voiceRingInterval){ clearInterval(voiceRingInterval); voiceRingInterval = null; }
+  if(voiceRingGain){
+    try{ voiceRingGain.disconnect(); }catch(e){}
+    voiceRingGain = null;
+  }
 }
 
 // ---------- Google Meet: restricted to the company's own domain ----------
@@ -13490,6 +13604,13 @@ function voiceShowActiveBar(name, status, connecting){
   $('activeCallName').textContent = name || '';
   $('activeCallStatus').textContent = status;
   $('activeCallDot').className = 'call-bar-dot' + (connecting ? ' connecting' : '');
+  // v628: the DIALING state is now visible on the bar itself, not just on
+  // the 8px dot. The reference marks a call that has not connected yet with
+  // a pulsing amber label ("Ringing…"), because "Calling…" and "04:12" in
+  // identical styling is the difference between a call in progress and a
+  // call nobody has picked up -- the one thing you actually want to know at
+  // a glance while you wait.
+  $('activeCallBar').classList.toggle('connecting', !!connecting);
   $('activeCallBar').style.display = 'flex';
   $('callMuteBtn').classList.remove('muted');
   // Screen share only makes sense once actually connected — voiceStartCallTimer()
