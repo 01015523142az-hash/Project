@@ -632,7 +632,7 @@
     .bot-mascot-body-group, .bot-mascot-wave-arm, .bot-mascot-eyes, .bot-mascot-antenna-tip{ animation:none; }
   }
   .bot-mascot-label{
-    font-family:var(--sans); font-size:11px; font-weight:800; color:#FF3DA6; letter-spacing:0.3px;
+    font-family:var(--sans); font-size:11px; font-weight:800; color:#E2B774; letter-spacing:0.3px;
   }
   /* Small static (non-animated, kept light for a scrolling list) version
      used as Desouky's avatar circle in the conversation list. */
@@ -670,7 +670,7 @@
   .desouky-mascot-btn:hover .bot-mascot-wave-arm{ animation-duration:0.9s; }
   .desouky-mascot-svg{ width:92px; height:auto; overflow:visible; }
   .desouky-mascot-label{
-    font-family:var(--sans); font-size:11.5px; font-weight:800; color:#FF3DA6; letter-spacing:.3px;
+    font-family:var(--sans); font-size:11.5px; font-weight:800; color:#E2B774; letter-spacing:.3px;
     background:var(--card); border:1px solid var(--border-light); padding:3px 12px; border-radius:999px;
     box-shadow:0 4px 12px rgba(0,0,0,0.25); white-space:nowrap;
   }
@@ -2157,6 +2157,22 @@
     .chat-panel .chat-typing-dots span{ animation:none; opacity:.8; }
   }
 
+
+  /* ---- v633: Aura-One mascot ----
+     The blink is TWO groups swapped by opacity rather than one group
+     redrawn: the reference switches between a smiling face and two flat
+     slits, and cross-fading them on a shared keyframe is what makes it
+     read as an eyelid instead of a fade. 6s cycle, shut for ~2% of it. */
+  .aura-face{ animation:auraBlinkOff 6s infinite; }
+  .aura-blink{ animation:auraBlinkOn 6s infinite; opacity:0; }
+  @keyframes auraBlinkOff{ 0%,95%,100%{ opacity:1 } 96.5%,98.5%{ opacity:0 } }
+  @keyframes auraBlinkOn{  0%,95%,100%{ opacity:0 } 96.5%,98.5%{ opacity:1 } }
+  .aura-beacon{ animation:auraBeacon 2s ease-in-out infinite; }
+  @keyframes auraBeacon{ 0%,100%{ opacity:.6 } 50%{ opacity:1 } }
+  @media (prefers-reduced-motion:reduce){
+    .aura-face, .aura-blink, .aura-beacon{ animation:none; }
+    .aura-blink{ opacity:0; }
+  }
 </style>
 </head>
 <body>
@@ -7411,6 +7427,11 @@
   <button id="desoukyMascotBtn" class="desouky-mascot-btn" title="Chat with Desouky">
     <svg class="desouky-mascot-svg" viewBox="0 0 140 175" xmlns="http://www.w3.org/2000/svg">
       <defs>
+        <linearGradient id="auraGold" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#F3E3C3"/><stop offset="50%" stop-color="#E2B774"/><stop offset="100%" stop-color="#C59B4E"/></linearGradient>
+        <linearGradient id="auraSlate" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#2A384F"/><stop offset="100%" stop-color="#1E293B"/></linearGradient>
+        <linearGradient id="auraVisor" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#0B111D"/><stop offset="100%" stop-color="#0F172A"/></linearGradient>
+        <filter id="auraGlow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        
         <filter id="desoukyMascotShadow2" x="-50%" y="-50%" width="200%" height="200%">
           <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#000000" flood-opacity="0.35"/>
         </filter>
@@ -7430,45 +7451,61 @@
       </defs>
       <ellipse cx="70" cy="168" rx="26" ry="5" fill="#000000" opacity="0.25" class="bot-mascot-shadow"/>
       <g class="bot-mascot-body-group" filter="url(#desoukyMascotShadow2)">
-        <line x1="70" y1="14" x2="70" y2="4" stroke="#FF3DA6" stroke-width="3" stroke-linecap="round"/>
-        <circle class="bot-mascot-antenna-tip" cx="70" cy="4" r="4.5" fill="#FF3DA6"/>
-        <rect x="38" y="14" width="64" height="48" rx="22" fill="url(#desoukyMascotMetal)" stroke="#FF3DA6" stroke-width="2.5"/>
-        <rect x="47" y="27" width="46" height="26" rx="13" fill="url(#desoukyMascotMetalLight)"/>
-        <ellipse cx="58" cy="21" rx="14" ry="5" fill="#FFFFFF" opacity="0.1"/>
-        <path d="M42 32a18 24 0 000 16" stroke="#FFFFFF" stroke-opacity="0.12" stroke-width="3" fill="none" stroke-linecap="round"/>
-        <g class="bot-mascot-eyes">
-          <circle cx="60" cy="40" r="5.5" fill="#FF3DA6"/>
-          <circle cx="80" cy="40" r="5.5" fill="#FF3DA6"/>
-          <circle cx="58.2" cy="38.2" r="1.5" fill="#FFFFFF" opacity="0.85"/>
-          <circle cx="78.2" cy="38.2" r="1.5" fill="#FFFFFF" opacity="0.85"/>
+        <!-- v633: Aura-One head, ported from the mascot design reference
+             (VisorExpressionSimulator.tsx, viewBox 260). Scaled 1/3 and
+             translated so the antenna tip lands where the old head's did --
+             see the v633 note in the generator for the arithmetic. -->
+        <g class="aura-head" transform="translate(26.667,0) scale(0.333333)">
+          <rect x="127" y="18" width="6" height="28" rx="3" fill="url(#auraGold)"/>
+          <circle cx="130" cy="16" r="7" fill="url(#auraGold)"/>
+          <circle class="aura-beacon" cx="130" cy="16" r="4" fill="#38BDF8" filter="url(#auraGlow)"/>
+          <rect x="22" y="106" width="16" height="48" rx="8" fill="url(#auraGold)"/>
+          <rect x="222" y="106" width="16" height="48" rx="8" fill="url(#auraGold)"/>
+          <circle cx="30" cy="130" r="3.5" fill="#1E293B"/>
+          <circle cx="230" cy="130" r="3.5" fill="#1E293B"/>
+          <rect x="34" y="42" width="192" height="176" rx="68" fill="url(#auraSlate)" stroke="#334155" stroke-width="2.5"/>
+          <path d="M 72 70 Q 130 63 188 70" fill="none" stroke="url(#auraGold)" stroke-width="3.5" stroke-linecap="round"/>
+          <rect x="48" y="78" width="164" height="104" rx="42" fill="url(#auraVisor)" stroke="#1E293B" stroke-width="2"/>
+          <path d="M 64 88 Q 130 84 196 92" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.15" stroke-linecap="round"/>
+          <g class="aura-face" filter="url(#auraGlow)">
+            <path d="M 80 132 Q 98 110 116 132" fill="none" stroke="#38BDF8" stroke-width="6" stroke-linecap="round"/>
+            <path d="M 144 132 Q 162 110 180 132" fill="none" stroke="#38BDF8" stroke-width="6" stroke-linecap="round"/>
+            <path d="M 120 148 Q 130 156 140 148" fill="none" stroke="#38BDF8" stroke-width="3.5" stroke-linecap="round"/>
+            <circle cx="74" cy="144" r="4.5" fill="#E2B774" opacity="0.8"/>
+            <circle cx="186" cy="144" r="4.5" fill="#E2B774" opacity="0.8"/>
+          </g>
+          <g class="aura-blink" filter="url(#auraGlow)">
+            <line x1="82" y1="130" x2="114" y2="130" stroke="#38BDF8" stroke-width="4" stroke-linecap="round"/>
+            <line x1="146" y1="130" x2="178" y2="130" stroke="#38BDF8" stroke-width="4" stroke-linecap="round"/>
+          </g>
         </g>
         <rect x="63" y="60" width="14" height="8" fill="#0C0F14"/>
         <rect x="63" y="60" width="14" height="3" fill="#FFFFFF" opacity="0.06"/>
         <g transform="rotate(24 28 88)">
-          <rect x="22" y="88" width="12" height="34" rx="6" fill="url(#desoukyMascotMetal)" stroke="#FF3DA6" stroke-width="2"/>
+          <rect x="22" y="88" width="12" height="34" rx="6" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2"/>
           <rect x="22" y="102" width="12" height="3" fill="#000000" opacity="0.35"/>
-          <circle cx="28" cy="122" r="8" fill="#FF3DA6"/>
+          <circle cx="28" cy="122" r="8" fill="#E2B774"/>
         </g>
-        <circle cx="28" cy="88" r="9" fill="url(#desoukyMascotMetalLight)" stroke="#FF3DA6" stroke-width="2"/>
+        <circle cx="28" cy="88" r="9" fill="url(#desoukyMascotMetalLight)" stroke="#E2B774" stroke-width="2"/>
         <g class="bot-mascot-wave-arm" style="transform-origin:112px 88px;">
-          <rect x="106" y="54" width="12" height="34" rx="6" fill="url(#desoukyMascotMetal)" stroke="#FF3DA6" stroke-width="2"/>
+          <rect x="106" y="54" width="12" height="34" rx="6" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2"/>
           <rect x="106" y="68" width="12" height="3" fill="#000000" opacity="0.35"/>
-          <circle cx="112" cy="54" r="8" fill="#FF3DA6"/>
+          <circle cx="112" cy="54" r="8" fill="#E2B774"/>
         </g>
-        <circle cx="112" cy="88" r="9" fill="url(#desoukyMascotMetalLight)" stroke="#FF3DA6" stroke-width="2"/>
-        <rect x="28" y="72" width="84" height="66" rx="26" fill="url(#desoukyMascotMetal)" stroke="#FF3DA6" stroke-width="2.5"/>
+        <circle cx="112" cy="88" r="9" fill="url(#desoukyMascotMetalLight)" stroke="#E2B774" stroke-width="2"/>
+        <rect x="28" y="72" width="84" height="66" rx="26" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2.5"/>
         <path d="M32 78a30 40 0 000 52" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="4" fill="none" stroke-linecap="round"/>
         <rect x="28" y="72" width="84" height="10" rx="10" fill="#FFFFFF" opacity="0.05"/>
         <circle cx="70" cy="104" r="17" fill="url(#desoukyMascotLens)"/>
         <ellipse cx="64" cy="97" rx="7" ry="4" fill="#FFFFFF" opacity="0.65" transform="rotate(-25 64 97)"/>
-        <circle cx="70" cy="104" r="17" fill="none" stroke="#FF3DA6" stroke-width="1.5"/>
+        <circle cx="70" cy="104" r="17" fill="none" stroke="#E2B774" stroke-width="1.5"/>
         <image href="data:image/png;base64,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" x="55.5" y="88.35" width="29" height="31.3"/>
-        <rect x="40" y="132" width="17" height="26" rx="8" fill="url(#desoukyMascotMetal)" stroke="#FF3DA6" stroke-width="2"/>
-        <rect x="83" y="132" width="17" height="26" rx="8" fill="url(#desoukyMascotMetal)" stroke="#FF3DA6" stroke-width="2"/>
+        <rect x="40" y="132" width="17" height="26" rx="8" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2"/>
+        <rect x="83" y="132" width="17" height="26" rx="8" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2"/>
         <rect x="40" y="144" width="17" height="3" fill="#000000" opacity="0.3"/>
         <rect x="83" y="144" width="17" height="3" fill="#000000" opacity="0.3"/>
-        <ellipse cx="48.5" cy="160" rx="11" ry="5" fill="#FF3DA6"/>
-        <ellipse cx="91.5" cy="160" rx="11" ry="5" fill="#FF3DA6"/>
+        <ellipse cx="48.5" cy="160" rx="11" ry="5" fill="#E2B774"/>
+        <ellipse cx="91.5" cy="160" rx="11" ry="5" fill="#E2B774"/>
         <ellipse cx="46" cy="158" rx="4" ry="1.6" fill="#FFFFFF" opacity="0.35"/>
         <ellipse cx="89" cy="158" rx="4" ry="1.6" fill="#FFFFFF" opacity="0.35"/>
       </g>
@@ -9474,11 +9511,11 @@ function chatAvatarHtml(userId, name, sizePx, showStatus){
 function chatBotAvatarIconHtml(sizePx){
   return `<div class="chat-conv-avatar bot-avatar" style="width:${sizePx}px; height:${sizePx}px;">
     <svg viewBox="0 0 24 24" width="${Math.round(sizePx * 0.62)}" height="${Math.round(sizePx * 0.62)}" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="5" y="7" width="14" height="10" rx="4" fill="#0C0F14" stroke="#FF3DA6" stroke-width="1.4"/>
-      <circle cx="9.5" cy="12" r="1.4" fill="#FF3DA6"/>
-      <circle cx="14.5" cy="12" r="1.4" fill="#FF3DA6"/>
-      <line x1="12" y1="7" x2="12" y2="4.2" stroke="#FF3DA6" stroke-width="1.4" stroke-linecap="round"/>
-      <circle cx="12" cy="3.6" r="1.1" fill="#FF3DA6"/>
+      <rect x="5" y="7" width="14" height="10" rx="4" fill="#0C0F14" stroke="#E2B774" stroke-width="1.4"/>
+      <circle cx="9.5" cy="12" r="1.4" fill="#E2B774"/>
+      <circle cx="14.5" cy="12" r="1.4" fill="#E2B774"/>
+      <line x1="12" y1="7" x2="12" y2="4.2" stroke="#E2B774" stroke-width="1.4" stroke-linecap="round"/>
+      <circle cx="12" cy="3.6" r="1.1" fill="#E2B774"/>
     </svg>
   </div>`;
 }
