@@ -30,12 +30,34 @@
 </script>
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCxzdxEf1Y0z4vdHImH_iV5latt1QY_OG8&libraries=places&callback=onGooglePlacesLoaded&loading=async" async defer></script>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Roboto:wght@400;500;700;900&family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap');
+  /* v623: the dialer's two faces, so the portal and the dialer read as one
+     product rather than two tools that happen to share a login. Identical
+     import line to dialer/index.html -- keep them in step.
+
+     NOTE ON WHAT THIS REPLACES: the --sans on the next :root block said
+     'Inter', but it was DEAD -- a second :root further down the file (search
+     "v182: color + font correction") redefines --sans, and later wins. The
+     body font was really Roboto. Both definitions are updated; changing only
+     the one up here looked right in the source and changed nothing on screen,
+     which is how this was caught.
+
+     Roboto and Fraunces are dropped from the import. Fraunces backed
+     --display, which now points at the sans stack -- see that line. */
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
   :root{
     --bg:#10131A; --card:#171B23; --card-hover:#1D222C; --inset:#0C0F14;
     --border:#262D39; --border-light:#323A48;
     --text:#E8EAED; --text-2:#8B94A3; --text-dim:#4E5768;
-    --focus:#FD6262; --focus-dim:#4A2020; --away:#F5A623; --away-dim:#4A3818; --idle:#2A313C; --danger:#E5484D;
+    /* v623: --focus IS the button/link/active-tab accent for the whole
+       portal (see the note below on --gold), so retargeting this one pair
+       turns every button gold at once rather than hunting down button rules
+       one by one. The value is the dialer's --gold exactly -- #C9A66B, the
+       colour on its sign-in button -- and --focus-dim is the dialer's
+       --gold-dim, so hover/inset states stay in the same family instead of
+       staying a leftover red.
+       --danger stays red on purpose: it is semantic, not brand, and the
+       coral accent this replaces sat close enough to it to blur the two. */
+    --focus:#C9A66B; --focus-dim:#3A3020; --away:#F5A623; --away-dim:#4A3818; --idle:#2A313C; --danger:#E5484D;
     /* v92: dedicated status-semantic green, distinct from --focus (which is
        the coral/red brand accent used for buttons/links/highlights — never
        meant to read as "success", but several status labels were reusing
@@ -47,17 +69,35 @@
        used far more sparingly here (this is an internal ops tool, not a
        client-facing surface) — just the login greeting gets it. */
     --gold:#C9A66B; --gold-soft:#E4C88F;
-    --mono:'IBM Plex Mono', monospace; --sans:'Inter', sans-serif; --display:'Fraunces', serif;
+    /* v623: the dialer's stacks, character for character.
+       --display was 'Fraunces', serif -- a display serif on section
+       headings, stat values and modal titles. It now points at the same sans
+       as everything else, because the dialer has no display face and leaving
+       one serif behind would have made the portal look like the dialer with
+       three headings someone forgot. The VARIABLE stays so the rules that
+       use it keep working; change this one line to bring Fraunces back. */
+    --mono:'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+    --sans:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --display:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
   :root[data-theme="light"]{
     --bg:#F4F5F7; --card:#FFFFFF; --card-hover:#EFF1F4; --inset:#EAECF0;
     --border:#DCE0E6; --border-light:#C7CDD6;
     --text:#2A1B5E; --text-2:#B0206E; --text-dim:#8C6BAE;
-    --focus:#FD6262; --focus-dim:#FDE3E3; --away:#D9720A; --away-dim:#FBEBD2; --idle:#E2E5EA; --danger:#C3272C;
+    /* v623: gold in the light theme too, but DEEPER than the dark theme's
+       #C9A66B. That value is tuned to sit on a near-black card; as link text
+       on white it falls below readable contrast, and --focus is link text
+       here, not only button fill. #8F7134 is the same hue carried down to
+       roughly 5:1 on white, so buttons read gold and links stay legible. */
+    --focus:#8F7134; --focus-dim:#F5EBD8; --away:#D9720A; --away-dim:#FBEBD2; --idle:#E2E5EA; --danger:#C3272C;
     --good:#16A34A; --good-dim:#DCFCE7; --num:#000000;
     --gold:#9C7A3C; --gold-soft:#B8935A;
     --blob-1:#CFE0FF; --blob-2:#FFD9EC; --blob-3:#FFF3C4;
-    --display:'Fraunces', serif;
+    /* v623: the light theme re-declared the display serif, so changing only
+       the dark-theme line would have left Fraunces on every heading for
+       anyone using light mode -- exactly the kind of half-applied theme
+       change that reads as a bug. Same stack as dark. */
+    --display:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   }
   body{ transition:background-color .15s ease, color .15s ease; }
   #loginScreen, #app{ position:relative; z-index:0; }
@@ -1286,8 +1326,13 @@
      ========================================================================= */
 
   :root{
-    /* Body font now matches the client portal's exactly (was Inter). */
-    --sans:'Roboto', -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    /* v623: was Roboto (v182 switched it from Inter to match the client
+       portal). This block sits AFTER the :root at the top of the file and
+       therefore WINS -- setting --sans up there alone changed nothing, which
+       is exactly what the rendered page showed: computed --sans still came
+       back 'Roboto'. Both definitions now name the same stack, so whichever
+       one a future reader finds first is the truth. */
+    --sans:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     /* Dashboard's --bg/--card/--card-hover/--inset/--border/--border-light
        already matched the portal's dark values 1:1 — only text tone and
        the "good" green needed correcting to the portal's warmer palette. */
@@ -1509,6 +1554,22 @@
     white-space:normal; line-height:1.3; flex-shrink:0;
   }
   .side-subnav .act-subtab-btn, .side-subnav .act-group-btn{ border-radius:6px; }
+  /* v623: Dialer / Dialer Admin sit in a subnav but are still .tab-btn
+     elements (see the markup comment for why). The top-level rules above
+     only target `.side-main-nav > .side-nav-group > .tab-btn` -- direct
+     children -- so these nested ones inherit no sizing at all and would
+     render as unstyled full-bleed buttons. This gives them the same shape
+     as every other subtab pill in the sidebar. */
+  .side-subnav-dialer{ flex-direction:column; gap:1px; }
+  .side-subnav .dialer-subtab-btn{
+    display:flex; align-items:center; gap:8px; width:100%; text-align:left;
+    background:transparent; border:none; color:var(--text-dim);
+    font-family:var(--mono); font-size:11px; text-transform:uppercase;
+    letter-spacing:0.5px; padding:7px 12px 7px 22px; border-radius:6px;
+    cursor:pointer;
+  }
+  .side-subnav .dialer-subtab-btn:hover{ color:var(--text-2); }
+  .side-subnav .dialer-subtab-btn .subtab-icon{ flex-shrink:0; }
   .side-subnav-activity .act-group-row{ display:flex; flex-direction:column; gap:1px; margin-bottom:8px; flex-wrap:nowrap; }
   .side-subnav-activity .act-subtab-row{ display:flex; flex-direction:column; gap:1px; flex-wrap:nowrap; }
   .side-subnav-activity .act-group-row + .act-subtab-row{
@@ -1588,6 +1649,149 @@
   }
   .act-group-btn:hover:not(.active),
   .act-subtab-btn:hover:not(.active):not(:disabled){ color:var(--text-2); border-color:transparent; }
+
+  /* =========================================================================
+     v625: chat button + chat widget, rebuilt to the chat-button-design
+     reference. Appended as overrides in source order, the same convention
+     v180/v181/v182 used -- nothing above this block was edited, so any rule
+     here can be deleted to fall straight back to the previous design.
+
+     ON COLOUR, because this is the one place the reference was NOT followed
+     literally. The reference is emerald-600 -> teal-500 throughout. This
+     portal was told in the same breath to move its buttons to the dialer's
+     gold, and the chat button is the most visible button on the screen --
+     shipping it emerald would have left one green control floating over a
+     gold product. So the FORM is the reference's exactly (geometry, gradient
+     direction, ring, badge placement, panel size, easing) and the HUE is the
+     portal's. Swapping back is the two --chat-accent* lines below.
+
+     The unread badge stays ROSE, not gold, and that is deliberate: it is the
+     one element on the button that must read as "something needs you"
+     against the accent behind it. The reference makes the same choice
+     (rose-500 on emerald).
+     ========================================================================= */
+  :root{
+    --chat-accent-1:#A8823F;   /* deep gold  -- gradient start (bottom-left) */
+    --chat-accent-2:#E4C88F;   /* soft gold  -- gradient end   (top-right)   */
+    --chat-accent-ring:rgba(228,200,143,0.40);
+    --chat-badge:#F43F5E;      /* rose-500, as in the reference              */
+  }
+
+  /* ---- the floating button ---- */
+  /* Was a flat #C24B4B disc. The reference's button is a gradient disc with
+     a hairline border, a lifted shadow and a slow expanding ring. */
+  .chat-fab{
+    background:linear-gradient(to top right, var(--chat-accent-1), var(--chat-accent-2));
+    border:2px solid var(--chat-accent-ring);
+    box-shadow:0 12px 28px -6px rgba(20,16,8,0.55);
+    overflow:visible;
+  }
+  .chat-fab:hover{
+    transform:translateY(-2px) scale(1.05);
+    box-shadow:0 16px 34px -6px rgba(20,16,8,0.65);
+  }
+  .chat-fab:active{ transform:scale(0.94); }
+
+  /* The expanding ring. ::after rather than an extra element so the existing
+     markup is untouched; pointer-events:none so it never eats the click that
+     opens the panel -- the reference is explicit about that too. */
+  .chat-fab::after{
+    content:''; position:absolute; inset:-8px; border-radius:50%;
+    border:2px solid var(--chat-accent-ring);
+    animation:chatFabPing 1.8s cubic-bezier(0,0,0.2,1) infinite;
+    pointer-events:none;
+  }
+  @keyframes chatFabPing{
+    0%{ transform:scale(1); opacity:.6; }
+    75%, 100%{ transform:scale(1.5); opacity:0; }
+  }
+  /* An always-on animation on an always-on-screen control is exactly what
+     prefers-reduced-motion exists for -- and v204 already recorded a
+     complaint that this button drew too much attention. */
+  @media (prefers-reduced-motion:reduce){
+    .chat-fab::after{ animation:none; opacity:.35; }
+    .chat-fab, .chat-fab:hover{ transition:none; transform:none; }
+  }
+
+  /* The bubble glyph sits on gold now, so its dots can no longer be
+     var(--focus) -- that is the same gold, which would render them
+     invisible. Forced to the deep end of the gradient instead. */
+  .chat-fab .chat-fab-svg circle{ fill:var(--chat-accent-1); }
+
+  /* Badge: pulled to the reference's offset and given a ring in the page
+     background so it reads as sitting ON the button rather than inside it. */
+  .chat-fab .chat-unread-badge{
+    top:-8px; right:-8px; background:var(--chat-badge); color:#fff;
+    border:2px solid var(--bg); font-family:var(--sans); font-weight:800;
+    font-size:11px; box-shadow:0 2px 6px rgba(0,0,0,.35);
+  }
+
+  /* ---- the panel ---- */
+  /* Reference geometry: 440x620, 16px radius, translucent with a blur, and
+     a softer/wider shadow than the old flat card. max-* keep it usable on a
+     laptop screen, which the reference also does. */
+  .chat-panel{
+    width:440px; height:620px;
+    max-width:calc(100vw - 32px); max-height:calc(100vh - 120px);
+    border-radius:16px;
+    background:color-mix(in srgb, var(--card) 95%, transparent);
+    border:1px solid var(--border-light);
+    box-shadow:0 24px 60px -12px rgba(0,0,0,0.72);
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+    animation:chatPanelIn .25s cubic-bezier(0.16,1,0.3,1);
+  }
+  @keyframes chatPanelIn{
+    from{ opacity:0; transform:scale(.93) translateY(35px); }
+    to{ opacity:1; transform:none; }
+  }
+  @media (prefers-reduced-motion:reduce){ .chat-panel{ animation:none; } }
+  /* Narrow screens: the fixed 440px would overflow, and the reference's own
+     max-w calc already anticipates this -- this just pins it to the gutters
+     rather than leaving it right-aligned and clipped. */
+  @media (max-width:520px){
+    .chat-panel{ right:16px; left:16px; width:auto; }
+  }
+
+  /* ---- message bubbles ---- */
+  /* The widget has been WhatsApp-styled since v315 (7.5px radius, square
+     tail, #005C4B / #202C33). The reference is a different language: a
+     generous 16px radius with one corner tightened to 4px as the tail, the
+     accent on your own messages, a bordered neutral on theirs. Colour comes
+     from the theme rather than the reference's literal slate/emerald so
+     these keep working in the light theme, which the reference has no
+     equivalent of. */
+  .chat-panel .chat-msg-bubble{
+    border-radius:16px; padding:8px 14px; line-height:1.5;
+    box-shadow:0 1px 2px rgba(0,0,0,.18);
+  }
+  .chat-panel .chat-msg-row.mine .chat-msg-bubble{
+    background:linear-gradient(to top right, var(--chat-accent-1), var(--chat-accent-2));
+    color:#1A1206; border:none; border-bottom-right-radius:4px;
+  }
+  .chat-panel .chat-msg-row.theirs .chat-msg-bubble{
+    background:var(--inset); color:var(--text);
+    border:1px solid var(--border-light); border-bottom-left-radius:4px;
+  }
+  /* NO colour override for the meta row, and that is a correction, not an
+     omission. The first version of this block darkened .chat-msg-ticks-row
+     and .chat-msg-edit-btn on the assumption they sat on the gold fill --
+     they do not. Both are emitted inside .chat-msg-meta, which is a SIBLING
+     of .chat-msg-bubble (see the row template: bubble, attachment, then
+     meta), so they render on the panel background where var(--text-dim)
+     is already correct. Darkening them made the "Seen" ticks invisible,
+     which is only visible on the rendered page -- the rule looked right in
+     the file.
+
+     The bubble's own text colour is set above and is the only thing that
+     actually sits on the gradient. */
+
+  /* Header: the reference gives the panel one continuous surface rather than
+     a separately-coloured bar, so the v315 WhatsApp header colour goes. */
+  .chat-panel .chat-panel-header{
+    background:transparent;
+    border-bottom:1px solid var(--border);
+    font-family:var(--sans); font-weight:700; letter-spacing:-0.01em;
+  }
 </style>
 </head>
 <body>
@@ -1631,7 +1835,7 @@
       var el = document.createElement('div');
       el.id = 'newVersionBanner';
       el.style.cssText = 'position:fixed; bottom:20px; left:50%; transform:translateX(-50%); z-index:99999; background:var(--card,#171B23); color:var(--text,#E8EAED); border:1px solid var(--focus,#FD6262); border-radius:10px; padding:10px 12px 10px 16px; display:flex; align-items:center; gap:12px; font-family:var(--sans,system-ui,sans-serif); font-size:13px; box-shadow:0 8px 24px rgba(0,0,0,0.4);';
-      el.innerHTML = '<span>A new version is available.</span><button type="button" style="background:var(--focus,#FD6262); color:#fff; border:none; border-radius:6px; padding:6px 14px; font-weight:600; cursor:pointer; font-size:13px; font-family:inherit;">Refresh</button>';
+      el.innerHTML = '<span>A new version is available.</span><button type="button" style="background:var(--focus,#C9A66B); color:#111; border:none; border-radius:6px; padding:6px 14px; font-weight:600; cursor:pointer; font-size:13px; font-family:inherit;">Refresh</button>';
       el.querySelector('button').addEventListener('click', function(){ location.reload(); });
       document.body.appendChild(el);
     }
@@ -1763,35 +1967,34 @@
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="call_activity" title="Activity"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M2.5 10.5h3l2-5 3 9 2-6.5 1.5 2.5h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Activity</span></button>
       <div class="side-subnav side-subnav-activity">
+          <!-- v623: the GoHighLevel, ReadyMode, Gmail and Extension groups are
+               GONE from Activity, leaving Staff Activity as the only group.
+
+               GoHighLevel went because GHL itself is being decommissioned --
+               the same reason the chat widget's 2-way SMS tab went in this
+               version. Its Calls/Texts/Appointments/Emails pills read from
+               ghl_* tables that stop receiving anything once the integration
+               is off, and a tab that renders an empty table forever is worse
+               than no tab: it looks broken rather than retired.
+
+               ReadyMode, Gmail and Extension were removed on request.
+
+               NOTHING BEHIND THEM WAS DELETED -- loadCallActivity()'s
+               branches, the ghl_*/readymode tables and the Gmail edge
+               function are all still there, and ACTIVITY_SECTIONS still
+               names the sections so existing per-role grants in the database
+               stay meaningful rather than being silently dropped. This is a
+               navigation change; putting a group back is re-adding its
+               button here plus its entry in ACTIVITY_GROUPS.
+
+               The single remaining group's row is kept (rather than collapsed
+               into the tab itself) so that re-adding one is a one-line edit,
+               and so activateActivityGroup() keeps exactly one code path. -->
           <div class="act-group-row" id="actGroupNav">
-                <button class="act-group-btn active" data-act-group="ghl"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h13v8H9l-3 3v-3H3.5z"/></svg>GoHighLevel</button>
-                <button class="act-group-btn" data-act-group="readymode"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg>ReadyMode</button>
-                <button class="act-group-btn" data-act-group="gmail"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h14v10H3z"/><path d="M3.5 5.5l6.5 5.5 6.5-5.5"/></svg>Gmail</button>
-                <button class="act-group-btn" data-act-group="extension"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4.3h2.5v1a1.1 1.1 0 002.2 0v-1H14v2.5h1a1.1 1.1 0 010 2.2h-1V11.5h-2.5a1.1 1.1 0 00-2.2 0V13.5H7V11H5.9a1.1 1.1 0 010-2.2H7z"/></svg>Extension</button>
-                <button class="act-group-btn" data-act-group="staff_activity"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="6.5" r="2.5"/><path d="M2.5 16v-1a4.5 4.5 0 014.5-4.5h0a4.5 4.5 0 014.5 4.5v1"/><circle cx="14" cy="7" r="2"/><path d="M12.5 11a3.5 3.5 0 013.5 3.5V16"/></svg>Staff Activity</button>
+                <button class="act-group-btn active" data-act-group="staff_activity"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="6.5" r="2.5"/><path d="M2.5 16v-1a4.5 4.5 0 014.5-4.5h0a4.5 4.5 0 014.5 4.5v1"/><circle cx="14" cy="7" r="2"/><path d="M12.5 11a3.5 3.5 0 013.5 3.5V16"/></svg>Staff Activity</button>
                   </div>
           <div class="act-subtab-row">
-                <button class="act-subtab-btn active" data-act-kind="call" data-act-group="ghl"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg>Calls</button>
-                <button class="act-subtab-btn" data-act-kind="sms" data-act-group="ghl" title="Automated and one-way client texts — real 2-way conversations live in the SMS tab of Chats"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5h13v8.5H9l-3.5 3v-3h-2z"/></svg>Texts</button>
-                <button class="act-subtab-btn" data-act-kind="appointment" data-act-group="ghl"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="13" height="12" rx="1.5"/><path d="M3.5 8.5h13M7 3v3M13 3v3"/></svg>Appointments</button>
-                <button class="act-subtab-btn" data-act-kind="email" data-act-group="ghl" disabled title="Email activity isn't tracked yet — GHL doesn't attribute inbound emails to a specific agent"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="14" height="10" rx="1.5"/><path d="M3.5 6l6.5 5 6.5-5"/></svg>Emails <span class="soon-badge">(soon)</span></button>
-                <button class="act-subtab-btn" data-act-kind="rm_call" data-act-group="readymode"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h12M4 10h12M4 14.5h8"/></svg>Call Log</button>
-                <button class="act-subtab-btn" data-act-kind="agent_report" data-act-group="readymode"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V9M10 16V4M16 16v-6"/></svg>Agent Report</button>
-                <button class="act-subtab-btn" data-act-kind="productivity" data-act-group="readymode" disabled title="Paused while the ReadyMode Productivity data pipeline is being sorted out — see Agent Report for the same underlying numbers in the meantime"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 13.5l4-4 3 3 5.5-6"/><path d="M12.5 6.5H16v3.5"/></svg>Productivity <span class="soon-badge">(soon)</span></button>
-                <!-- v475: moved out of the chat widget's bottom-tab row entirely
-                     (per explicit request) into its own Activity group here,
-                     mirroring where ReadyMode's own subtabs live. Only one
-                     "subtab" since this isn't a filterable report table like
-                     everything else in this row -- it's a live two-pane inbox,
-                     see actGmailPanel below. -->
-                <button class="act-subtab-btn" data-act-kind="gmail_inbox" data-act-group="gmail"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h14v10H3z"/><path d="M3.5 5.5l6.5 5.5 6.5-5.5"/></svg>Inbox</button>
-                <!-- v144: one pill per task (auto-generated, see refreshExtensionTaskSections()) instead
-                     of a single fixed "Staff Work" pill — a new task shows up here on its own the moment
-                     it's created, and each is independently grantable per role via activity_sections
-                     same as every other row above. display:contents keeps it invisible to the row's own
-                     flex layout, same as if these buttons were siblings of the ones above. -->
-                <div id="actExtensionSubtabs" style="display:contents;"></div>
-                <button class="act-subtab-btn" data-act-kind="staff_activity" data-act-group="staff_activity"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="6.5" r="2.5"/><path d="M2.5 16v-1a4.5 4.5 0 014.5-4.5h0a4.5 4.5 0 014.5 4.5v1"/><circle cx="14" cy="7" r="2"/><path d="M12.5 11a3.5 3.5 0 013.5 3.5V16"/></svg>Overview</button>
+                <button class="act-subtab-btn active" data-act-kind="staff_activity" data-act-group="staff_activity"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="6.5" r="2.5"/><path d="M2.5 16v-1a4.5 4.5 0 014.5-4.5h0a4.5 4.5 0 014.5 4.5v1"/><circle cx="14" cy="7" r="2"/><path d="M12.5 11a3.5 3.5 0 013.5 3.5V16"/></svg>Overview</button>
                   </div>
         </div>
     </div>
@@ -1805,20 +2008,42 @@
          once. The source is still dialer/index.html in the main repo;
          tools/publish-dialer.py is what puts it on that host.
          Grantable per role like Finance/HR -- see DASHBOARD_TAB_KEYS. -->
+    <!-- v623: Dialer and Dialer Admin are now SUBTABS under a Dialer
+         Management parent, the same shape Activity and Leads already use.
+
+         THE TWO CHILDREN ARE STILL .tab-btn ELEMENTS, deliberately. They
+         keep their own data-tab keys, so the click handler that opens them
+         on their own origins, applyRolePermissionsToNav()'s per-role
+         visibility, and every existing allowed_tabs grant in the database
+         all keep working untouched. Only where they sit in the nav changed.
+
+         THE PARENT IS NOT A DESTINATION. 'dialer_management' has no
+         tab-panel and is not in DASHBOARD_TAB_KEYS -- it is a disclosure
+         control, special-cased in the .tab-btn click handler to expand
+         rather than navigate, and shown only when the role can see at least
+         one of the two children (see applyRolePermissionsToNav). Adding it
+         as a real grantable key would have meant a third permission that
+         means nothing on its own and could be granted while both children
+         are denied, leaving an empty group. -->
     <div class="side-nav-group">
-      <button class="tab-btn" data-tab="dialer" title="Dialer"><svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg><span>Dialer</span></button>
-      <!-- v529: Dialer Admin — number pool, list import, campaigns, at
-           admin.proptechnologyai.com. A SEPARATE tab key from 'dialer' on
-           purpose -- and since the cutover a separate ORIGIN too, which is
-           stronger than any role check: an agent's dialer session is not
-           merely refused here, it does not exist here.
-           The two are different jobs, not two views of one. Quality reviews
-           calls and must never land on a console with a Dial button; agents
-           run the console and have no business ordering numbers. Keeping
-           them as independent grants is what lets a role have one without
-           the other. Real access control is server-side (can_manage_dialer
-           / can_review_calls, v529) — this only gates nav visibility. -->
-      <button class="tab-btn" data-tab="dialer_admin" title="Dialer Admin"><svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h12M4 15h7"/><circle cx="15.5" cy="15" r="2.2"/></svg><span>Dialer Admin</span></button>
+      <button class="tab-btn" data-tab="dialer_management" title="Dialer Management"><svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg><span>Dialer Management</span></button>
+      <div class="side-subnav side-subnav-dialer">
+        <button class="tab-btn dialer-subtab-btn" data-tab="dialer" title="Dialer"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg>Dialer</button>
+        <!-- v529: Dialer Admin — number pool, list import, campaigns, at
+             admin.proptechnologyai.com. A SEPARATE tab key from 'dialer' on
+             purpose -- and since the cutover a separate ORIGIN too, which is
+             stronger than any role check: an agent's dialer session is not
+             merely refused here, it does not exist here.
+             The two are different jobs, not two views of one. Quality reviews
+             calls and must never land on a console with a Dial button; agents
+             run the console and have no business ordering numbers. Keeping
+             them as independent grants is what lets a role have one without
+             the other -- which is why grouping them under one parent here
+             changes presentation only and NOT permissions. Real access
+             control is server-side (can_manage_dialer / can_review_calls,
+             v529) — this only gates nav visibility. -->
+        <button class="tab-btn dialer-subtab-btn" data-tab="dialer_admin" title="Dialer Admin"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h12M4 15h7"/><circle cx="15.5" cy="15" r="2.2"/></svg>Dialer Admin</button>
+      </div>
     </div>
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="leads" title="Leads"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="0.8" fill="currentColor"/></svg><span>Leads</span></button>
@@ -6932,7 +7157,17 @@
       <div id="chatCallsList" class="chat-conv-list" style="display:none;"></div>
       <div class="chat-bottom-tabs" id="chatBottomTabs">
         <button class="chat-bottom-tab-btn active" data-chat-bottom-tab="chats"><span class="chat-bottom-tab-icon">&#128172;<span class="chat-bottom-tab-badge" id="chatBottomBadgeChats" style="display:none;">0</span></span>Chats</button>
-        <button class="chat-bottom-tab-btn" data-chat-bottom-tab="sms"><span class="chat-bottom-tab-icon">&#9993;&#65039;<span class="chat-bottom-tab-badge" id="chatBottomBadgeSms" style="display:none;">0</span></span>SMS</button>
+        <!-- v624: the SMS tab was removed with GoHighLevel. It rendered a
+             per-client two-way thread read back out of a GHL conversation
+             (ghl-api's lookup_contact_activity); with GHL off there is no
+             such thread to read, so the tab could only ever have shown an
+             empty panel. Client notifications themselves did NOT go away --
+             they send through Telnyx now, see send-client-sms.
+             The #chatSmsThreadView markup and its helpers below are left in
+             place but unreachable: nothing links to them any more. They are
+             the starting point if a Telnyx-backed client thread is wanted
+             later, which is why they were not deleted outright. -->
+        <!-- <button class="chat-bottom-tab-btn" data-chat-bottom-tab="sms">…</button> -->
         <button class="chat-bottom-tab-btn" data-chat-bottom-tab="calls"><span class="chat-bottom-tab-icon">&#128222;<span class="chat-bottom-tab-badge" id="chatBottomBadgeCalls" style="display:none;">0</span></span>Calls</button>
       </div>
     </div>
@@ -7256,8 +7491,8 @@ const CLIENT_PORTAL_URL = 'https://clientportal.proptechnologyai.com';
 // reason, etc.) into innerHTML without escaping now goes through
 // escapeHtml(). Pair with supabase/fix-profile-self-update-columns.sql,
 // which closes the same gap server-side.
-const APP_VERSION = 'v1.2';
-const APP_BUILD_DATE = 'Jul 2026';
+const APP_VERSION = 'v1.3';
+const APP_BUILD_DATE = 'Sep 2026';
 const SUPPORT_CONTACT = ''; // e.g. 'ops@yourcompany.com' — leave blank to hide the "contact" line entirely
 
 // ---- AI Chat Assistant ----
@@ -7667,6 +7902,18 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     // Consequence, deliberate: the agent signs in on the dialer once, per
     // browser session. Both consoles grew their own sign-in form for exactly
     // this, and neither could authenticate anybody before.
+    // v623: the Dialer Management parent is a disclosure control, not a
+    // destination -- it has no tab-panel, so falling through to
+    // activateTab() would deactivate every panel and leave the content area
+    // blank. Marking it active is the whole job: the subnav is revealed by
+    // `.side-nav-group:has(> .tab-btn.active) .side-subnav`, and clicking any
+    // other tab clears it because activateTab() toggles .active off every
+    // .tab-btn that does not match.
+    if(btn.dataset.tab === 'dialer_management'){
+      document.querySelectorAll('.side-main-nav > .side-nav-group > .tab-btn')
+        .forEach(b => b.classList.toggle('active', b === btn));
+      return;
+    }
     if(btn.dataset.tab === 'dialer' || btn.dataset.tab === 'dialer_admin'){
       const url = btn.dataset.tab === 'dialer'
         ? 'https://dialer.proptechnologyai.com/'
@@ -8472,35 +8719,36 @@ function applyRolePermissionsToNav(){
     const visible = myIsOwner || myPermissions.allowedTabs.includes(key);
     btn.style.display = visible ? '' : 'none';
   });
+  // v623: the Dialer Management parent has no grant of its own -- it is a
+  // disclosure control for the two real keys underneath. Show it when the
+  // role can see either child, hide it when it can see neither, so nobody
+  // gets a group header that opens onto nothing. Done AFTER the loop above
+  // so it overrides what that loop decided for 'dialer_management' (which,
+  // being in no allowed_tabs row, is always "hide" for non-Owners).
+  const _dmBtn = document.querySelector('.tab-btn[data-tab="dialer_management"]');
+  if(_dmBtn){
+    const _canDialer = myIsOwner || myPermissions.allowedTabs.includes('dialer');
+    const _canDialerAdmin = myIsOwner || myPermissions.allowedTabs.includes('dialer_admin');
+    _dmBtn.style.display = (_canDialer || _canDialerAdmin) ? '' : 'none';
+  }
   const _aub = document.getElementById('addUserBtn');
   if(_aub) _aub.style.display = myPermissions.canManageUsers ? '' : 'none';
   const _ncc = document.getElementById('chatNewClientChatBtn');
   if(_ncc) _ncc.style.display = myPermissions.canTextClients ? '' : 'none';
-  // v467: the SMS tab (bottom of the chat panel's conversation list) is
-  // the same "text a client directly" capability as the manual composer
-  // above -- gate it identically, and force back to Chats if someone
-  // without the permission was somehow sitting on it (role changed under
-  // them mid-session, etc.). Rebuilt after being dropped from an
-  // intermediate version.
-  const _smsTabBtn = document.querySelector('.chat-bottom-tab-btn[data-chat-bottom-tab="sms"]');
-  if(_smsTabBtn){
-    _smsTabBtn.style.display = myPermissions.canTextClients ? '' : 'none';
-    if(!myPermissions.canTextClients && chatBottomTab === 'sms') $('chatBottomTabs').querySelector('[data-chat-bottom-tab="chats"]').click();
-  }
-  // Background poll for "a client texted back" notifications -- same
-  // permission gate as the tab itself. Guarded so a repeat call into
-  // establishSession (token refresh, etc.) never stacks a second interval
-  // on top of one already running.
-  if(myPermissions.canTextClients){
-    chatSmsNotifyLoadSeen();
-    if(!chatSmsNotifyPollTimer){
-      chatPollSmsForNotifications();
-      chatSmsNotifyPollTimer = setInterval(chatPollSmsForNotifications, 30000);
-    }
-  } else if(chatSmsNotifyPollTimer){
-    clearInterval(chatSmsNotifyPollTimer);
-    chatSmsNotifyPollTimer = null;
-  }
+  // v623/v624: the chat widget's two-way SMS tab is GONE, and with it the
+  // gate that used to live here and the background poll that fed its badge.
+  //
+  // WHY THE POLL HAD TO GO, not just the tab. chatPollSmsForNotifications()
+  // called ghl-api's lookup_contact_activity every 30 seconds for every
+  // client, because a GHL conversation was the only place a client's reply
+  // could be read. GHL is being decommissioned: left running, that is a
+  // failing network call per client every 30 seconds, forever, in every
+  // staff member's browser -- and it would keep a "you have unread texts"
+  // badge alive over a thread nobody can open.
+  //
+  // Client replies still arrive. They land at telnyx-sms-webhook like any
+  // other inbound text (see send-client-sms' header). What no longer exists
+  // is a per-client GHL thread rendered inside this widget.
   // v475: Gmail reply notifications -- no chat-widget tab to gate visibility
   // on anymore (see pollGmailReplyNotifications' own header comment), just
   // the background poll, same permission gate as everywhere else Gmail
@@ -9758,7 +10006,19 @@ async function subscribeStaffOpsRealtime(){
         icon: '📅',
         title: 'New appointment booked',
         body: appt.contact_name ? `${appt.contact_name} — ${chatGhlFmtWhen(appt.start_time)}` : (appt.title || 'A new appointment was booked.'),
-        onClick: () => { $('sideNav').querySelector('[data-tab="call_activity"]').click(); activateActivityGroup('ghl'); activateActivityKind('appointment'); },
+        // v623: NO onClick any more. It used to open Activity ->
+        // GoHighLevel -> Appointments, and that group no longer exists; the
+        // call would have left the Activity tab showing a GoHighLevel stats
+        // row with every table hidden -- a dead end that looks like a bug
+        // rather than a removed feature. onClick is optional and guarded at
+        // the click site, so the notification still announces the booking,
+        // it just no longer navigates.
+        //
+        // The notification itself is kept rather than deleted because this
+        // subscription is the only thing that would tell anyone a GHL
+        // appointment came in. It fires on ghl_appointments INSERTs, which
+        // stop once GHL is fully decommissioned -- at which point this whole
+        // block can go.
       });
     })
     // v239: Human Resources — new candidate submissions only ever reach a
@@ -10590,14 +10850,10 @@ async function pollGmailReplyNotifications(){
     icon: '📧',
     title: newest.from || 'New email',
     body: newest.subject || newest.snippet || '',
-    onClick: () => {
-      $('sideNav').querySelector('[data-tab="call_activity"]').click();
-      activateActivityGroup('gmail');
-      loadActGmailMessageList(true).then(() => {
-        const m = actGmailMessages.find(x => x.id === newest.id);
-        if(m) openActGmailMessage(m);
-      });
-    },
+    // v623: NO onClick. This opened Activity -> Gmail -> the message, and
+    // the Gmail group is gone, so there is no in-portal inbox to open it in.
+    // The notification still tells you mail arrived and who from; reading it
+    // happens in Gmail itself now.
   });
 }
 
@@ -16031,10 +16287,11 @@ document.querySelectorAll('.tm-subtab-btn').forEach(btn => {
 // absent: they're permanently-disabled placeholders with no backing data
 // source (see the act-subtab-btn markup), so there's nothing to gate.
 const ACTIVITY_GROUPS = [
-  { key: 'ghl', label: 'GoHighLevel' },
-  { key: 'readymode', label: 'ReadyMode' },
-  { key: 'gmail', label: 'Gmail' },
-  { key: 'extension', label: 'Extension' },
+  // v623: 'ghl', 'readymode', 'gmail' and 'extension' removed -- see the
+  // comment on the act-group-row markup for why, and note that their
+  // ACTIVITY_SECTIONS entries below are deliberately KEPT so that roles
+  // already granted those sections are not silently stripped of a grant the
+  // Roles editor can no longer show them.
   // v: cross-cutting per-agent report (leads reviewed, PrimeHome
   // Buyers/gyhomes sends, logged hours) filterable by role — see
   // ACTIVITY_SECTIONS' 'staff_activity' entry and loadCallActivity()'s
