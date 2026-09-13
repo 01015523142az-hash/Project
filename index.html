@@ -2342,12 +2342,24 @@
   /* The switch is the reference's, including its green ON state -- green
      here is a control affordance, not the brand accent, and the reference
      uses it for exactly that. */
+  /* v645: THE OFF/ON STATES WERE PIXEL-IDENTICAL IN THE CLIENT PORTAL.
+     This block is shared between both portals, but --idle and --good are
+     only defined in the staff portal -- the client portal defines neither,
+     so both declarations resolved to nothing and the track computed to
+     rgba(0,0,0,0) in BOTH states. On a dark panel that reads as a black
+     bar you cannot tell the state of. Measured, not guessed.
+
+     Fixed with fallbacks so the staff portal keeps its own palette, plus a
+     border on the off state: even if a future theme makes the track colour
+     close to the panel colour, the outline still shows there is a track
+     there and which side the knob sits on. */
   .nc-switch{
-    width:38px; height:21px; border-radius:999px; border:none; padding:0; margin:0;
-    background:var(--idle); position:relative; cursor:pointer;
-    transition:background .16s ease;
+    width:38px; height:21px; border-radius:999px; padding:0; margin:0;
+    background:var(--idle, #39414E); position:relative; cursor:pointer;
+    border:1px solid rgba(128,138,153,.45);
+    transition:background .16s ease, border-color .16s ease;
   }
-  .nc-switch[aria-checked="true"]{ background:var(--good); }
+  .nc-switch[aria-checked="true"]{ background:var(--good, #22C55E); border-color:transparent; }
   .nc-knob{
     position:absolute; top:2.5px; left:2.5px; width:16px; height:16px;
     border-radius:50%; background:#fff; transition:transform .16s ease;
@@ -7228,6 +7240,29 @@
            creates the account, just skips the email. -->
       <label>Position / job title</label>
       <input type="text" id="hrApprovePosition" placeholder="e.g. Virtual Assistant Specialist">
+      <div class="field-hint">Used both as their job title on the staff profile and for the {position} placeholder in the welcome email.</div>
+      <!-- v645: department + seniority at approval time. Without these a new
+           hire landed uncategorised, which in the v639 chat rules FAILS OPEN
+           -- they could message anyone and anyone could message them until
+           somebody remembered to go and categorise them by hand. Setting it
+           here is the only moment the reviewer has all the context. -->
+      <div class="modal-row">
+        <div>
+          <label>Department</label>
+          <select id="hrApproveDepartment"></select>
+        </div>
+        <div>
+          <label>Seniority</label>
+          <select id="hrApproveGrade">
+            <option value="">&mdash; not set &mdash;</option>
+            <option value="staff" selected>Staff</option>
+            <option value="lead">Team Lead</option>
+            <option value="manager">Manager</option>
+            <option value="head">Head</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-hint">Seniority is what controls chat reach, not the job title. Leads, Managers and Heads can start a conversation with anyone; Staff are limited to their own department.</div>
       <div class="modal-row">
         <label style="display:flex; align-items:center; gap:8px; margin-top:14px;">
           <input type="checkbox" id="hrApproveSendWelcomeEmail" checked style="width:15px; height:15px; accent-color:var(--focus); margin:0;">
@@ -7254,6 +7289,10 @@
         <span>Password: <b id="hrApproveSuccessPassword" style="color:var(--text);"></b></span>
       </div>
       <div class="msg" id="hrApproveWelcomeEmailMsg" style="display:none;"></div>
+      <!-- v645: only appears if the hire went through but categorising them
+           did not. The account exists at that point, so this must not read
+           as a failed approval. -->
+      <div class="msg error" id="hrApproveOrgWarning" style="display:none;"></div>
       <div class="modal-actions">
         <button class="btn-secondary" id="hrApproveCopyBtn">Copy credentials</button>
         <button class="btn-primary" id="hrApproveDoneBtn" style="margin-top:0;">Done</button>
@@ -10546,10 +10585,17 @@ function ncRenderList(){
   ncPositionPanel();
 }
 
-// Opening an item marks it read and shows the reference's detail card. It
-// does NOT immediately run the item's onClick -- the reference puts a detail
-// view between the list and wherever the notification points, and jumping
-// straight there would make that view unreachable.
+// v645: CLICKING A NOTIFICATION NOW GOES WHERE THE WORK IS. v642 put the
+// detail card between the list and the notification's destination, so
+// acting on something took two clicks and the second one was not obviously
+// there. Every notification that points somewhere already carried an
+// onClick that activates the right tab and section -- that routing existed
+// and was simply being gate-kept.
+//
+// The detail card is NOT gone: it is what an item with nowhere to go opens
+// instead (the appointment and new-email notifications deliberately have no
+// onClick, see v623), so the click always does the most useful thing
+// available rather than sometimes doing nothing.
 function ncOpenDetail(id){
   var n = (NC_ADAPTER.items() || []).find(function(x){ return String(x.id) === String(id); });
   if(!n) return;
@@ -10557,9 +10603,20 @@ function ncOpenDetail(id){
     n.readAt = Date.now();
     if(NC_ADAPTER.onRead) NC_ADAPTER.onRead(n);
   }
+  if(NC_ADAPTER.refreshBadge) NC_ADAPTER.refreshBadge();
+
+  if(typeof n.onClick === 'function'){
+    var panel = document.getElementById('notifCenterPanel');
+    if(panel) panel.style.display = 'none';
+    ncDetailId = null;
+    if(NC_ADAPTER.onClose) NC_ADAPTER.onClose();
+    try{ n.onClick(); }
+    catch(e){ console.error('notification onClick failed', e); }
+    return;
+  }
+
   ncDetailId = id;
   ncRenderDetail();
-  if(NC_ADAPTER.refreshBadge) NC_ADAPTER.refreshBadge();
 }
 
 function ncRenderDetail(){
@@ -10923,6 +10980,7 @@ async function subscribeStaffOpsRealtime(){
       if(lead.ticket_stage === 'staff_review'){
         if(!staffNotifKindAllowed('ticket_new')) return;
         pushStaffNotification({
+          priority: true,   // v645: needs someone to act
           icon: '🎫',
           title: 'New ticket to review',
           body: lead.seller_name || lead.address || 'A new ticket needs staff review before it goes to the client.',
@@ -10941,6 +10999,7 @@ async function subscribeStaffOpsRealtime(){
       // to decide what belongs in the plain Leads Queue Review table.
       if(!lead.ticket_stage && !isPrimeHomeBuyersLead(lead) && staffNotifKindAllowed('lead_submitted')){
         pushStaffNotification({
+          priority: true,   // v645: needs someone to act
           icon: '📥',
           title: 'New lead submitted',
           body: lead.seller_investor_name ? `${lead.seller_investor_name} — awaiting review.` : 'A new lead needs review in Leads Queue Review.',
@@ -10981,6 +11040,7 @@ async function subscribeStaffOpsRealtime(){
       if(msg.sender_type !== 'client') return;
       if(!staffNotifKindAllowed('dispute_reply')) return;
       pushStaffNotification({
+        priority: true,   // v645: needs someone to act
         icon: '⚠️',
         title: 'Client reply on a dispute',
         body: msg.message || 'New message on a lead dispute/feedback thread.',
@@ -10998,6 +11058,7 @@ async function subscribeStaffOpsRealtime(){
       const req = payload.new;
       if(!staffNotifKindAllowed('campaign_guide_edit')) return;
       pushStaffNotification({
+        priority: true,   // v645: needs someone to act
         icon: '📝',
         title: 'Campaign Guide edit proposed',
         body: req.campaign_display_name
@@ -11022,6 +11083,7 @@ async function subscribeStaffOpsRealtime(){
         if(!staffNotifKindAllowed('campaign_requested')) return;
         const campaignName = (sub.fields && (sub.fields['Campaign Name (Criteria)'] || sub.fields['Campaign Name'])) || null;
         pushStaffNotification({
+          priority: true,   // v645: needs someone to act
           icon: '📣',
           title: 'New campaign requested',
           body: campaignName
@@ -11038,6 +11100,7 @@ async function subscribeStaffOpsRealtime(){
       if(sub.form_name === 'Client Portal — Buy a List Request'){
         if(!staffNotifKindAllowed('list_order_requested')) return;
         pushStaffNotification({
+          priority: true,   // v645: needs someone to act
           icon: '🗂️',
           title: 'New "Buy a list" request',
           body: sub.fields && sub.fields['Number of Records Requested']
@@ -11081,6 +11144,7 @@ async function subscribeStaffOpsRealtime(){
       if(order.status !== 'paid') return;
       if(!staffNotifKindAllowed('skiptrace_order_paid')) return;
       pushStaffNotification({
+        priority: true,   // v645: needs someone to act
         icon: '🔎',
         title: 'Skip trace order placed',
         body: `${order.record_count} record${order.record_count === 1 ? '' : 's'} — ${order.email || 'a client'}.`,
@@ -11092,6 +11156,7 @@ async function subscribeStaffOpsRealtime(){
       if(order.status !== 'paid') return;
       if(!staffNotifKindAllowed('skiptrace_order_paid')) return;
       pushStaffNotification({
+        priority: true,   // v645: needs someone to act
         icon: '🔎',
         title: 'Skip trace order placed',
         body: `${order.record_count} record${order.record_count === 1 ? '' : 's'} — ${order.email || 'a client'}.`,
@@ -11145,6 +11210,7 @@ async function subscribeStaffOpsRealtime(){
       if(cand.submitted_by === myUserId) return;
       if(!staffNotifKindAllowed('hr_candidate_submitted')) return;
       pushStaffNotification({
+        priority: true,   // v645: needs someone to act
         icon: '🧑‍💼',
         title: 'New candidate submitted for review',
         body: cand.full_name ? `${cand.full_name} is awaiting review.` : 'A new candidate submission is awaiting review.',
@@ -40039,7 +40105,7 @@ async function loadHrReviewCandidates(){
       <td title="${escapeHtml(hrChecklistTooltip(c.interview_checklist))}">${HR_INTERVIEW_RESULT_LABEL[c.interview_passed]}</td>
       <td>${c.video_path ? `<a href="#" class="hr-review-video-link" data-id="${c.id}">View</a>` : '—'}</td>
       <td>${c.id_document_path ? `<a href="#" class="hr-review-doc-link" data-id="${c.id}">View</a>` : '—'}</td>
-      <td style="color:var(--text-2);">${c.employment_start_date ? new Date(c.employment_start_date).toLocaleDateString() : '—'}</td>
+      ${hrStartDateCellHtml(c)}
       <td style="color:var(--text-2);">${escapeHtml((c.submitter && c.submitter.full_name) || '—')}</td>
       <td style="color:var(--text-2);">${new Date(c.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', ...(nonAgentDisplayTz() ? { timeZone: nonAgentDisplayTz() } : {}) })}</td>
       <td>${HR_STATUS_LABEL[c.status] || escapeHtml(c.status)}</td>
@@ -40117,6 +40183,76 @@ $('hrReviewStatusFilter').addEventListener('change', loadHrReviewCandidates);
 // made the call and when, not just the current status. Gated by its own
 // can_view_hr_history() DB permission (see that migration) so a role can
 // be granted this without also getting Review's approve/reject ability.
+// v645: the employment start date is editable after approval, not only at
+// the moment of approval. It is day zero for the 14-day referral
+// commission, so a wrong one has to be correctable -- previously the only
+// chance to set it was inside the approve modal and it was read-only
+// everywhere afterwards.
+//
+// WHO: mirrors can_review_hr_candidates() in the database (is_admin(), or
+// the hr tab plus hr_sections.review.view) -- which resolves to exactly
+// Owner, Admin and Team Leader on the current roles. This check only
+// decides whether to draw the control; hr_candidates' own "reviewer
+// update" RLS policy is the real gate, so a hand-crafted request from
+// anybody else is still refused by the database.
+function hrCanEditStartDate(){
+  if(myIsOwner || myRole === 'admin') return true;
+  const hs = (myPermissions && myPermissions.hrSections) || {};
+  return !!(hs.review && hs.review.view);
+}
+// The editable cell appears in both the review queue and the history
+// table, so the refresh after a save has to cover whichever one the user
+// is actually looking at rather than assuming.
+async function hrRefreshCandidateTables(){
+  const jobs = [];
+  if(typeof loadHrReviewCandidates === 'function' && document.getElementById('hrReviewBody')) jobs.push(loadHrReviewCandidates());
+  if(typeof loadHrHistoryCandidates === 'function' && document.getElementById('hrHistoryBody')) jobs.push(loadHrHistoryCandidates());
+  await Promise.all(jobs);
+}
+function hrStartDateCellHtml(c){
+  const shown = c.employment_start_date ? new Date(c.employment_start_date).toLocaleDateString() : '—';
+  if(!hrCanEditStartDate()){
+    return `<td style="color:var(--text-2);">${shown}</td>`;
+  }
+  return `<td style="color:var(--text-2);" data-start-date-cell="${c.id}">`
+    + `<span class="hr-startdate-edit" data-id="${c.id}" data-value="${escapeHtml(c.employment_start_date || '')}" `
+    + `style="cursor:pointer; border-bottom:1px dashed var(--focus); color:var(--focus);" `
+    + `title="Click to change the employment start date">${shown}</span></td>`;
+}
+
+// Delegated so it keeps working after any re-render of the table.
+document.addEventListener('click', async (e) => {
+  const trigger = e.target.closest && e.target.closest('.hr-startdate-edit');
+  if(!trigger) return;
+  const cell = trigger.parentElement;
+  const id = trigger.dataset.id;
+  const current = trigger.dataset.value || '';
+  // Swap the cell for a real date input rather than a prompt(), so the
+  // value can only ever be a valid date in the format the column expects.
+  cell.innerHTML = `<input type="date" class="hr-startdate-input" value="${escapeHtml(current)}" style="padding:4px 6px; font-size:11px; width:140px;">`;
+  const input = cell.querySelector('.hr-startdate-input');
+  input.focus();
+  let done = false;
+  const commit = async () => {
+    if(done) return;
+    done = true;
+    const value = input.value;
+    if(!value || value === current){ await hrRefreshCandidateTables(); return; }
+    const { error } = await sb.from('hr_candidates').update({ employment_start_date: value }).eq('id', id);
+    if(error){
+      alert(`Could not change the start date: ${error.message}`);
+    }else{
+      logActivity('hr.start_date_update', 'hr_candidate', id, `Employment start date changed from ${current || '(unset)'} to ${value}`);
+    }
+    await hrRefreshCandidateTables();
+  };
+  input.addEventListener('change', commit);
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (ev) => {
+    if(ev.key === 'Escape'){ done = true; hrRefreshCandidateTables(); }
+  });
+});
+
 let hrHistoryCandidates = [];
 async function loadHrHistoryCandidates(){
   const body = $('hrHistoryBody');
@@ -40148,7 +40284,7 @@ async function loadHrHistoryCandidates(){
       <td title="${escapeHtml(hrChecklistTooltip(c.interview_checklist))}">${HR_INTERVIEW_RESULT_LABEL[c.interview_passed]}</td>
       <td>${c.video_path ? `<a href="#" class="hr-history-video-link" data-id="${c.id}">View</a>` : '—'}</td>
       <td>${c.id_document_path ? `<a href="#" class="hr-history-doc-link" data-id="${c.id}">View</a>` : '—'}</td>
-      <td style="color:var(--text-2);">${c.employment_start_date ? new Date(c.employment_start_date).toLocaleDateString() : '—'}</td>
+      ${hrStartDateCellHtml(c)}
       <td style="color:var(--text-2);">${escapeHtml((c.submitter && c.submitter.full_name) || '—')}</td>
       <td style="color:var(--text-2);">${new Date(c.created_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', ...(nonAgentDisplayTz() ? { timeZone: nonAgentDisplayTz() } : {}) })}</td>
       <td>${HR_STATUS_LABEL[c.status] || escapeHtml(c.status)}</td>
@@ -40368,6 +40504,8 @@ async function openHrApproveModal(candidateId){
   await refreshAddUserRoleOptions('hrApproveRole');
   $('hrApprovePassword').value = generatePassword();
   $('hrApprovePosition').value = '';
+  $('hrApproveGrade').value = 'staff';                            // v645
+  await fillDepartmentSelect('hrApproveDepartment', '');          // v645
   $('hrApproveMeetingDatetime').value = nextMondayAt930Local();
   $('hrApproveSendWelcomeEmail').checked = true;
   $('hrApproveMsg').textContent = '';
@@ -40498,7 +40636,25 @@ $('hrApproveCreateBtn').addEventListener('click', async () => {
     return;
   }
 
-  logActivity('hr.candidate_approved', 'hr_candidate', candidateId, `Approved and created ${role} account for ${email}${full_name ? ' ('+full_name+')' : ''}`);
+  // v645: categorise the new hire. Same RPC the Add User modal and the
+  // Account panel use (profiles UPDATE is self-only, so this cannot be a
+  // plain update -- see v643). Reported as a partial success: the account
+  // and the candidate record are already written by this point, so a
+  // failure here must not read as "approval failed" and send the reviewer
+  // round to approve again.
+  const hrDepartment = $('hrApproveDepartment').value;
+  const hrTitle = $('hrApprovePosition').value.trim();
+  const hrGrade = $('hrApproveGrade').value;
+  let hrOrgWarning = '';
+  if(hrDepartment || hrTitle || hrGrade){
+    const org = await saveStaffOrgInfo(result.userId, hrDepartment, hrTitle, hrGrade);
+    if(!org.ok){
+      hrOrgWarning = ` The account was created, but the department/title was not saved (${org.error}). Set it from User Management > Users.`;
+      console.error('set_staff_org_info failed after candidate approval', org.error);
+    }
+  }
+
+  logActivity('hr.candidate_approved', 'hr_candidate', candidateId, `Approved and created ${role} account for ${email}${full_name ? ' ('+full_name+')' : ''}${hrTitle || hrDepartment ? ` — ${[hrTitle, hrDepartment].filter(Boolean).join(' · ')}` : ''}`);
   logActivity('user.create', 'agent', result.userId, `Created ${role} account for ${email}${full_name ? ' ('+full_name+')' : ''} (via Candidate Review approval)`);
   loadTeam();
   if(umActiveSection === 'users') loadUmUsersList();
@@ -40506,6 +40662,8 @@ $('hrApproveCreateBtn').addEventListener('click', async () => {
 
   $('hrApproveSuccessEmail').textContent = email;
   $('hrApproveSuccessPassword').textContent = password;
+  $('hrApproveOrgWarning').textContent = hrOrgWarning;                       // v645
+  $('hrApproveOrgWarning').style.display = hrOrgWarning ? 'block' : 'none';  // v645
   $('hrApproveFormView').style.display = 'none';
   $('hrApproveSuccessView').style.display = 'block';
 
