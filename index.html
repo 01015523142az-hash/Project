@@ -12568,6 +12568,32 @@ const VOICE_HANGUP_NOTES   = [{ freq: 659.25, at: 0,    dur: 0.14, vol: 0.16 }, 
 const VOICE_INCOMING_ARPEGGIO = [523.25, 659.25, 783.99, 1046.5]; // C5 E5 G5 C6
 const VOICE_RINGBACK_PAIR = [440, 480];                            // US ringback
 
+// v630: LOUDNESS IS OURS, THE MELODY IS THE REFERENCE'S.
+//
+// v628 copied the reference's absolute gain values along with its notes:
+// a per-note gain of 0.1 into a master of 0.12, so a peak amplitude of
+// 0.012. Measured on the live page, the ring topped out at 0.0135 -- about
+// -37 dBFS, roughly TWELVE TIMES quieter than the MSN-style ring it
+// replaced (per-note 0.15-0.17 straight to the destination). A blip that
+// faint, once every 2.5 seconds, is inaudible on a laptop in a room with
+// people in it. That is what "the ringing is not working" was: it was
+// playing perfectly and nobody could hear it.
+//
+// Those levels are fine in a demo page and wrong for a call floor, so the
+// numbers below restore the previous loudness while keeping everything
+// that makes it the reference's sound -- the arpeggio, the 0.15s spacing,
+// the exponential decay, the cadence.
+//
+// The master stays at 1 and the level lives in the note gain, so there is
+// ONE number to change per sound rather than a product of two.
+//
+// Ringback is deliberately softer than the incoming ring: it plays in your
+// own ear while you wait, where the incoming ring has to carry across a
+// room. Its two oscillators sum, so the per-oscillator figure is about
+// half the peak it actually reaches.
+const VOICE_RING_NOTE_GAIN     = 0.16;  // peak ~0.16, matching the old ring
+const VOICE_RINGBACK_OSC_GAIN  = 0.07;  // x2 oscillators -> peak ~0.14
+
 let voiceRingInterval = null;
 let voiceRingGain = null;
 
@@ -12579,7 +12605,7 @@ function voiceRingPlayIncoming(){
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
     osc.frequency.value = freq;
-    g.gain.setValueAtTime(0.1, at);
+    g.gain.setValueAtTime(VOICE_RING_NOTE_GAIN, at);
     g.gain.exponentialRampToValueAtTime(0.001, at + 0.35);
     osc.connect(g);
     g.connect(voiceRingGain);
@@ -12591,10 +12617,22 @@ function voiceRingPlayIncoming(){
 function voiceRingPlayRingback(){
   const ctx = voiceAudioCtx;
   if(!ctx || !voiceRingGain) return;
+  // v630: each oscillator gets its own gain. They used to connect straight
+  // to voiceRingGain, which carried the level -- now that the master is 1,
+  // going direct would put two full-amplitude oscillators on the output and
+  // clip hard. A short attack/release also removes the click that an
+  // abruptly started and stopped oscillator makes at this amplitude.
   const oscs = VOICE_RINGBACK_PAIR.map(freq => {
     const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    const t0 = ctx.currentTime;
     osc.frequency.value = freq;
-    osc.connect(voiceRingGain);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(VOICE_RINGBACK_OSC_GAIN, t0 + 0.02);
+    g.gain.setValueAtTime(VOICE_RINGBACK_OSC_GAIN, t0 + 1.16);
+    g.gain.linearRampToValueAtTime(0, t0 + 1.2);
+    osc.connect(g);
+    g.connect(voiceRingGain);
     osc.start();
     return osc;
   });
@@ -12618,7 +12656,10 @@ function voiceStartRingtone(kind){
   // disconnecting the shared gain cuts it immediately rather than leaving
   // a tone hanging over the connect chime.
   voiceRingGain = voiceAudioCtx.createGain();
-  voiceRingGain.gain.value = incoming ? 0.12 : 0.08;
+  // v630: master is 1 -- the level lives in the note/oscillator gains above
+  // so there is one number per sound, not a product of two. This node now
+  // exists purely so voiceStopRingtone() can cut everything at once.
+  voiceRingGain.gain.value = 1;
   voiceRingGain.connect(voiceAudioCtx.destination);
 
   const playCycle = () => {
