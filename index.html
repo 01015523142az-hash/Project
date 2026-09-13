@@ -11426,11 +11426,32 @@ async function openChatThread(key){
   // in with an outside email (e.g. a contractor/external account) doesn't
   // get the button at all, regardless of canPost.
   $('chatMeetBtn').style.display = (canPost && chatMeetAllowed()) ? 'inline-block' : 'none';
-  // Voice call is 1:1 only — a WebRTC mesh connection for a group/team
-  // call isn't supported (quality degrades fast past 2 people without a
-  // media server, which is out of scope here). chatActiveConv IS the
-  // peer's user id for a DM (see sendChatMessage's recipient_id).
-  $('chatCallBtn').style.display = (canPost && !isGroup && !isTeam) ? 'inline-block' : 'none';
+  // v638: GROUPS CAN NOW BE CALLED. The comment that used to sit here said
+  // a mesh call "isn't supported" and that it was out of scope -- which
+  // stopped being true some time ago and nobody removed the button gate.
+  // The whole mesh already exists and is in daily use: call_participants
+  // keyed by call_group_id, voiceRosterInit/Insert/SetStatus, mesh-offer /
+  // mesh-answer / mesh-ice-candidate signalling, a participants panel, a
+  // per-invitee no-answer timer, and inviteToCall() to add people to a live
+  // call. The ONLY thing missing was a way to start one from a group
+  // instead of dialling somebody 1:1 and then adding the others by hand.
+  //
+  // So this is not new call machinery, it is the existing "Add to call"
+  // path seeded from the group's membership -- see
+  // startGroupConferenceCall().
+  //
+  // The original caution is still WORTH KEEPING IN MIND and is why there is
+  // a size guard in that function rather than an unlimited fan-out: a full
+  // mesh is N*(N-1)/2 connections and every participant uploads their audio
+  // to everyone else, so it degrades without an SFU. It is fine for a small
+  // team huddle and not for twenty people.
+  //
+  // 'team' stays excluded: it is everybody in the company, which is exactly
+  // the case a mesh cannot carry.
+  $('chatCallBtn').style.display = (canPost && !isTeam) ? 'inline-block' : 'none';
+  $('chatCallBtn').title = isGroup
+    ? 'Start a conference call — rings everyone in this group'
+    : 'Voice call';
 
   renderChatThread();
   await chatMarkRead(key);
@@ -14181,9 +14202,68 @@ $('callMaximizeBtn').addEventListener('click', () => {
   voiceUpdateScreenShareUI();
 });
 $('chatCallBtn').addEventListener('click', () => {
-  if(!chatActiveConv || chatActiveConv === 'team' || chatActiveConv.startsWith('group:') || chatActiveConv.startsWith('client:')) return;
+  if(!chatActiveConv || chatActiveConv === 'team' || chatActiveConv.startsWith('client:')) return;
+  // v638: a group rings everyone in it; a DM still dials the one peer.
+  if(chatActiveConv.startsWith('group:')){ startGroupConferenceCall(chatActiveConv.slice(6)); return; }
   startVoiceCall(chatActiveConv, chatConvDisplayName(chatActiveConv));
 });
+
+// v638: ring a whole group at once.
+//
+// Deliberately built on the EXISTING call path rather than a new one: it
+// dials the first member with startVoiceCall() -- the same primary-peer
+// call a DM makes -- and then hands every remaining member to
+// inviteToCall(), which is the same code the "Add someone to this call"
+// button has used since v106. So the roster, the per-invitee no-answer
+// timer, the participants panel, mute, screen share and hang-up all behave
+// exactly as they already do on a call somebody built up by hand. Nothing
+// here is a second implementation of calling.
+//
+// MESH SIZE GUARD. A full mesh is N*(N-1)/2 peer connections and every
+// participant uploads their audio to every other one, so it degrades
+// without an SFU -- which is the real reason group calling was originally
+// left out. Six is a working huddle; past that the warning is honest about
+// what will happen rather than letting somebody discover it mid-call.
+const CONFERENCE_SOFT_LIMIT = 6;
+async function startGroupConferenceCall(groupId){
+  const group = chatGroups[groupId];
+  if(!group){ alert('That group could not be loaded — try reopening the chat.'); return; }
+  const others = (group.members || [])
+    .map(m => m.user_id)
+    .filter(id => id && id !== myUserId);
+  if(!others.length){
+    alert("There's nobody else in this group to call yet.");
+    return;
+  }
+  if(others.length + 1 > CONFERENCE_SOFT_LIMIT){
+    const ok = confirm(
+      'This group has ' + (others.length + 1) + ' people.' +
+      String.fromCharCode(10) + String.fromCharCode(10) +
+      'Calls here are peer-to-peer, so everyone sends their audio to everyone ' +
+      'else. Past about ' + CONFERENCE_SOFT_LIMIT + ' that gets choppy and eats ' +
+      'bandwidth.' + String.fromCharCode(10) + String.fromCharCode(10) + 'Ring them all anyway?');
+    if(!ok) return;
+  }
+
+  const nameOf = (id) => chatContactName(id) || 'Colleague';
+  // The first member becomes the primary peer; startVoiceCall() creates the
+  // call, its groupId and the roster.
+  await startVoiceCall(others[0], nameOf(others[0]));
+  // startVoiceCall() bails out on its own (already on a call, no mic, mic
+  // blocked) and alerts in each case. If it did, there is nothing to invite
+  // anyone into and we must not carry on.
+  if(!voiceCallState || !voiceCallState.localStream) return;
+
+  // Sequential, not Promise.all: each invite inserts a call_participants
+  // row, and RLS only permits inserting a row for someone else once your
+  // own row exists (is_call_participant). Firing them in parallel races
+  // that same check the roster seeding already has to sequence around.
+  for(const id of others.slice(1)){
+    if(!voiceCallState) break; // they hung up mid-fan-out
+    try{ await inviteToCall(id, nameOf(id)); }
+    catch(e){ console.error('[call] conference invite failed for', id, e); }
+  }
+}
 
 // ---------- emoji picker ----------
 const CHAT_EMOJIS = ['😀','😂','😊','😉','😍','🥰','😎','🤔','😅','😢','😭','😡','👍','👎','🙏','👏','🎉','🔥','💯','✅','❌','❤️','💪','🚀','☕','📞','⏰','📌','👀','🙌'];
