@@ -10008,7 +10008,7 @@ function pushStaffNotification({ icon, title, body, onClick, silent, durableId, 
 // push here should never block rendering the in-app notification above.
 function pushSelfNotification({ title, body, tag }){
   if(!myUserId) return;
-  sb.functions.invoke('send-push-notification', { body: { user_id: myUserId, title, body, tag, url: '/dashboard/dashboard.html' } })
+  sb.functions.invoke('send-push-notification', { body: { user_id: myUserId, title, body, tag, url: '/' /* v636: was '/dashboard/dashboard.html', which 404s in production -- this portal is served from the ROOT and live/main has no dashboard/ directory at all. Worse than a dead link: sw.js focuses an already-open tab and then navigates it to this url, so clicking any push took a working signed-in portal and broke it. sw.js already defaults to '/' when no url is sent; this was overriding that. */ } })
     .then(({ error }) => { if(error) console.error('send-push-notification (self) failed', error); })
     .catch(err => console.error('send-push-notification (self) call failed', err));
 }
@@ -12333,11 +12333,49 @@ function chatClearPendingFile(){
   $('chatFileInput').value = '';
 }
 
+// v636: three things this function did not do that the CLIENT portal's
+// equivalent already did, found by reading the two side by side:
+//
+//   1. NOTHING TOLD THE PERSON A SEND HAD FAILED. All three failure paths
+//      below -- attachment upload on a client thread, attachment upload on a
+//      staff thread, and the message INSERT itself -- logged to the console,
+//      handed the text back, and returned. From the sender's side that is
+//      indistinguishable from never having pressed Send, so the worst case
+//      is a message you believe you sent that was never sent. Same class as
+//      the screen-share bug.
+//   2. NO IN-FLIGHT GUARD. A second click while the first send was still
+//      awaiting an upload sent the message twice.
+//   3. THE SEND BUTTON WAS NEVER DISABLED, so there was no feedback that
+//      anything was happening during a slow upload.
+//
+// chatSendFailed() keeps the existing "hand the text back" behaviour -- that
+// part was right, losing someone's typing is worse than a silent failure --
+// and adds the part that was missing.
+let chatSendInFlight = false;
+function chatSendFailed(input, body, what, err){
+  console.error('[chat] ' + what, err);
+  input.value = body; // never lose what they typed
+  var detail = (err && (err.message || err.error_description)) || '';
+  var NL = String.fromCharCode(10); // built, not escaped: a literal \n in this file has been mangled by a generator before
+  alert(what + (detail ? NL + NL + detail : '') + NL + NL + 'Your message has been put back in the box.');
+}
 async function sendChatMessage(){
   const input = $('chatInput');
   const body = input.value.trim();
   const pendingFile = chatPendingFile;
   if((!body && !pendingFile) || !chatActiveConv) return;
+  if(chatSendInFlight) return; // v636: no double-send on a second click
+  chatSendInFlight = true;
+  const sendBtn = $('chatSendBtn');
+  if(sendBtn) sendBtn.disabled = true;
+  try{
+  await sendChatMessageInner(input, body, pendingFile);
+  } finally {
+    chatSendInFlight = false;
+    if(sendBtn) sendBtn.disabled = false;
+  }
+}
+async function sendChatMessageInner(input, body, pendingFile){
   if(chatActiveConv !== 'team' && !chatActiveConv.startsWith('group:')){
     clearTimeout(chatTypingStopTimer);
     chatTypingSend(chatActiveConv, 'stopped');
@@ -12361,8 +12399,7 @@ async function sendChatMessage(){
         contentType: pendingFile.file.type || 'application/octet-stream',
       });
       if(uploadErr){
-        console.error('Failed to upload client chat attachment', uploadErr);
-        input.value = body;
+        chatSendFailed(input, body, "Couldn't upload that attachment.", uploadErr); // v636
         return;
       }
       clientAttachmentFields = {
@@ -12393,8 +12430,7 @@ async function sendChatMessage(){
       contentType: pendingFile.file.type || 'application/octet-stream',
     });
     if(uploadErr){
-      console.error('Failed to upload chat attachment', uploadErr);
-      input.value = body;
+      chatSendFailed(input, body, "Couldn't upload that attachment.", uploadErr); // v636
       return;
     }
     payload.attachment_path = path;
@@ -12405,8 +12441,9 @@ async function sendChatMessage(){
 
   const { data, error } = await sb.from('chat_messages').insert(payload).select().single();
   if(error){
-    console.error('Failed to send chat message', error);
-    input.value = body; // hand the text back so it isn't lost
+    // v636: was console-only. A message that silently fails to send is the
+    // worst outcome available here -- the sender believes it went.
+    chatSendFailed(input, body, "Your message wasn't sent.", error);
     return;
   }
   // v125: a DM (not team/group, those have no single "the recipient") sent
@@ -12431,7 +12468,7 @@ async function sendChatMessage(){
       title: `${myFullName || 'A teammate'} sent you a message`,
       body: body || (pendingFile ? 'Sent a file' : 'New message'),
       tag: `chat-${myUserId < chatActiveConv ? myUserId + '_' + chatActiveConv : chatActiveConv + '_' + myUserId}`,
-      url: '/dashboard/dashboard.html',
+      url: '/' /* v636: was '/dashboard/dashboard.html', which 404s in production -- this portal is served from the ROOT and live/main has no dashboard/ directory at all. Worse than a dead link: sw.js focuses an already-open tab and then navigates it to this url, so clicking any push took a working signed-in portal and broke it. sw.js already defaults to '/' when no url is sent; this was overriding that. */,
     });
   }
   // Realtime will also deliver this back to us, but chatAddMessageToState
@@ -13599,7 +13636,7 @@ async function startVoiceCall(calleeId, calleeName){
     title: `Incoming call from ${myFullName || 'a teammate'}`,
     body: 'Tap to open the dashboard and answer.',
     tag: `call-${callRow ? callRow.id : calleeId}`,
-    url: '/dashboard/dashboard.html',
+    url: '/' /* v636: was '/dashboard/dashboard.html', which 404s in production -- this portal is served from the ROOT and live/main has no dashboard/ directory at all. Worse than a dead link: sw.js focuses an already-open tab and then navigates it to this url, so clicking any push took a working signed-in portal and broke it. sw.js already defaults to '/' when no url is sent; this was overriding that. */,
     require_interaction: true,
   });
 
