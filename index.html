@@ -1966,8 +1966,16 @@
   .call-banner-btn:hover{ filter:brightness(1.1); }
 
   /* ---- active call bar ---- */
+  /* v629: BACK AT THE TOP. v627 moved this to bottom-centre to match the
+     reference, which pins a live call along the bottom edge. On the floor
+     that was worse, not better: the bar is the thing you glance at mid-call
+     and the bottom-right corner already carries the chat button and panel,
+     so the eye has to travel past both to find it. Reverted to the original
+     top-centre position on request.
+     Everything else from v627/v628 stays -- the pill shape, the accent
+     border, the blur, the ping dot, the SVG icons and the dialing state. */
   .call-bar{
-    top:auto; bottom:24px; left:50%; transform:translateX(-50%);
+    top:20px; bottom:auto; left:50%; transform:translateX(-50%);
     border-radius:999px; padding:8px 14px; gap:10px;
     border:1px solid rgba(201,166,107,.40);
     background:color-mix(in srgb, var(--card) 95%, transparent);
@@ -1975,8 +1983,10 @@
     box-shadow:0 20px 44px -12px rgba(0,0,0,.6);
     animation:callBarIn .2s cubic-bezier(0.16,1,0.3,1);
   }
+  /* Enters from ABOVE now that it lives at the top -- sliding up from the
+     bottom into a top-anchored bar looked like it had been thrown there. */
   @keyframes callBarIn{
-    from{ opacity:0; transform:translateX(-50%) translateY(16px); }
+    from{ opacity:0; transform:translateX(-50%) translateY(-16px); }
     to{ opacity:1; transform:translateX(-50%); }
   }
   /* Live dot gains the reference's ping halo. */
@@ -2010,6 +2020,12 @@
   .call-bar-mute .call-icon-mic-off{ display:none; }
   .call-bar-mute.muted .call-icon-mic-on{ display:none; }
   .call-bar-mute.muted .call-icon-mic-off{ display:block; }
+  /* v629: same two-icons-one-shown trick for minimize/maximize. These used
+     to flip glyph via .textContent, which deleted the SVG child outright --
+     see voiceUpdateScreenShareUI(). `.alt` is the second state. */
+  .call-bar-minimize .call-icon-b, .call-bar-maximize .call-icon-b{ display:none; }
+  .call-bar-minimize.alt .call-icon-a, .call-bar-maximize.alt .call-icon-a{ display:none; }
+  .call-bar-minimize.alt .call-icon-b, .call-bar-maximize.alt .call-icon-b{ display:block; }
 
   /* ---- v628: the DIALING state ---- */
   /* Before this, "Calling…" and "04:12" were styled identically -- the only
@@ -2052,11 +2068,14 @@
      gutters just above the FAB row instead of sitting under it. */
   @media (max-width:520px){
     .call-banner{ top:12px; right:12px; width:calc(100vw - 24px); }
+    /* v629: the bar is top-anchored again, so this no longer has to dodge
+       the chat panel's floor -- it only has to fit. The incoming banner sits
+       at top:12px, so the bar clears it rather than landing underneath. */
     .call-bar{
-      left:12px; right:12px; transform:none; bottom:88px;
+      left:12px; right:12px; transform:none; top:12px; bottom:auto;
       justify-content:center; flex-wrap:wrap;
     }
-    @keyframes callBarIn{ from{ opacity:0; transform:translateY(16px); } to{ opacity:1; transform:none; } }
+    @keyframes callBarIn{ from{ opacity:0; transform:translateY(-16px); } to{ opacity:1; transform:none; } }
   }
 </style>
 </head>
@@ -7723,8 +7742,12 @@
   <button class="call-bar-icon-btn call-bar-participants" id="callParticipantsBtn" title="See who's on this call" style="display:none;"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="call-bar-participants-count" id="callParticipantsCount" style="display:none;"></span></button>
   <button class="call-bar-icon-btn call-bar-add" id="callAddBtn" title="Add someone to this call"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6"/><path d="M22 11h-6"/></svg></button>
   <button class="call-bar-icon-btn call-bar-screenshare" id="callScreenShareBtn" title="Share your screen" style="display:none;"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/><path d="M12 12V8"/><path d="M10 10l2-2 2 2"/></svg></button>
-  <button class="call-bar-icon-btn call-bar-minimize" id="callMinimizeBtn" title="Minimize screen share preview" style="display:none;"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></svg></button>
-  <button class="call-bar-icon-btn call-bar-maximize" id="callMaximizeBtn" title="Maximize screen share preview" style="display:none;"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg></button>
+  <!-- v629: TWO icons per button, swapped by a class. These buttons had
+       their SVG destroyed the moment a share started: voiceUpdateScreenShareUI()
+       assigned .textContent to flip the glyph, which wipes child elements.
+       That was a regression introduced with the v628 icon swap. -->
+  <button class="call-bar-icon-btn call-bar-minimize" id="callMinimizeBtn" title="Minimize screen share preview" style="display:none;"><svg class="call-icon call-icon-a" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></svg><svg class="call-icon call-icon-b" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg></button>
+  <button class="call-bar-icon-btn call-bar-maximize" id="callMaximizeBtn" title="Maximize screen share preview" style="display:none;"><svg class="call-icon call-icon-b" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/></svg><svg class="call-icon call-icon-a" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14h6v6"/><path d="M20 10h-6V4"/><path d="M14 10l7-7"/><path d="M3 21l7-7"/></svg></button>
   <button class="call-bar-icon-btn call-bar-hangup" id="callHangupBtn" title="Hang up"><svg class="call-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.7 5.3A16 16 0 0 1 13 5a2 2 0 0 1 2 1.7l.3 1.8a2 2 0 0 1-.6 1.8l-1 1"/><path d="M14.2 14.2l-1 1a2 2 0 0 1-1.8.6l-1.8-.3A2 2 0 0 1 8 13.5c0-.8.1-1.6.3-2.3"/><path d="M2 2l20 20"/><path d="M5.6 9.6A16 16 0 0 0 5 13a2 2 0 0 0 1.7 2l1.8.3"/></svg></button>
 </div>
 <!-- v106: "Add to call" picker — lists DM-eligible colleagues (chatDirectory)
@@ -13502,7 +13525,12 @@ function voiceUpdateScreenShareUI(){
   minimizeBtn.style.display = showing ? 'flex' : 'none';
   if(!showing) state.videoPanelMinimized = false; // don't let a stale minimized flag carry into the next share
   const minimized = showing && state.videoPanelMinimized;
-  minimizeBtn.textContent = minimized ? '\u25A1' : '\u2013';
+  // v629: was `minimizeBtn.textContent = ...`, which WIPED the SVG icon the
+  // moment a share started -- assigning textContent removes every child
+  // node. A regression from the v628 icon swap: the button silently
+  // reverted to a text glyph mid-call. Both icons now live in the markup
+  // and this toggles which one is shown.
+  minimizeBtn.classList.toggle('alt', minimized);
   minimizeBtn.title = minimized ? 'Show screen share preview' : 'Minimize screen share preview';
 
   // v82: same local-only display preference as minimize, just the other
@@ -13515,7 +13543,7 @@ function voiceUpdateScreenShareUI(){
   maximizeBtn.style.display = (showing && !minimized) ? 'flex' : 'none';
   if(!showing) state.videoPanelMaximized = false; // same stale-flag guard as minimized above
   const maximized = showing && !minimized && state.videoPanelMaximized;
-  maximizeBtn.textContent = maximized ? '\u25A1' : '\u26F6';
+  maximizeBtn.classList.toggle('alt', maximized); // v629: same textContent bug as above
   maximizeBtn.title = maximized ? 'Restore screen share preview' : 'Maximize screen share preview';
   $('callVideoPanel').classList.toggle('maximized', maximized);
 
@@ -13545,11 +13573,83 @@ async function voiceRenegotiate(){
 }
 
 async function startScreenShare(){
-  if(!voiceCallState || !voiceCallState.pc || voiceCallState.status !== 'answered') return;
+  // v629: THIS FUNCTION USED TO FAIL COMPLETELY SILENTLY, which is what
+  // "share screen is not working" actually was. Two separate silent exits:
+  //
+  //   1. The guard below returned with no word if the call was not yet
+  //      answered. The button is only revealed on connect, so that is rare
+  //      -- but a click during the last moment of connecting did nothing.
+  //   2. `catch(e){ return; }` swallowed EVERY failure on the reasoning
+  //      that it meant "person cancelled the picker". Cancelling does land
+  //      there -- but so does a browser without screen capture, an
+  //      insecure context, a Permissions-Policy block, and (the common one
+  //      on macOS) the browser itself lacking the operating system's
+  //      Screen Recording permission. All of those produced exactly
+  //      nothing: no picker, no message, no console line.
+  //
+  // Voice calling already got this right -- it capability-checks
+  // getUserMedia up front and alerts when the microphone is blocked (see
+  // startVoiceCall). Screen share had neither. This brings it into line.
+  if(!voiceCallState || !voiceCallState.pc) return;
+  if(voiceCallState.status !== 'answered'){
+    alert('Wait until the call connects before sharing your screen.');
+    return;
+  }
   if(voiceCallState.hasScreenShare) return;
+
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia){
+    // Either an old browser or, far more often, a non-secure context:
+    // getDisplayMedia is only exposed on HTTPS/localhost.
+    alert(window.isSecureContext === false
+      ? 'Screen sharing needs a secure (https) connection, and this page is not on one.'
+      : 'This browser does not support screen sharing.');
+    return;
+  }
+
   let screenStream;
   try{ screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false }); }
-  catch(e){ return; } // person cancelled the browser's share picker — not an error worth alerting on
+  catch(e){
+    // A genuine cancel is NotAllowedError/AbortError raised almost
+    // instantly with no policy wording. A policy or OS-permission block
+    // raises the same NotAllowedError, so the message text is what
+    // separates them -- imperfect, but the alternative is the silence this
+    // is replacing. Always logged either way.
+    console.error('[call] getDisplayMedia failed:', e && e.name, e && e.message, e);
+    const name = (e && e.name) || '';
+    const msg = String((e && e.message) || '');
+    // Requires POSITIVE evidence of a block. The first version of this
+    // matched the bare word "permission", which is also in Chrome's
+    // ordinary user-cancelled message ("Permission denied by user") -- so
+    // dismissing the picker popped an alert, which is exactly the nagging
+    // the old silent catch existed to avoid. Caught by testing the cancel
+    // path, not by reading the regex.
+    //
+    // Ambiguous NotAllowedError therefore stays SILENT: that preserves the
+    // previous behaviour for cancels, and we only speak when the browser
+    // actually tells us it was blocked. Chrome reports "Permission denied
+    // by system" for the macOS Screen Recording case, which is the common
+    // real failure and is caught here.
+    const policyBlocked = /by system|policy|disallow|blocked|not supported/i.test(msg);
+    if(name === 'NotAllowedError' && !policyBlocked) return; // picker dismissed: stay quiet, as before
+    if(name === 'NotFoundError'){
+      alert('No screen or window was available to share.');
+    } else if(policyBlocked || name === 'NotAllowedError'){
+      alert('Your browser blocked screen sharing.\n\nOn macOS this is usually the operating system: System Settings → Privacy & Security → Screen Recording, tick your browser, then restart it.');
+    } else if(name === 'NotSupportedError' || name === 'TypeError'){
+      alert('This browser does not support screen sharing.');
+    } else {
+      alert('Screen sharing could not start: ' + (msg || name || 'unknown error'));
+    }
+    return;
+  }
+  if(!screenStream || !screenStream.getVideoTracks().length){
+    // Defensive: a stream with no video track would set hasScreenShare and
+    // light up the UI while sending nothing, which looks identical to the
+    // silent failure above.
+    console.error('[call] getDisplayMedia returned no video track');
+    alert('Screen sharing started but no video track was produced.');
+    return;
+  }
   const screenTrack = screenStream.getVideoTracks()[0];
   // Covers the browser's own "Stop sharing" bar/button, not just our own
   // toggle — that's a track ending out from under us, not a click here.
