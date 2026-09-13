@@ -1671,6 +1671,7 @@
      (rose-500 on emerald).
      ========================================================================= */
   :root{
+    --chat-panel-bottom:100px; /* v635: must match .chat-panel bottom */
     --chat-accent-1:#A8823F;   /* deep gold  -- gradient start (bottom-left) */
     --chat-accent-2:#E4C88F;   /* soft gold  -- gradient end   (top-right)   */
     --chat-accent-ring:rgba(228,200,143,0.40);
@@ -2190,6 +2191,34 @@
     .aura-face, .aura-blink, .aura-beacon{ animation:none; }
     .aura-blink{ opacity:0; }
   }
+
+  /* ---- v635: the chat header could be clipped off the top of the screen ----
+     REPRODUCED at 1366x655 before fixing: the panel's top computed to -28px
+     and the header sat at -27, entirely above the viewport.
+     
+     The cause is two numbers that have to agree and did not. The panel is
+     anchored from the BOTTOM, and its cap was written independently:
+     
+         bottom: 148px;  max-height: calc(100vh - 120px);
+     
+     A panel pushed 148px up from the bottom needs 148px reserved plus a gap
+     at the top; reserving 120 leaves it 28px taller than the space it has,
+     and a bottom-anchored box grows UPWARDS -- so the overflow lands on the
+     header, off-screen, where there is no scrollbar to get it back.
+     
+     It only appears once the thread is long enough to reach the cap. A short
+     conversation is content-limited and looks fine, which is why this
+     survived: it is invisible until somebody has a real conversation.
+     
+     The cap is now DERIVED from the offset instead of restated, so the two
+     cannot drift apart again. The staff portal was correct only by
+     coincidence (bottom:100px against a 120px reserve); it now uses the same
+     rule rather than relying on that. */
+  .chat-panel{
+    --chat-panel-gap-top:20px;
+    max-height:calc(100vh - var(--chat-panel-bottom) - var(--chat-panel-gap-top));
+  }
+
 </style>
 </head>
 <body>
