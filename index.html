@@ -1792,6 +1792,72 @@
     border-bottom:1px solid var(--border);
     font-family:var(--sans); font-weight:700; letter-spacing:-0.01em;
   }
+
+  /* ---- v626: the part the first pass missed ----
+     The reference's message row is not just a restyled bubble. Above every
+     incoming message it puts the SENDER'S NAME and a ROLE BADGE -- "Staff"
+     or "Client - <org>" -- and it gives a client's bubble its own amber
+     border, distinct from a colleague's neutral one. That pair IS the
+     staff/client distinction, which is the thing this widget was asked to
+     make legible in all three directions (staff-staff, staff-client,
+     client-staff). Restyling the bubble alone left every sender looking
+     identical, which is why this did not match the file.
+
+     Consecutive messages from one sender inside a minute are SEQUENTIAL:
+     they drop the header and tighten to a 4px gap, so a burst reads as one
+     block instead of repeating somebody's name five times. Reference values
+     are mt-3.5 (14px) / mt-1 (4px); .chat-messages already contributes an
+     8px flex gap, so the margins here are the difference on top of it. */
+  .chat-panel .chat-msg-row{ margin-top:6px; }
+  .chat-panel .chat-msg-row.seq{ margin-top:-4px; }
+
+  .chat-panel .chat-msg-head{
+    display:flex; align-items:center; gap:6px; margin:0 0 4px 8px;
+    font-family:var(--sans); line-height:1; user-select:none;
+  }
+  .chat-panel .chat-msg-head-name{
+    font-size:11px; font-weight:600; letter-spacing:.02em;
+    color:var(--chat-accent-2);
+  }
+  .chat-panel .chat-msg-row.from-client .chat-msg-head-name{ color:#F0B849; }
+  .chat-panel .chat-msg-row.from-ai .chat-msg-head-name{ color:var(--violet, #B388FF); }
+
+  .chat-role-badge{
+    display:inline-flex; align-items:center; padding:2px 6px; border-radius:999px;
+    font-family:var(--sans); font-size:9px; font-weight:700; line-height:1;
+    text-transform:uppercase; letter-spacing:.06em; border:1px solid;
+  }
+  /* Gold stands in for the reference's emerald, for the same reason the FAB
+     does -- see the colour note at the top of v625. */
+  .chat-role-badge.staff{
+    background:rgba(201,166,107,.18); color:var(--chat-accent-2);
+    border-color:rgba(201,166,107,.38);
+  }
+  /* Amber is the reference's own choice for a client and is kept literally:
+     it has to read as "not one of us" against the accent, the same job the
+     rose badge does on the button. */
+  .chat-role-badge.client{
+    background:rgba(245,158,11,.18); color:#FCD34D;
+    border-color:rgba(245,158,11,.38);
+  }
+  .chat-role-badge.ai{
+    background:rgba(179,136,255,.16); color:var(--violet, #B388FF);
+    border-color:rgba(179,136,255,.35);
+  }
+
+  /* The third bubble variant. A colleague's incoming bubble keeps the
+     neutral border set above; a client's is amber-edged, so who you are
+     replying to is obvious without reading the name. */
+  .chat-panel .chat-msg-row.from-client .chat-msg-bubble{
+    border-color:rgba(245,158,11,.40);
+  }
+  .chat-panel .chat-msg-row.from-ai .chat-msg-bubble{
+    border-color:rgba(179,136,255,.38);
+  }
+
+  /* Reference caps the bubble column at 85%/78% rather than letting a long
+     line run the full panel width. */
+  .chat-panel .chat-msg-row{ max-width:85%; }
 </style>
 </head>
 <body>
@@ -11285,14 +11351,61 @@ function chatClientTickState(m){
   if(m.delivered_at) return 'delivered';
   return 'sent';
 }
+// v626: the reference's sender header -- name plus a role badge -- shown
+// above an INCOMING message only, and only when it is not sequential.
+//
+// Why a role badge at all: this widget carries three different
+// conversations (staff-staff, staff-client, client-staff) through one
+// panel, and before this every sender looked identical. Naming the role
+// next to the name is what the reference does and is the cheapest way to
+// stop somebody answering a client in the tone they'd use with a
+// colleague.
+//
+// role is 'staff' | 'client' | 'ai'. `detail` is the reference's
+// "Client - <organization>" suffix; omitted when we have no org on file
+// rather than printing "Client - External" as the reference does, since we
+// usually DO know the company and a placeholder would be noise.
+function chatMsgHeadHtml(name, role, detail){
+  const label = role === 'client' ? (detail ? 'Client · ' + escapeHtml(detail) : 'Client')
+    : role === 'ai' ? 'AI'
+    : 'Staff';
+  return `<div class="chat-msg-head">`
+    + `<span class="chat-msg-head-name">${escapeHtml(name || 'Unknown')}</span>`
+    + `<span class="chat-role-badge ${role}">${label}</span>`
+    + `</div>`;
+}
+
+// Consecutive messages from the same sender inside a minute collapse into
+// one block -- the reference's own rule (same senderId, <60000ms). Without
+// it a five-message burst repeats somebody's name and badge five times.
+const CHAT_SEQUENTIAL_MS = 60000;
+function chatIsSequential(prev, senderKey, atMs){
+  if(!prev) return false;
+  return prev.key === senderKey && (atMs - prev.at) < CHAT_SEQUENTIAL_MS;
+}
+
 function renderClientChatMessages(clientId){
   const key = 'client:' + clientId;
   const conv = chatConversations[key] || { messages: [] };
   const box = $('chatMessages');
   const clientChatTz = nonAgentDisplayTz();
+  // v626: who sent the previous message, for the sequential check below.
+  let prevSender = null;
+  const clientDisplayName = chatClientThreadName(clientId);
   box.innerHTML = conv.messages.map(m => {
     const mine = m.sender === 'staff';
-    const senderLabel = m.sender === 'ai' ? 'AI Assistant · ' : (m.sender === 'client' ? '' : '');
+    // v626: senderLabel moved OUT of the meta line and into the header
+    // above the bubble (chatMsgHeadHtml), so it is empty here now. The
+    // meta row keeps the timestamp, edit control and ticks.
+    const senderLabel = '';
+    // 'client' and 'ai' are the two incoming roles in a client thread.
+    const role = m.sender === 'ai' ? 'ai' : (m.sender === 'client' ? 'client' : 'staff');
+    const atMs = new Date(m.created_at).getTime();
+    const isSeq = chatIsSequential(prevSender, m.sender, atMs);
+    prevSender = { key: m.sender, at: atMs };
+    const headHtml = (!mine && !isSeq)
+      ? chatMsgHeadHtml(role === 'ai' ? 'AI Assistant' : clientDisplayName, role, null)
+      : '';
     const time = new Date(m.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(clientChatTz ? { timeZone: clientChatTz } : {}) });
     if(chatEditingMessageId === m.id){
       return `
@@ -11322,7 +11435,8 @@ function renderClientChatMessages(clientId){
       : '';
     const ticksHtml = mine ? chatTicksHtml(chatClientTickState(m)) : '';
     return `
-      <div class="chat-msg-row ${mine ? 'mine' : 'theirs'}">
+      <div class="chat-msg-row ${mine ? 'mine' : 'theirs'} from-${role}${isSeq ? ' seq' : ''}">
+        ${headHtml}
         ${bodyHtml}
         ${attachmentHtml}
         <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${ticksHtml ? ' ' + ticksHtml : ''}</div>
@@ -11562,12 +11676,30 @@ let chatEditingMessageId = null;
 function renderChatThread(){
   const conv = chatConversations[chatActiveConv] || { messages: [] };
   const box = $('chatMessages');
-  const showSenderLabel = chatActiveConv === 'team' || chatActiveConv.startsWith('group:');
+  // v626: showSenderLabel is gone. It gated the old below-the-bubble name to
+  // team/group threads only; the header above the bubble now shows on every
+  // incoming non-sequential message including DMs, so there is nothing left
+  // for it to decide. Deleted rather than left assigned-and-unread.
   const isDm = chatActiveConv !== 'team' && !chatActiveConv.startsWith('group:');
   const teamChatTz = nonAgentDisplayTz();
+  let prevSender = null;
   box.innerHTML = visibleChatThreadMessages(chatActiveConv, conv.messages).map(m => {
     const mine = m.sender_id === myUserId;
-    const senderLabel = showSenderLabel && !mine ? escapeHtml(chatContactName(m.sender_id)) + ' · ' : '';
+    // v626: the name moved above the bubble, with a Staff badge beside it.
+    //
+    // SHOWN IN DMs TOO, which the old senderLabel deliberately was not.
+    // The reference shows a header on every non-sequential incoming
+    // message regardless of thread type, and here it earns its place: a
+    // colleague's message and a client's message now look different at a
+    // glance in a panel that carries both. Sequential collapsing is what
+    // keeps that from becoming repetitive in a fast back-and-forth.
+    const senderLabel = '';
+    const atMs = new Date(m.created_at).getTime();
+    const isSeq = chatIsSequential(prevSender, m.sender_id, atMs);
+    prevSender = { key: m.sender_id, at: atMs };
+    const headHtml = (!mine && !isSeq)
+      ? chatMsgHeadHtml(chatContactName(m.sender_id), 'staff', null)
+      : '';
     const time = new Date(m.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(teamChatTz ? { timeZone: teamChatTz } : {}) });
     if(chatEditingMessageId === m.id){
       return `
@@ -11592,7 +11724,8 @@ function renderChatThread(){
       : '';
     const ticksHtml = mine ? (isDm ? chatTicksHtml(chatDmTickState(m, chatActiveConv)) : chatSeenByHtml(m, chatActiveConv)) : '';
     return `
-      <div class="chat-msg-row ${mine ? 'mine' : 'theirs'}">
+      <div class="chat-msg-row ${mine ? 'mine' : 'theirs'} from-staff${isSeq ? ' seq' : ''}">
+        ${headHtml}
         ${bodyHtml}
         ${attachmentHtml}
         <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${ticksHtml ? ' ' + ticksHtml : ''}</div>
