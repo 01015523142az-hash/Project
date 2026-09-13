@@ -1887,8 +1887,13 @@
      ========================================================================= */
 
   /* ---- incoming call card ---- */
+  /* v634: BACK TO TOP-CENTRE on request. v627 moved it to the top-right to
+     match the reference, which parks a ringing call out of the way of a
+     live one. Centred is where people look for it here.
+     The card treatment from v627 all stays -- 2px accent border, 16px
+     radius, blur, icon tile with its ping, round answer/decline buttons. */
   .call-banner{
-    top:24px; right:24px; left:auto; transform:none;
+    top:20px; right:auto; left:50%; transform:translateX(-50%);
     width:min(384px, calc(100vw - 32px)); min-width:0;
     border:2px solid var(--chat-accent-2); border-radius:16px;
     background:color-mix(in srgb, var(--card) 95%, transparent);
@@ -1896,10 +1901,22 @@
     box-shadow:0 24px 50px -12px rgba(0,0,0,.7);
     animation:callBannerIn .2s cubic-bezier(0.16,1,0.3,1);
   }
+  /* Centred, so the entrance has to carry the -50% X through the keyframe
+     or the card snaps sideways as the animation starts. */
   @keyframes callBannerIn{
-    from{ opacity:0; transform:translateY(-24px); }
-    to{ opacity:1; transform:none; }
+    from{ opacity:0; transform:translateX(-50%) translateY(-24px); }
+    to{ opacity:1; transform:translateX(-50%); }
   }
+
+  /* v634: THE STACK, now that the ringing card and the live-call bar are
+     both top-centre. They previously collided, which is the only reason
+     #incomingMeetBanner carried a hardcoded top:110px -- that hack is gone
+     and the order is computed from one variable instead.
+     voiceSetCallStackOffsets() sets --call-stack-top as each layer appears,
+     so a Meet invite that arrives during a call lands under the call, not
+     on top of it. */
+  .call-banner{ top:var(--call-stack-top, 20px); }
+  #incomingMeetBanner{ top:var(--meet-stack-top, 20px); }
   /* The 14px dot becomes the reference's 48px icon tile with a ping ring.
      The glyph comes from ::before so the markup is untouched. */
   .call-banner-pulse{
@@ -7820,7 +7837,7 @@
      now stack down the right-hand edge, which is what the reference does
      and what makes two simultaneous invitations legible. 84px = the card's
      top (24px) + its height + a gap. -->
-<div id="incomingMeetBanner" class="call-banner" style="display:none; top:116px;">
+<div id="incomingMeetBanner" class="call-banner" style="display:none;">
   <div class="call-banner-pulse"></div>
   <div class="call-banner-info">
     <div class="call-banner-name" id="incomingMeetName"></div>
@@ -13295,6 +13312,7 @@ async function handleVoiceSignal(msg){
       ? `Adding you to a call with ${msg.participants.map(p => p.name).join(', ')}…`
       : 'Incoming call…';
     $('incomingCallBanner').style.display = 'flex';
+    requestAnimationFrame(voiceSetCallStackOffsets); // v634
     voiceStartRingtone('incoming');
   } else if(msg.type === 'answer'){
     if(!voiceCallState || voiceCallState.role !== 'caller' || !voiceCallState.pc) return;
@@ -13393,7 +13411,7 @@ async function handleVoiceSignal(msg){
     // already been answered elsewhere.
     if(voiceCallState && voiceCallState.role === 'callee' && voiceCallState.status === 'ringing' && msg.callRowId === voiceCallState.callRowId){
       voiceStopRingtone();
-      $('incomingCallBanner').style.display = 'none';
+      $('incomingCallBanner').style.display = 'none'; requestAnimationFrame(voiceSetCallStackOffsets); /* v634 */
       voiceCallState = null;
     }
   } else if(msg.type === 'mesh-offer'){
@@ -13430,6 +13448,7 @@ async function handleVoiceSignal(msg){
     pendingMeetInvite = { link: msg.link, fromId: msg.from, fromName: msg.fromName, groupId: msg.groupId || null };
     $('incomingMeetName').textContent = msg.fromName || 'Someone';
     $('incomingMeetBanner').style.display = 'flex';
+    requestAnimationFrame(voiceSetCallStackOffsets); // v634
     meetStartRingtone();
     voicePlayConnectSound(); // one gentle ping — deliberately NOT the repeating ring, so it doesn't read as an incoming voice call
   } else if(msg.type === 'meet-accepted' || msg.type === 'meet-declined'){
@@ -13467,7 +13486,7 @@ function acceptMeetInvite(){
   voiceSendOneOff(invite.fromId, { type: 'meet-accepted' });
   postMeetResponseMessage(invite, true);
   meetStopRingtone();
-  $('incomingMeetBanner').style.display = 'none';
+  $('incomingMeetBanner').style.display = 'none'; requestAnimationFrame(voiceSetCallStackOffsets); /* v634 */
   pendingMeetInvite = null;
 }
 
@@ -13477,7 +13496,7 @@ function declineMeetInvite(){
   voiceSendOneOff(invite.fromId, { type: 'meet-declined' });
   postMeetResponseMessage(invite, false);
   meetStopRingtone();
-  $('incomingMeetBanner').style.display = 'none';
+  $('incomingMeetBanner').style.display = 'none'; requestAnimationFrame(voiceSetCallStackOffsets); /* v634 */
   pendingMeetInvite = null;
 }
 
@@ -13642,7 +13661,7 @@ async function startVoiceCallToClient(clientId, clientName){
 async function acceptIncomingCall(){
   if(!voiceCallState || voiceCallState.role !== 'callee') return;
   voiceStopRingtone();
-  $('incomingCallBanner').style.display = 'none';
+  $('incomingCallBanner').style.display = 'none'; requestAnimationFrame(voiceSetCallStackOffsets); /* v634 */
   let localStream;
   try{ localStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
   catch(e){ alert('Microphone access was blocked or unavailable.'); declineIncomingCall(); return; }
@@ -13703,7 +13722,7 @@ async function acceptIncomingCall(){
 function declineIncomingCall(){
   if(!voiceCallState || voiceCallState.role !== 'callee') return;
   voiceStopRingtone();
-  $('incomingCallBanner').style.display = 'none';
+  $('incomingCallBanner').style.display = 'none'; requestAnimationFrame(voiceSetCallStackOffsets); /* v634 */
   voiceSendOneOff(voiceCallState.peerId, { type: 'decline' });
   if(voiceCallState.callRowId) sb.from('voice_calls').update({ status: 'declined', ended_at: new Date().toISOString() }).eq('id', voiceCallState.callRowId).then(() => {});
   voiceRosterSetStatus(myUserId, 'declined');
@@ -13913,6 +13932,38 @@ function voiceStartCallTimer(){
   }, 1000);
 }
 
+
+// v634: ONE PLACE THAT DECIDES WHERE THE TOP-CENTRE LAYERS SIT.
+//
+// The active-call bar, the incoming-call card and the Meet invite are all
+// top-centre, so they have to queue rather than overlap. This used to be a
+// hardcoded `top:110px` on the Meet banner -- which only ever dodged ONE of
+// the other two, and silently stopped being right the moment anything above
+// it changed height.
+//
+// Heights are MEASURED off the real elements rather than assumed, because
+// the card's height depends on its text: "Adding you to a call with Mariam,
+// Eslam..." wraps to two lines where a one-word caller does not.
+//
+// Order: live call on top (you are in it), then the ringing card, then the
+// Meet invite.
+function voiceSetCallStackOffsets(){
+  var TOP = 20, GAP = 12;
+  // NOT offsetParent: that is null for every position:fixed element, which
+  // all three of these are, so it reported them all hidden and the whole
+  // stack collapsed onto 20px. Caught by measuring the rendered rects.
+  var shown = function(el){ return !!el && getComputedStyle(el).display !== 'none'; };
+  var h = function(el){ return el ? el.getBoundingClientRect().height : 0; };
+  var bar  = document.getElementById('activeCallBar');
+  var call = document.getElementById('incomingCallBanner');
+  var meet = document.getElementById('incomingMeetBanner');
+  var y = TOP;
+  if(shown(bar)) y += h(bar) + GAP;
+  document.documentElement.style.setProperty('--call-stack-top', y + 'px');
+  if(shown(call)) y += h(call) + GAP;
+  document.documentElement.style.setProperty('--meet-stack-top', y + 'px');
+}
+
 function voiceShowActiveBar(name, status, connecting){
   $('activeCallName').textContent = name || '';
   $('activeCallStatus').textContent = status;
@@ -13925,6 +13976,7 @@ function voiceShowActiveBar(name, status, connecting){
   // a glance while you wait.
   $('activeCallBar').classList.toggle('connecting', !!connecting);
   $('activeCallBar').style.display = 'flex';
+  requestAnimationFrame(voiceSetCallStackOffsets); // v634
   $('callMuteBtn').classList.remove('muted');
   // Screen share only makes sense once actually connected — voiceStartCallTimer()
   // reveals it; this is just a defensive reset at the start of every call.
@@ -14029,8 +14081,9 @@ function endVoiceCall(finalStatus, notifyPeer){
     sb.from('voice_calls').update(update).eq('id', state.callRowId).then(() => {});
   }
   voicePostCallSummary(state, finalStatus);
-  $('incomingCallBanner').style.display = 'none';
+  $('incomingCallBanner').style.display = 'none'; requestAnimationFrame(voiceSetCallStackOffsets); /* v634 */
   $('activeCallBar').style.display = 'none';
+  requestAnimationFrame(voiceSetCallStackOffsets); // v634
   voiceCallState = null;
 }
 
