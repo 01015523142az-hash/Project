@@ -2120,6 +2120,84 @@
   }
   .chat-panel .chat-msg-meta{ font-family:var(--chat-mono); font-size:9px; }
 
+  /* ---- v640: @mentions ----
+     .chat-mention was `color:var(--focus)`, which was fine while --focus was
+     coral. v623 moved --focus to gold and v625 gave your OWN bubbles a gold
+     gradient background -- so a mention inside your own message became gold
+     text on gold, effectively invisible.
+     A single colour cannot work here, because the two bubble types are
+     opposite: your own is a light gold fill with dark text, theirs is a dark
+     fill with light text. So the mention is a PILL that inverts per bubble --
+     dark-on-gold in yours, gold-on-dark in theirs -- which reads as a
+     deliberate token in both instead of a colour that happens to clash in
+     one. */
+  .chat-panel .chat-mention{
+    font-weight:700; border-radius:5px; padding:0 4px; margin:0 1px;
+    white-space:nowrap;
+  }
+  .chat-panel .chat-msg-row.theirs .chat-mention{
+    color:var(--chat-accent-2);
+    background:rgba(201,166,107,.16);
+    box-shadow:inset 0 0 0 1px rgba(201,166,107,.32);
+  }
+  .chat-panel .chat-msg-row.mine .chat-mention{
+    color:#2A1E08;
+    background:rgba(26,18,6,.14);
+    box-shadow:inset 0 0 0 1px rgba(26,18,6,.22);
+  }
+  /* A mention OF YOU is the one you must not miss, so it gets the alert
+     colour rather than the brand one -- same reasoning as the rose unread
+     badge sitting on a gold button. */
+  .chat-panel .chat-mention.me{
+    color:#7A1327; background:rgba(244,63,94,.18);
+    box-shadow:inset 0 0 0 1px rgba(244,63,94,.45);
+  }
+  .chat-panel .chat-msg-row.theirs .chat-mention.me{
+    color:#FFC2CE; background:rgba(244,63,94,.20);
+  }
+
+  /* ---- v641: profile menu (replaces the bare Sign out button) ---- */
+  .profile-menu-wrap{ position:relative; }
+  .profile-menu-btn{
+    width:34px; height:34px; padding:0; border-radius:50%;
+    background:linear-gradient(to top right, var(--chat-accent-1), var(--chat-accent-2));
+    color:#1A1206; border:1px solid rgba(201,166,107,.45);
+    font-family:var(--chat-sans); font-weight:800; font-size:12px; letter-spacing:.02em;
+    display:inline-flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:filter .15s ease, transform .15s ease;
+  }
+  .profile-menu-btn:hover{ filter:brightness(1.08); }
+  .profile-menu-btn:active{ transform:scale(.95); }
+  .profile-menu-panel{
+    position:absolute; top:calc(100% + 8px); right:0; z-index:500;
+    min-width:238px; max-width:300px; padding:12px;
+    background:color-mix(in srgb, var(--card) 96%, transparent);
+    border:1px solid var(--border-light); border-radius:14px;
+    box-shadow:0 20px 44px -12px rgba(0,0,0,.6);
+    backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    animation:profileMenuIn .16s cubic-bezier(0.16,1,0.3,1);
+  }
+  @keyframes profileMenuIn{ from{ opacity:0; transform:translateY(-6px); } to{ opacity:1; transform:none; } }
+  @media (prefers-reduced-motion:reduce){ .profile-menu-panel{ animation:none; } }
+  .profile-menu-head{ display:flex; align-items:center; gap:10px; padding-bottom:10px; border-bottom:1px solid var(--border); }
+  .profile-menu-avatar{
+    width:38px; height:38px; border-radius:50%; flex-shrink:0;
+    background:linear-gradient(to top right, var(--chat-accent-1), var(--chat-accent-2));
+    color:#1A1206; font-family:var(--chat-sans); font-weight:800; font-size:13px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .profile-menu-name{ font-family:var(--chat-sans); font-weight:700; font-size:13px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  /* Title and department are the point of this menu, so they get the accent
+     rather than the muted tone the email below them uses. */
+  .profile-menu-role{ font-family:var(--chat-sans); font-size:11px; font-weight:600; color:var(--chat-accent-2); margin-top:1px; }
+  .profile-menu-email{ font-family:var(--chat-mono); font-size:10px; color:var(--text-dim); margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .profile-menu-signout{
+    width:100%; margin:10px 0 0; padding:8px 12px; border-radius:9px;
+    background:var(--inset); color:var(--text); border:1px solid var(--border-light);
+    font-family:var(--chat-sans); font-size:12px; font-weight:600; cursor:pointer;
+  }
+  .profile-menu-signout:hover{ background:var(--danger); border-color:var(--danger); color:#fff; }
+
   /* ---- typing indicator ---- */
   /* Reference: three dots that BOUNCE, staggered 0/150/300ms, on the
      accent. The portals had a flat opacity pulse, which reads as a
@@ -2357,7 +2435,27 @@
           </div>
         </div>
         <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle light/dark theme">🌙</button>
-        <button id="signOutBtn">Sign out</button>
+        <!-- v641: the Sign out button is now a profile menu. signOutBtn keeps
+             its id and moves INSIDE the dropdown rather than being replaced,
+             so the existing sign-out handler and the idle-timeout code that
+             shares it keep working untouched -- this is a relocation, not a
+             rewrite of signing out. -->
+        <div class="profile-menu-wrap" id="profileMenuWrap">
+          <button class="profile-menu-btn" id="profileMenuBtn" title="Your profile" aria-haspopup="menu" aria-expanded="false">
+            <span id="profileMenuInitials">—</span>
+          </button>
+          <div class="profile-menu-panel" id="profileMenuPanel" style="display:none;" role="menu">
+            <div class="profile-menu-head">
+              <div class="profile-menu-avatar" id="profileMenuAvatar">—</div>
+              <div style="min-width:0;">
+                <div class="profile-menu-name" id="profileMenuName"></div>
+                <div class="profile-menu-role" id="profileMenuRole"></div>
+                <div class="profile-menu-email" id="profileMenuEmail"></div>
+              </div>
+            </div>
+            <button id="signOutBtn" class="profile-menu-signout" role="menuitem">Sign out</button>
+          </div>
+        </div>
       </div>
     </div>
   </header>
@@ -3687,8 +3785,8 @@
       </div>
       <div style="overflow-x:auto;">
         <table class="data-table" id="umUsersTable">
-          <thead><tr><th>User</th><th>Tasks assigned</th><th>Type</th><th>Status</th><th>Extension version</th><th>Created</th></tr></thead>
-          <tbody id="umUsersTbody"><tr><td colspan="6" style="color:var(--text-dim);">Loading…</td></tr></tbody>
+          <thead><tr><th>User</th><th>Title</th><th>Department</th><th>Tasks assigned</th><th>Type</th><th>Status</th><th>Extension version</th><th>Created</th></tr></thead>
+          <tbody id="umUsersTbody"><tr><td colspan="8" style="color:var(--text-dim);">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -8971,6 +9069,7 @@ async function establishSession(user, { isNewLogin = true } = {}){
   myIsOwner = myRole === 'owner';
   myFullName = profile?.full_name || '';
   myTitle = profile?.title || '';           // v639
+  if(typeof renderProfileMenu === 'function') renderProfileMenu(); // v641
   myDepartment = profile?.department || ''; // v639
   myEmail = user.email;
   myUserId = user.id;
@@ -9973,19 +10072,89 @@ function chatMaybeNotify(key, m){
   // already visible live in the open thread. activelyViewing was already
   // computed for exactly this purpose but only gated the sound/desktop
   // popup, not the bell itself.
+  // v640: a message that MENTIONS YOU is not the same event as a message in
+  // a busy channel, and it used to be treated identically -- same icon, same
+  // title, and in a group the title was just the channel name, so "@Ellen
+  // can you check this" arrived looking exactly like the forty messages
+  // around it. Now it says who wants you and from where.
+  const mentionsMe = chatMessageMentionsMe(m, key);
+  const where = key === 'team' ? 'Team chat'
+    : (key.startsWith('group:') ? chatConvDisplayName(key) : chatContactName(m.sender_id));
   if(!activelyViewing){
     pushStaffNotification({
-      icon: '💬',
-      title: key === 'team' ? 'Team chat' : (key.startsWith('group:') ? chatConvDisplayName(key) : chatContactName(m.sender_id)),
+      icon: mentionsMe ? '📣' : '💬',
+      title: mentionsMe
+        ? `${chatContactName(m.sender_id)} mentioned you${key === 'team' || key.startsWith('group:') ? ' in ' + where : ''}`
+        : where,
       body: m.body || (m.attachment_name ? `Sent a file: ${m.attachment_name}` : 'New message'),
       onClick: () => { $('chatPanel').style.display = 'flex'; openChatThread(key); },
-      silent: true, // sound/desktop popup for chat is already handled below by chatPlayNotificationSound/chatShowDesktopNotification
+      // Ordinary chat stays silent here because chatPlayNotificationSound()
+      // and the desktop popup below already cover it. A MENTION is
+      // deliberately NOT silent: that also routes it through
+      // pushSelfNotification(), so it reaches your phone or a minimised
+      // browser, which an ordinary channel message should not do.
+      silent: !mentionsMe,
     });
   }
   if(activelyViewing) return;
   chatPlayNotificationSound();
   chatShowDesktopNotification(key, m);
 }
+
+
+// ---------- v641: profile menu ----------
+// Replaces the bare "Sign out" button in the header. The button itself was
+// NOT deleted -- it kept its id and moved inside this panel -- so the
+// existing sign-out handler and the idle-timeout code that shares it are
+// untouched.
+function profileMenuInitials(name, email){
+  const src = (name || email || '').trim();
+  if(!src) return '—';
+  const parts = src.split(/\s+/).filter(Boolean);
+  if(parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return src.slice(0, 2).toUpperCase();
+}
+function renderProfileMenu(){
+  const name = myFullName || myEmail || '';
+  const initials = profileMenuInitials(myFullName, myEmail);
+  const setText = (id, v) => { const el = $(id); if(el) el.textContent = v; };
+  setText('profileMenuInitials', initials);
+  setText('profileMenuAvatar', initials);
+  setText('profileMenuName', name);
+  setText('profileMenuEmail', myEmail || '');
+  // Title and department, the reason this menu exists. Falls back to the
+  // role label so somebody uncategorised still sees something meaningful
+  // rather than a blank line.
+  const roleEl = $('profileMenuRole');
+  if(roleEl){
+    const line = [myTitle, myDepartment].filter(Boolean).join(' · ');
+    roleEl.textContent = line || (typeof roleDisplayLabel === 'function' ? roleDisplayLabel(myRole || '') : (myRole || ''));
+  }
+  const btn = $('profileMenuBtn');
+  if(btn) btn.title = [name, myTitle, myDepartment].filter(Boolean).join(' — ') || 'Your profile';
+}
+function profileMenuSetOpen(open){
+  const panel = $('profileMenuPanel'), btn = $('profileMenuBtn');
+  if(!panel || !btn) return;
+  panel.style.display = open ? 'block' : 'none';
+  btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  if(open) renderProfileMenu();
+}
+(function wireProfileMenu(){
+  const btn = $('profileMenuBtn');
+  if(!btn) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    profileMenuSetOpen($('profileMenuPanel').style.display === 'none');
+  });
+  // Click-away and Escape, so it behaves like every other menu rather than
+  // needing a second click on the button to dismiss.
+  document.addEventListener('click', (e) => {
+    const wrap = $('profileMenuWrap');
+    if(wrap && !wrap.contains(e.target)) profileMenuSetOpen(false);
+  });
+  document.addEventListener('keydown', (e) => { if(e.key === 'Escape') profileMenuSetOpen(false); });
+})();
 
 // ---------- v125: staff notification center ----------
 // In-memory only (rebuilt fresh each session), same approach as the client
@@ -12104,9 +12273,27 @@ function chatHighlightMentions(escapedBody){
   names.forEach(name => {
     const token = '@' + escapeHtml(name);
     if(!out.includes(token)) return;
-    out = out.split(token).join(`<span class="chat-mention">${token}</span>`);
+    // v640: a mention OF ME is marked, so CSS can give it the alert
+    // treatment instead of the brand one. 'everyone' counts as mentioning
+    // everybody, which includes me.
+    const isMe = (name === (myFullName || myEmail)) || name === 'everyone';
+    out = out.split(token).join(`<span class="chat-mention${isMe ? ' me' : ''}">${token}</span>`);
   });
   return out;
+}
+
+// v640: does this message mention ME? Used to make the notification say so.
+// Matches the same tokens chatHighlightMentions() highlights, so what you
+// see in the bubble and what the bell tells you cannot disagree.
+function chatMessageMentionsMe(m, key){
+  const body = m && m.body;
+  if(!body) return false;
+  const mine = myFullName || myEmail;
+  if(mine && body.includes('@' + mine)) return true;
+  // '@everyone' only means anything in a channel that has a "everyone" --
+  // the same condition chatHighlightMentions() uses before offering it.
+  if((key === 'team' || (key && key.startsWith('group:'))) && body.includes('@everyone')) return true;
+  return false;
 }
 
 // Turns a plain http(s) URL into a clickable link — same "operate only on
@@ -16286,7 +16473,7 @@ $('flagsExportPdfBtn').addEventListener('click', () => {
 async function loadUmUsersList(){
   const tbody = $('umUsersTbody');
   if(!tbody) return;
-  tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-dim);">Loading…</td></tr>';
+  tbody.innerHTML = '<tr><td colspan="8" style="color:var(--text-dim);">Loading…</td></tr>'; // v641: was 5 against a 6-column table, now 8
   // audit fix (User Management deep-scan pass): unbounded fetches — low
   // urgency today (each table is in the single/low-double digits for a
   // typical org) but the same silent-truncation risk the Time Management
@@ -16317,7 +16504,7 @@ async function loadUmUsersList(){
   // though the manage-user Edge Function rejects that action outright.
   const list = (profiles||[])
     .filter(p => !PROTECTED_ROLES.has(p.role) || (myIsOwner && p.role === 'admin') || (myIsOwner && p.id === myUserId));
-  if(!list.length){ tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-dim);">No users.</td></tr>'; return; }
+  if(!list.length){ tbody.innerHTML = '<tr><td colspan="8" style="color:var(--text-dim);">No users.</td></tr>'; return; }
 
   tbody.innerHTML = '';
   list.forEach(p => {
@@ -16337,6 +16524,8 @@ async function loadUmUsersList(){
     tr.style.cursor = canOpenUserProfile(p.id) ? 'pointer' : 'default';
     tr.innerHTML = `
       <td>${escapeHtml(p.full_name || p.email || '—')}</td>
+      <td>${p.title ? escapeHtml(p.title) : '<span style="color:var(--text-dim);">—</span>'}</td>
+      <td>${p.department ? escapeHtml(p.department) : '<span style="color:var(--text-dim);">—</span>'}</td>
       <td title="${assigned.join(', ')}">${assignedLabel}</td>
       <td><span class="type-badge">${typeLabel}</span></td>
       <td>${statusBadge}</td>
