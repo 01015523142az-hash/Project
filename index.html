@@ -2297,6 +2297,144 @@
     max-height:calc(100vh - var(--chat-panel-bottom) - var(--chat-panel-gap-top));
   }
 
+
+  /* =========================================================================
+     v642: notification centre rebuilt to the supplied reference, and
+     generated once into BOTH portals so the two cannot drift.
+
+     What the reference specifies that neither portal had: a 30-day note, an
+     "Only show unread" switch, an overflow menu with Mark all as read,
+     Priority/Others tabs, cards carrying an unread dot and a relative
+     timestamp, and a detail view for a single notification.
+
+     The reference is a light-mode screenshot; these portals are dark-first
+     with a light theme, so the LAYOUT and STRUCTURE are the reference's and
+     the colours come from the theme. Copying its greys literally would have
+     produced a white panel floating in a dark portal.
+     ========================================================================= */
+  .notif-center-panel{
+    width:380px; max-width:calc(100vw - 32px);
+    padding:0; overflow:hidden;
+    display:flex; flex-direction:column; max-height:min(560px, calc(100vh - 120px));
+  }
+  .nc-head{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:14px 16px 0; font-family:var(--chat-sans, var(--sans));
+  }
+  .nc-title{ font-size:14px; font-weight:800; color:var(--text); }
+  .nc-close{
+    background:none; border:none; color:var(--text-dim); cursor:pointer;
+    font-size:18px; line-height:1; padding:2px 4px; margin:0; border-radius:6px;
+  }
+  .nc-close:hover{ color:var(--text); background:var(--card-hover); }
+  .nc-note{
+    padding:8px 16px 0; font-family:var(--chat-sans, var(--sans));
+    font-size:11.5px; color:var(--text-2); line-height:1.45;
+  }
+  .nc-controls{
+    display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:8px 16px 10px;
+  }
+  .nc-toggle-row{
+    display:flex; align-items:center; gap:10px; cursor:pointer;
+    font-family:var(--chat-sans, var(--sans)); font-size:12px; color:var(--text);
+  }
+  /* The switch is the reference's, including its green ON state -- green
+     here is a control affordance, not the brand accent, and the reference
+     uses it for exactly that. */
+  .nc-switch{
+    width:38px; height:21px; border-radius:999px; border:none; padding:0; margin:0;
+    background:var(--idle); position:relative; cursor:pointer;
+    transition:background .16s ease;
+  }
+  .nc-switch[aria-checked="true"]{ background:var(--good); }
+  .nc-knob{
+    position:absolute; top:2.5px; left:2.5px; width:16px; height:16px;
+    border-radius:50%; background:#fff; transition:transform .16s ease;
+    box-shadow:0 1px 3px rgba(0,0,0,.35);
+  }
+  .nc-switch[aria-checked="true"] .nc-knob{ transform:translateX(17px); }
+  /* A global label rule uppercases text in these portals; the reference's
+     control label is sentence case, and "ONLY SHOW UNREAD" reads as a
+     section heading rather than as the switch's own label. */
+  .nc-toggle-row, .nc-toggle-row span{ text-transform:none; letter-spacing:normal; }
+  .nc-more-wrap{ position:relative; }
+  .nc-more{
+    background:none; border:none; color:var(--text-2); cursor:pointer;
+    font-size:16px; line-height:1; padding:2px 6px; margin:0; border-radius:6px;
+  }
+  .nc-more:hover{ color:var(--text); background:var(--card-hover); }
+  .nc-more-menu{
+    position:absolute; top:calc(100% + 6px); right:0; z-index:20;
+    background:var(--card); border:1px solid var(--border-light); border-radius:12px;
+    box-shadow:0 14px 34px -10px rgba(0,0,0,.6); padding:6px; min-width:186px;
+  }
+  .nc-markall{
+    display:flex; align-items:center; gap:9px; width:100%; margin:0;
+    padding:9px 10px; border:none; border-radius:8px; cursor:pointer;
+    background:none; color:var(--text);
+    font-family:var(--chat-sans, var(--sans)); font-size:12.5px; font-weight:600;
+  }
+  .nc-markall:hover{ background:var(--card-hover); }
+  .nc-tabs{
+    display:flex; gap:18px; padding:0 16px;
+    border-bottom:1px solid var(--border);
+  }
+  .nc-tab{
+    background:none; border:none; margin:0; padding:9px 0 8px; cursor:pointer;
+    font-family:var(--chat-sans, var(--sans)); font-size:12.5px; font-weight:600;
+    color:var(--text-dim); border-bottom:2px solid transparent;
+  }
+  .nc-tab:hover{ color:var(--text-2); }
+  .nc-tab.active{ color:var(--text); border-bottom-color:var(--focus); }
+  .notif-center-list{ padding:10px 12px 12px; max-height:none; flex:1; overflow-y:auto; }
+  .notif-center-empty{ padding:26px 14px; text-align:center; font-size:12px; color:var(--text-dim); }
+
+  /* Cards, per the reference: a filled rounded block, title left, unread dot
+     right, relative time bottom-right. */
+  .notif-center-item{
+    display:block; position:relative; border:none; border-radius:12px;
+    background:var(--inset); padding:14px 40px 12px 14px; margin-bottom:10px;
+    cursor:pointer; transition:background .14s ease;
+  }
+  .notif-center-item:last-child{ margin-bottom:0; }
+  .notif-center-item:hover{ background:var(--card-hover); }
+  .notif-center-item-title{
+    font-family:var(--chat-sans, var(--sans)); font-size:13px; font-weight:600;
+    color:var(--text); line-height:1.35;
+  }
+  .notif-center-item-body{
+    font-family:var(--chat-sans, var(--sans)); font-size:11.5px; color:var(--text-2);
+    margin-top:3px; line-height:1.4;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .notif-center-item-time{
+    font-family:var(--chat-sans, var(--sans)); font-size:11px; color:var(--text-dim);
+    margin-top:8px; text-align:right;
+  }
+  .nc-dot{
+    position:absolute; top:15px; right:14px; width:9px; height:9px; border-radius:50%;
+    background:var(--focus);
+  }
+  /* A READ card keeps its place but stops competing for attention -- the
+     reference greys the dot rather than removing the row. */
+  .notif-center-item.is-read .nc-dot{ background:var(--text-dim); opacity:.5; }
+  .notif-center-item.is-read .notif-center-item-title{ font-weight:500; color:var(--text-2); }
+
+  /* ---- single-notification detail ---- */
+  .nc-detail{ padding:12px; overflow-y:auto; flex:1; }
+  .nc-detail-card{
+    background:var(--inset); border-radius:12px; padding:16px;
+    font-family:var(--chat-sans, var(--sans));
+  }
+  .nc-detail-title{ font-size:16px; font-weight:700; color:var(--text); }
+  .nc-detail-created{ font-size:11.5px; color:var(--text-2); margin-top:4px; }
+  .nc-detail-body{ font-size:12.5px; color:var(--text); margin-top:16px; line-height:1.6; white-space:pre-wrap; }
+  .nc-back{
+    background:none; border:none; color:var(--focus); cursor:pointer; margin:0 0 10px;
+    padding:0; font-family:var(--chat-sans, var(--sans)); font-size:12px; font-weight:600;
+  }
+
 </style>
 </head>
 <body>
@@ -2430,8 +2568,30 @@
             <span class="notif-bell-icon">🔔</span><span id="notifBellBadge" class="notif-bell-badge" style="display:none;">0</span>
           </button>
           <div class="notif-center-panel" id="notifCenterPanel" style="display:none;">
-            <div class="notif-center-header"><span>Notifications</span><button class="notif-center-clear-btn" id="notifClearBtn">Clear all</button></div>
-            <div class="notif-center-list" id="notifCenterList"><div class="notif-center-empty">Nothing yet</div></div>
+            <div class="nc-head">
+              <span class="nc-title">Notifications</span>
+              <button type="button" class="nc-close" id="ncCloseBtn" title="Close">&#10005;</button>
+            </div>
+            <div class="nc-note">Notifications sent to this inbox can be viewed for up to 30 days.</div>
+            <div class="nc-controls">
+              <label class="nc-toggle-row">
+                <span>Only show unread</span>
+                <button type="button" class="nc-switch" id="ncUnreadSwitch" role="switch" aria-checked="false"><span class="nc-knob"></span></button>
+              </label>
+              <div class="nc-more-wrap">
+                <button type="button" class="nc-more" id="ncMoreBtn" title="More" aria-haspopup="menu" aria-expanded="false">&#8942;</button>
+                <div class="nc-more-menu" id="ncMoreMenu" style="display:none;" role="menu">
+                  <button type="button" class="nc-markall" id="ncMarkAllBtn" role="menuitem">&#10004; Mark all as read</button>
+                  <button type="button" class="nc-markall" id="notifClearBtn" role="menuitem">&#128465; Clear all</button>
+                </div>
+              </div>
+            </div>
+            <div class="nc-tabs">
+              <button type="button" class="nc-tab active" data-nc-tab="priority">Priority</button>
+              <button type="button" class="nc-tab" data-nc-tab="others">Others</button>
+            </div>
+            <div class="notif-center-list" id="notifCenterList"><div class="notif-center-empty">No notifications</div></div>
+            <div class="nc-detail" id="ncDetail" style="display:none;"></div>
           </div>
         </div>
         <button class="theme-toggle-btn" id="themeToggleBtn" title="Toggle light/dark theme">🌙</button>
@@ -10083,6 +10243,7 @@ function chatMaybeNotify(key, m){
   if(!activelyViewing){
     pushStaffNotification({
       icon: mentionsMe ? '📣' : '💬',
+      priority: mentionsMe, // v642: a mention needs you; an ordinary message does not
       title: mentionsMe
         ? `${chatContactName(m.sender_id)} mentioned you${key === 'team' || key.startsWith('group:') ? ' in ' + where : ''}`
         : where,
@@ -10173,11 +10334,13 @@ const STAFF_NOTIF_MAX = 50;
 let staffNotifUnread = 0;
 let staffNotifOpen = false;
 
-function pushStaffNotification({ icon, title, body, onClick, silent, durableId, at }){
+function pushStaffNotification({ icon, title, body, onClick, silent, durableId, at, priority }){
   const id = `n${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
   // v592: durableId ties an entry to its staff_notifications row, so
   // clicking or clearing it marks that row read.
-  staffNotifications.unshift({ id, icon, title, body, onClick, durableId, at: at || Date.now() });
+  // v642: readAt makes per-item unread state possible (the dot and the
+  // "Only show unread" filter); priority decides which tab it lands in.
+  staffNotifications.unshift({ id, icon, title, body, onClick, durableId, priority: priority === true, readAt: null, at: at || Date.now() });
   if(staffNotifications.length > STAFF_NOTIF_MAX) staffNotifications.length = STAFF_NOTIF_MAX;
   if(!staffNotifOpen) staffNotifUnread++;
   renderNotifCenter();
@@ -10211,35 +10374,247 @@ function pushSelfNotification({ title, body, tag }){
     .catch(err => console.error('send-push-notification (self) call failed', err));
 }
 
-function renderNotifCenter(){
-  const list = $('notifCenterList');
-  const badge = $('notifBellBadge');
-  const bellBtn = $('notifBellBtn');
-  if(!list || !badge) return;
-  badge.textContent = staffNotifUnread > 99 ? '99+' : String(staffNotifUnread);
-  badge.style.display = staffNotifUnread > 0 ? 'flex' : 'none';
-  if(bellBtn) bellBtn.classList.toggle('ringing', staffNotifUnread > 0);
-  if(!staffNotifications.length){
-    list.innerHTML = '<div class="notif-center-empty">Nothing yet</div>';
+
+// v642: the staff portal's binding for the shared notification centre below.
+var NC_ADAPTER = {
+  items: function(){ return staffNotifications; },
+  // The bell badge counts UNREAD ITEMS now, not "arrived since you last
+  // opened the panel". Opening the panel used to zero the counter whether or
+  // not you had actually looked at anything in it.
+  refreshBadge: function(){
+    staffNotifUnread = (staffNotifications || []).filter(ncIsUnread).length;
+    var badge = $('notifBellBadge'), bell = $('notifBellBtn');
+    if(badge){
+      badge.textContent = staffNotifUnread > 99 ? '99+' : String(staffNotifUnread);
+      badge.style.display = staffNotifUnread > 0 ? 'flex' : 'none';
+    }
+    if(bell) bell.classList.toggle('ringing', staffNotifUnread > 0);
+  },
+  onRead: function(n){
+    // markStaffNotificationsRead takes an ARRAY of durable row ids.
+    if(n.durableId && typeof markStaffNotificationsRead === 'function') markStaffNotificationsRead([n.durableId]);
+  },
+  onMarkAllRead: function(){
+    var ids = (staffNotifications || []).map(function(n){ return n.durableId; }).filter(Boolean);
+    if(ids.length && typeof markStaffNotificationsRead === 'function') markStaffNotificationsRead(ids);
+  },
+  onClose: function(){ staffNotifOpen = false; }
+};
+
+// ---------- v642: notification centre (shared between both portals) ----------
+// Generated once and inserted into the staff and client portals, so the two
+// cannot drift. Each portal supplies NC_ADAPTER above; everything here is
+// byte-identical in both files.
+//
+// PER-ITEM READ STATE IS NEW. Both portals previously tracked only a global
+// unread COUNT, which is enough for a badge and nothing else -- there was no
+// way to know which individual notification was unread, so the reference's
+// per-card dot and its "Only show unread" filter had nothing to read. Items
+// now carry readAt, defaulting to null (unread).
+var ncTab = 'priority';
+var ncUnreadOnly = false;
+var ncDetailId = null;
+
+// PRIORITY vs OTHERS. An item is Priority only when explicitly flagged --
+// opt-in rather than guessed from the title, so a wording change cannot
+// silently reclassify something. Priority means "this needs you now": you
+// were mentioned, a client is waiting for a human, a call is ringing.
+// Everything informational (payment succeeded, campaign status, a lead
+// landed) is Others, which is what the reference shows there.
+function ncIsPriority(n){ return n && n.priority === true; }
+function ncIsUnread(n){ return !n || !n.readAt; }
+
+function ncRelTime(ts){
+  var diff = Date.now() - ts;
+  var mins = Math.floor(diff / 60000);
+  if(mins < 1) return 'Just now';
+  if(mins < 60) return mins + (mins === 1 ? ' minute ago' : ' minutes ago');
+  var hours = Math.floor(mins / 60);
+  if(hours < 24) return hours + (hours === 1 ? ' hour ago' : ' hours ago');
+  var days = Math.floor(hours / 24);
+  return days + (days === 1 ? ' day ago' : ' days ago');
+}
+
+function ncVisibleItems(){
+  var all = NC_ADAPTER.items() || [];
+  return all.filter(function(n){
+    if(ncTab === 'priority' ? !ncIsPriority(n) : ncIsPriority(n)) return false;
+    if(ncUnreadOnly && !ncIsUnread(n)) return false;
+    return true;
+  });
+}
+
+// The filter switch and the Priority/Others tabs belong to the LIST. Left on
+// screen in the detail view they are live controls over a list you cannot
+// see, so the detail reads as a filtered list rather than as one
+// notification. The back link is the only way out of the detail view.
+function ncChrome(show){
+  ['.nc-controls', '.nc-tabs'].forEach(function(sel){
+    var el = document.querySelector(sel);
+    if(el) el.style.display = show ? '' : 'none';
+  });
+}
+
+function ncRenderList(){
+  var list = document.getElementById('notifCenterList');
+  var detail = document.getElementById('ncDetail');
+  if(!list) return;
+  if(ncDetailId){ ncRenderDetail(); return; }
+  if(detail) detail.style.display = 'none';
+  list.style.display = 'block';
+  ncChrome(true);
+
+  document.querySelectorAll('.nc-tab').forEach(function(b){
+    b.classList.toggle('active', b.dataset.ncTab === ncTab);
+  });
+  var sw = document.getElementById('ncUnreadSwitch');
+  if(sw) sw.setAttribute('aria-checked', ncUnreadOnly ? 'true' : 'false');
+
+  var items = ncVisibleItems();
+  if(!items.length){
+    list.innerHTML = '<div class="notif-center-empty">No notifications</div>';
+    ncPositionPanel();
     return;
   }
-  list.innerHTML = staffNotifications.map(n => `
-    <div class="notif-center-item" data-notif-id="${n.id}">
-      <div class="notif-center-item-icon">${n.icon}</div>
-      <div>
-        <div class="notif-center-item-title">${escapeHtml(n.title)}</div>
-        <div class="notif-center-item-body">${escapeHtml(n.body)}</div>
-        <div class="notif-center-item-time">${new Date(n.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
-      </div>
-    </div>
-  `).join('');
-  list.querySelectorAll('.notif-center-item').forEach(el => {
-    el.addEventListener('click', () => {
-      const n = staffNotifications.find(x => x.id === el.dataset.notifId);
-      $('notifCenterPanel').style.display = 'none';
-      if(n && n.onClick) n.onClick();
-    });
+  list.innerHTML = items.map(function(n){
+    var readCls = ncIsUnread(n) ? '' : ' is-read';
+    var bodyHtml = n.body ? ('<div class="notif-center-item-body">' + escapeHtml(n.body) + '</div>') : '';
+    return '<div class="notif-center-item' + readCls + '" data-notif-id="' + n.id + '">'
+      + '<span class="nc-dot"></span>'
+      + '<div class="notif-center-item-title">' + escapeHtml(n.title || '') + '</div>'
+      + bodyHtml
+      + '<div class="notif-center-item-time">' + ncRelTime(n.at || n.time || Date.now()) + '</div>'
+      + '</div>';
+  }).join('');
+  list.querySelectorAll('.notif-center-item').forEach(function(el){
+    el.addEventListener('click', function(){ ncOpenDetail(el.dataset.notifId); });
   });
+  ncPositionPanel();
+}
+
+// Opening an item marks it read and shows the reference's detail card. It
+// does NOT immediately run the item's onClick -- the reference puts a detail
+// view between the list and wherever the notification points, and jumping
+// straight there would make that view unreachable.
+function ncOpenDetail(id){
+  var n = (NC_ADAPTER.items() || []).find(function(x){ return String(x.id) === String(id); });
+  if(!n) return;
+  if(ncIsUnread(n)){
+    n.readAt = Date.now();
+    if(NC_ADAPTER.onRead) NC_ADAPTER.onRead(n);
+  }
+  ncDetailId = id;
+  ncRenderDetail();
+  if(NC_ADAPTER.refreshBadge) NC_ADAPTER.refreshBadge();
+}
+
+function ncRenderDetail(){
+  var list = document.getElementById('notifCenterList');
+  var detail = document.getElementById('ncDetail');
+  if(!detail) return;
+  var n = (NC_ADAPTER.items() || []).find(function(x){ return String(x.id) === String(ncDetailId); });
+  if(!n){ ncDetailId = null; ncRenderList(); return; }
+  if(list) list.style.display = 'none';
+  detail.style.display = 'block';
+  ncChrome(false);
+  var created = new Date(n.at || n.time || Date.now());
+  var createdLabel = created.toLocaleString([], { month:'long', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit' });
+  var bodyHtml = n.body ? ('<div class="nc-detail-body">' + escapeHtml(n.body) + '</div>') : '';
+  var goHtml = n.onClick
+    ? '<button type="button" class="nc-markall" id="ncGoBtn" style="margin-top:16px; background:var(--focus); color:#1A1206; justify-content:center; font-weight:700;">Open</button>'
+    : '';
+  detail.innerHTML = '<button type="button" class="nc-back" id="ncBackBtn">&#8592; All notifications</button>'
+    + '<div class="nc-detail-card">'
+    + '<div class="nc-detail-title">' + escapeHtml(n.title || '') + '</div>'
+    + '<div class="nc-detail-created">Created at: ' + escapeHtml(createdLabel) + '</div>'
+    + bodyHtml + goHtml
+    + '</div>';
+  var back = document.getElementById('ncBackBtn');
+  if(back) back.addEventListener('click', function(){ ncDetailId = null; ncRenderList(); });
+  var go = document.getElementById('ncGoBtn');
+  if(go) go.addEventListener('click', function(){
+    var panel = document.getElementById('notifCenterPanel');
+    if(panel) panel.style.display = 'none';
+    ncDetailId = null;
+    if(n.onClick) n.onClick();
+  });
+}
+
+
+// v642: keep the panel on screen. It is 380px wide and anchored right:0 to
+// its wrapper, and in the staff portal that wrapper sits near the LEFT edge
+// of the header -- measured at x=148, which put the panel's left edge at
+// -194px, i.e. 194px off-screen. Rather than hard-coding a side per portal
+// (they differ, and a header can be rearranged), this measures and nudges it
+// back inside whichever edge it overflows.
+function ncPositionPanel(){
+  var panel = document.getElementById('notifCenterPanel');
+  var wrap = document.querySelector('.notif-center-wrap');
+  if(!panel || !wrap) return;
+  if(getComputedStyle(panel).display === 'none') return;
+  var GUTTER = 12;
+  panel.style.right = '0px';
+  panel.style.left = 'auto';
+  var r = panel.getBoundingClientRect();
+  if(r.left < GUTTER){
+    panel.style.right = (r.left - GUTTER) + 'px';      // shift right
+  } else if(r.right > window.innerWidth - GUTTER){
+    panel.style.right = (r.right - window.innerWidth + GUTTER) + 'px'; // shift left
+  }
+}
+window.addEventListener('resize', ncPositionPanel);
+
+function ncMarkAllRead(){
+  (NC_ADAPTER.items() || []).forEach(function(n){ if(!n.readAt) n.readAt = Date.now(); });
+  if(NC_ADAPTER.onMarkAllRead) NC_ADAPTER.onMarkAllRead();
+  if(NC_ADAPTER.refreshBadge) NC_ADAPTER.refreshBadge();
+  ncRenderList();
+}
+
+(function ncWire(){
+  function on(id, ev, fn){ var el = document.getElementById(id); if(el) el.addEventListener(ev, fn); }
+  document.querySelectorAll('.nc-tab').forEach(function(b){
+    b.addEventListener('click', function(){ ncTab = b.dataset.ncTab; ncDetailId = null; ncRenderList(); });
+  });
+  on('ncUnreadSwitch', 'click', function(e){
+    e.preventDefault();
+    ncUnreadOnly = !ncUnreadOnly;
+    ncDetailId = null;
+    ncRenderList();
+  });
+  on('ncMoreBtn', 'click', function(e){
+    e.stopPropagation();
+    var m = document.getElementById('ncMoreMenu');
+    if(!m) return;
+    var open = m.style.display === 'none';
+    m.style.display = open ? 'block' : 'none';
+    e.currentTarget.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
+  on('ncMarkAllBtn', 'click', function(){
+    var m = document.getElementById('ncMoreMenu');
+    if(m) m.style.display = 'none';
+    ncMarkAllRead();
+  });
+  on('ncCloseBtn', 'click', function(){
+    var p = document.getElementById('notifCenterPanel');
+    if(p) p.style.display = 'none';
+    ncDetailId = null;
+    if(NC_ADAPTER.onClose) NC_ADAPTER.onClose();
+  });
+  // The overflow menu closes on any outside click, like every other menu here.
+  document.addEventListener('click', function(e){
+    var w = document.querySelector('.nc-more-wrap');
+    var m = document.getElementById('ncMoreMenu');
+    if(m && w && !w.contains(e.target)) m.style.display = 'none';
+  });
+})();
+
+// v642: now a thin delegate. Every existing caller (pushStaffNotification,
+// the realtime handlers, the bell wiring) still calls renderNotifCenter();
+// the panel itself is rendered by the shared ncRenderList() above.
+function renderNotifCenter(){
+  NC_ADAPTER.refreshBadge();
+  ncRenderList();
 }
 
 // A short three-note ascending chime — deliberately different from the chat
@@ -10302,7 +10677,9 @@ function initNotifCenter(){
     staffNotifOpen = panel.style.display === 'none';
     panel.style.display = staffNotifOpen ? 'block' : 'none';
     if(staffNotifOpen){
-      staffNotifUnread = 0;
+      // v642: NO LONGER zeroes the count. Unread is per item now, so opening
+      // the panel is not the same as having read anything in it -- that is
+      // what "Mark all as read" is for.
       renderNotifCenter();
     }
   });
