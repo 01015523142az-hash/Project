@@ -2664,6 +2664,11 @@
       <span class="back-link" id="backLink">← back to team</span>
       <div class="detail-header">
         <h2 id="detailName" class="mono" style="font-size:15px;"></h2>
+        <!-- v639: title + department, under the name. Hidden entirely when
+             somebody has not been categorised, rather than showing an empty
+             separator or the word "Unassigned" -- three accounts here (two
+             bots and one agent) legitimately have no department. -->
+        <div id="detailTitleDept" style="font-family:var(--sans); font-size:12px; color:var(--text-2); margin-top:2px; display:none;"></div>
       </div>
 
       <div class="card" id="detailAccountCard" style="margin-bottom:20px;">
@@ -8213,6 +8218,11 @@ let pollHandle = null;
 let myRole = null;
 let myUserId = null;
 let myFullName = '';
+// v639: this account's own title/department, loaded with the profile
+// below. Held separately from chatDirectory because the directory
+// deliberately excludes you -- chat_directory() filters p.id <> auth.uid().
+let myTitle = '';
+let myDepartment = '';
 let myEmail = '';
 let myAvatarUrl = null;
 let myChatStatus = 'offline';
@@ -8880,7 +8890,7 @@ async function handOverSessionToExtension(){
 }
 
 async function establishSession(user, { isNewLogin = true } = {}){
-  const { data: profile } = await sb.from('profiles').select('role, full_name, avatar_url, chat_status, chat_status_manual, must_change_password, password_changed_at').eq('id', user.id).single();
+  const { data: profile } = await sb.from('profiles').select('role, full_name, avatar_url, chat_status, chat_status_manual, must_change_password, password_changed_at, department, title, grade').eq('id', user.id).single();
   // v319: forced password rotation -- intercepted here, before any role/
   // permission loading or app reveal, on every call to establishSession(),
   // whether from a fresh sign-in or the boot script resuming an existing
@@ -8960,6 +8970,8 @@ async function establishSession(user, { isNewLogin = true } = {}){
   };
   myIsOwner = myRole === 'owner';
   myFullName = profile?.full_name || '';
+  myTitle = profile?.title || '';           // v639
+  myDepartment = profile?.department || ''; // v639
   myEmail = user.email;
   myUserId = user.id;
   myAvatarUrl = profile?.avatar_url || null;
@@ -9523,6 +9535,18 @@ function chatContactName(userId){
   const person = chatDirectory.find(p => p.id === userId) || chatGroupDirectory.find(p => p.id === userId);
   return (person && (person.full_name || person.email)) || 'Unknown user';
 }
+// v639: title + department, for the sender header in chat and the profile.
+// Returns '' rather than a placeholder when somebody has not been
+// categorised yet -- an empty subtitle reads as "no extra detail", where
+// "Unassigned" reads as a label somebody chose, and this portal has three
+// accounts (two bots and one real agent) with no department on purpose.
+function chatContactRole(userId){
+  const person = (userId === myUserId)
+    ? { title: myTitle, department: myDepartment }
+    : (chatDirectory.find(p => p.id === userId) || chatGroupDirectory.find(p => p.id === userId));
+  if(!person) return '';
+  return [person.title, person.department].filter(Boolean).join(' · ');
+}
 function chatContactAvatar(userId){
   if(userId === myUserId) return myAvatarUrl;
   const person = chatDirectory.find(p => p.id === userId) || chatGroupDirectory.find(p => p.id === userId);
@@ -9607,7 +9631,12 @@ function renderChatThreadHeaderStatus(key){
   // DM: key is the other user's id
   const st = chatContactStatus(key);
   const meta = chatStatusMeta(st);
+  // v639: title + department sit alongside presence, so you can see who you
+  // are actually writing to while you type -- "Offline" alone never told you
+  // whether this was a teammate or a department head.
+  const roleLine = chatContactRole(key);
   el.innerHTML = `<span class="chat-status-dot ${meta.dot}" style="width:7px;height:7px;display:inline-block;border-radius:50%;margin-right:5px;vertical-align:middle;"></span>${meta.label}`;
+  if(roleLine) el.innerHTML += `<span style="opacity:.75;"> · ${escapeHtml(roleLine)}</span>`;
   el.style.display = 'block';
 }
 // Whether the CURRENT signed-in account can post to Communication —
@@ -11801,9 +11830,14 @@ function chatMsgHeadHtml(name, role, detail){
   const label = role === 'client' ? (detail ? 'Client · ' + escapeHtml(detail) : 'Client')
     : role === 'ai' ? 'AI'
     : 'Staff';
+  // v639: for a colleague the badge carries their TITLE rather than the
+  // generic word "Staff" -- "Team Lead · Operations" tells you how to pitch
+  // a reply in a way that "Staff" never did. Falls back to 'Staff' for
+  // anyone not categorised yet, so nothing renders blank.
+  const staffDetail = (role === 'staff' && detail) ? escapeHtml(detail) : null;
   return `<div class="chat-msg-head">`
     + `<span class="chat-msg-head-name">${escapeHtml(name || 'Unknown')}</span>`
-    + `<span class="chat-role-badge ${role}">${label}</span>`
+    + `<span class="chat-role-badge ${role}">${staffDetail || label}</span>`
     + `</div>`;
 }
 
@@ -12135,7 +12169,7 @@ function renderChatThread(){
     const isSeq = chatIsSequential(prevSender, m.sender_id, atMs);
     prevSender = { key: m.sender_id, at: atMs };
     const headHtml = (!mine && !isSeq)
-      ? chatMsgHeadHtml(chatContactName(m.sender_id), 'staff', null)
+      ? chatMsgHeadHtml(chatContactName(m.sender_id), 'staff', chatContactRole(m.sender_id)) // v639
       : '';
     const time = new Date(m.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(teamChatTz ? { timeZone: teamChatTz } : {}) });
     if(chatEditingMessageId === m.id){
@@ -15127,7 +15161,7 @@ async function loadTeam(){
   // exceed the row cap on its own. Paginated for consistency with the rest
   // of Time Management; see fetchAllRows()'s own comment.
   const [agents, { data: minVersionRow }] = await Promise.all([
-    fetchAllRows((from, to) => sb.from('profiles').select('id, full_name, email, role, extension_version, extension_version_at, is_active').order('full_name').range(from, to)),
+    fetchAllRows((from, to) => sb.from('profiles').select('id, full_name, email, role, extension_version, extension_version_at, is_active, department, title, grade').order('full_name').range(from, to)),
     sb.from('app_settings').select('value').eq('key', 'min_extension_version').maybeSingle(),
   ]);
   const minVersion = (minVersionRow && minVersionRow.value && minVersionRow.value !== '0.0.0') ? minVersionRow.value : null;
@@ -16259,7 +16293,7 @@ async function loadUmUsersList(){
   // pass fixed elsewhere, so paginated for consistency/future-proofing;
   // see fetchAllRows()'s own comment.
   const [profiles, assignments, tasks, scheduleRows] = await Promise.all([
-    fetchAllRows((from, to) => sb.from('profiles').select('id, full_name, email, role, extension_version, extension_version_at, created_at, is_active').order('full_name').range(from, to)),
+    fetchAllRows((from, to) => sb.from('profiles').select('id, full_name, email, role, extension_version, extension_version_at, created_at, is_active, department, title, grade').order('full_name').range(from, to)),
     fetchAllRows((from, to) => sb.from('task_assignments').select('task_id, user_id').order('user_id', { ascending: true }).range(from, to)),
     fetchAllRows((from, to) => sb.from('tasks').select('id, name').order('id', { ascending: true }).range(from, to)),
     fetchAllRows((from, to) => sb.from('schedules').select('user_id, timezone').order('user_id', { ascending: true }).range(from, to)),
@@ -35017,11 +35051,19 @@ function renderSites(visits){
   });
 }
 
+function detailSetTitleDept(agent){
+  const el = $('detailTitleDept');
+  if(!el) return;
+  const line = [agent && agent.title, agent && agent.department].filter(Boolean).join(' · ');
+  el.textContent = line;
+  el.style.display = line ? 'block' : 'none';
+}
 async function openDetail(agent, { fromUsersTab = false } = {}){
   currentDetailAgent = agent;
   $('teamCard').style.display = 'none';
   $('detailPanel').style.display = 'block';
   $('detailName').textContent = agent.full_name || agent.email;
+  detailSetTitleDept(agent); // v639
   $('acctFullName').value = agent.full_name || '';
   await refreshAcctRoleOptions(agent.role);
   $('acctEmailInput').value = agent.email || '';
