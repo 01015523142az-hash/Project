@@ -2943,6 +2943,31 @@
         </div>
         <label>Email</label>
         <input type="email" id="acctEmailInput" placeholder="user@example.com">
+        <!-- v643: department / title / grade. GRADE IS A SEPARATE FIELD FROM
+             TITLE ON PURPOSE (see v639) -- permissions read grade and never
+             the title string, so renaming somebody's title cannot silently
+             change who they may chat with. The hint under Seniority says so,
+             because that is exactly the trap an admin would otherwise fall
+             into: setting the title to "Manager" and expecting reach. -->
+        <div class="modal-row" style="margin-top:4px;">
+          <div>
+            <label>Department</label>
+            <select id="acctDepartment"></select>
+          </div>
+          <div>
+            <label>Title</label>
+            <input type="text" id="acctTitle" placeholder="e.g. Quality Specialist">
+          </div>
+        </div>
+        <label>Seniority</label>
+        <select id="acctGrade">
+          <option value="">— not set —</option>
+          <option value="staff">Staff</option>
+          <option value="lead">Team Lead</option>
+          <option value="manager">Manager</option>
+          <option value="head">Head</option>
+        </select>
+        <div class="field-hint">Seniority is what controls chat reach, not the title. Leads, Managers and Heads can start a conversation with anyone; Staff are limited to their own department.</div>
         <button class="btn-primary" id="acctSaveBtn" style="margin-top:12px;">Save changes</button>
         <div class="msg" id="acctMsg"></div>
 
@@ -7093,6 +7118,30 @@
       </div>
       <label>Email</label>
       <input type="email" id="newUserEmail" placeholder="user@example.com" autocomplete="off">
+      <!-- v643: same three fields as the Account panel, so a new account is
+           categorised at creation rather than being invisible in chat until
+           somebody remembers to go back and edit it. All three are optional
+           -- an uncategorised account still works, it just falls back to the
+           old "reachable by anyone" behaviour. -->
+      <div class="modal-row">
+        <div>
+          <label>Department</label>
+          <select id="newUserDepartment"></select>
+        </div>
+        <div>
+          <label>Title</label>
+          <input type="text" id="newUserTitle" placeholder="e.g. Quality Specialist">
+        </div>
+      </div>
+      <label>Seniority</label>
+      <select id="newUserGrade">
+        <option value="">— not set —</option>
+        <option value="staff" selected>Staff</option>
+        <option value="lead">Team Lead</option>
+        <option value="manager">Manager</option>
+        <option value="head">Head</option>
+      </select>
+      <div class="field-hint">Seniority is what controls chat reach, not the title. Leads, Managers and Heads can start a conversation with anyone; Staff are limited to their own department.</div>
       <label>Temporary password</label>
       <div style="display:flex; gap:8px; align-items:flex-start;">
         <input type="text" id="newUserPassword" placeholder="At least 8 characters" autocomplete="new-password" style="flex:1;">
@@ -7114,6 +7163,11 @@
         <span>Email: <b id="addUserSuccessEmail" style="color:var(--text);"></b></span>
         <span>Password: <b id="addUserSuccessPassword" style="color:var(--text);"></b></span>
       </div>
+      <!-- v643: only appears if the account was created but categorising it
+           failed. The account exists at that point, so this must not read as
+           a failure -- it tells the admin what is missing and where to
+           finish it, instead of prompting a duplicate account. -->
+      <div class="msg error" id="addUserOrgWarning" style="display:none;"></div>
       <div class="modal-actions">
         <button class="btn-secondary" id="addUserCopyBtn">Copy credentials</button>
         <button class="btn-primary" id="addUserDoneBtn" style="margin-top:0;">Done</button>
@@ -35633,6 +35687,9 @@ async function openDetail(agent, { fromUsersTab = false } = {}){
   $('acctFullName').value = agent.full_name || '';
   await refreshAcctRoleOptions(agent.role);
   $('acctEmailInput').value = agent.email || '';
+  $('acctTitle').value = agent.title || '';           // v643
+  $('acctGrade').value = agent.grade || '';           // v643
+  await fillDepartmentSelect('acctDepartment', agent.department); // v643
   $('acctNewPassword').value = '';
   $('acctMsg').textContent = '';
   $('acctPasswordMsg').textContent = '';
@@ -35648,7 +35705,8 @@ async function openDetail(agent, { fromUsersTab = false } = {}){
   // (fromUsersTab === true), regardless of the viewer's canManageUsers
   // permission. Owner/Admin included: review here, edit there.
   const canEdit = fromUsersTab && myPermissions.canManageUsers;
-  ['acctFullName', 'acctRole', 'acctEmailInput', 'acctSaveBtn', 'acctNewPassword', 'acctSetPasswordBtn', 'acctDeleteBtn', 'acctToggleActiveBtn'].forEach(id => {
+  ['acctFullName', 'acctRole', 'acctEmailInput', 'acctSaveBtn', 'acctNewPassword', 'acctSetPasswordBtn', 'acctDeleteBtn', 'acctToggleActiveBtn',
+   'acctDepartment', 'acctTitle', 'acctGrade'].forEach(id => { // v643
     $(id).disabled = !canEdit;
   });
   // The Owner's role can never change through this tool (see
@@ -37211,6 +37269,52 @@ function generatePassword(){
   return out;
 }
 
+// ---------- v643: department / title / grade ----------
+// Departments come from the staff_departments table rather than a list in
+// this file, and profiles.department has a FOREIGN KEY to it. That is not
+// bureaucracy: the v639 chat rules compare department strings for EXACT
+// EQUALITY and name 'Sales', 'Quality', 'Human Resources' and 'Operations'
+// literally, so a free-text field would let a typo ("operations", "Ops")
+// silently cut somebody off from their own department with no error
+// anywhere. A dropdown fed by the table cannot produce a value the rules
+// do not recognise, and adding a department is an INSERT, not a deploy.
+var staffDepartments = null;
+async function loadStaffDepartments(){
+  if(staffDepartments) return staffDepartments;
+  const { data, error } = await sb.from('staff_departments').select('name, sort_order').order('sort_order').order('name');
+  if(error){ console.error('loadStaffDepartments failed', error); return []; }
+  staffDepartments = data || [];
+  return staffDepartments;
+}
+async function fillDepartmentSelect(selectId, current){
+  const sel = $(selectId);
+  if(!sel) return;
+  const rows = await loadStaffDepartments();
+  // The blank option is real and must stay: the two bot accounts (AI
+  // Assistant, Desouky) legitimately have no department, and an
+  // uncategorised account is a supported state that fails OPEN in the chat
+  // rules rather than isolating somebody nobody has got to yet.
+  sel.innerHTML = '<option value="">&mdash; not set &mdash;</option>'
+    + rows.map(r => `<option value="${escapeHtml(r.name)}">${escapeHtml(r.name)}</option>`).join('');
+  sel.value = current || '';
+}
+
+// Writes department/title/grade. Deliberately NOT part of manage-user's
+// update_profile: profiles' only UPDATE policy is "self update", so the
+// browser cannot write another person's row at all, and a blanket admin
+// UPDATE policy would also expose profiles.role — which manage-user guards
+// server-side (Owner is never mintable, Admin is Owner-only). This RPC
+// touches exactly three columns and can never escalate a role.
+async function saveStaffOrgInfo(userId, department, title, grade){
+  const { error } = await sb.rpc('set_staff_org_info', {
+    target: userId,
+    p_department: department || null,
+    p_title: title || null,
+    p_grade: grade || null
+  });
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
 // v240: selectId defaults to the Add User modal's own select, but Candidate
 // Review's approve-and-create-account modal reuses this exact same
 // role-listing logic against its own select (hrApproveRole) rather than
@@ -37238,6 +37342,9 @@ async function openAddUserModal(){
   $('newUserFullName').value = '';
   $('newUserEmail').value = '';
   await refreshAddUserRoleOptions();
+  $('newUserTitle').value = '';
+  $('newUserGrade').value = 'staff';
+  await fillDepartmentSelect('newUserDepartment', '');
   $('newUserPassword').value = generatePassword();
   $('addUserMsg').textContent = '';
   $('addUserFormView').style.display = 'block';
@@ -37260,6 +37367,9 @@ $('addUserCreateBtn').addEventListener('click', async () => {
   const email = $('newUserEmail').value.trim();
   const role = $('newUserRole').value;
   const password = $('newUserPassword').value;
+  const department = $('newUserDepartment').value;
+  const title = $('newUserTitle').value.trim();
+  const grade = $('newUserGrade').value;
 
   if(!email){ msg.textContent = 'Email is required.'; return; }
   if(!password || password.length < 8){ msg.textContent = 'Password must be at least 8 characters.'; return; }
@@ -37273,7 +37383,20 @@ $('addUserCreateBtn').addEventListener('click', async () => {
     return;
   }
 
-  logActivity('user.create', 'agent', result.userId, `Created ${role} account for ${email}${full_name ? ' ('+full_name+')' : ''}`);
+  // The account EXISTS from here on. If categorising it fails, that is a
+  // partial success, not a failure -- saying "Failed to create user" would
+  // send the admin round to create a duplicate. Say what actually happened
+  // and where to finish it.
+  let orgWarning = '';
+  if(department || title || grade){
+    const org = await saveStaffOrgInfo(result.userId, department, title, grade);
+    if(!org.ok){
+      orgWarning = ` Account created, but the department/title could not be saved (${org.error}). Set them from User Management > Users.`;
+      console.error('set_staff_org_info failed after create_user', org.error);
+    }
+  }
+
+  logActivity('user.create', 'agent', result.userId, `Created ${role} account for ${email}${full_name ? ' ('+full_name+')' : ''}${department || title ? ` — ${[title, department].filter(Boolean).join(' · ')}` : ''}`);
   loadTeam();
   // Also refresh the User Management > Users list if that's the panel the
   // button was opened from, so the new account shows up there right away
@@ -37282,6 +37405,8 @@ $('addUserCreateBtn').addEventListener('click', async () => {
 
   $('addUserSuccessEmail').textContent = email;
   $('addUserSuccessPassword').textContent = password;
+  $('addUserOrgWarning').textContent = orgWarning;
+  $('addUserOrgWarning').style.display = orgWarning ? 'block' : 'none';
   $('addUserFormView').style.display = 'none';
   $('addUserSuccessView').style.display = 'block';
 });
@@ -38037,19 +38162,41 @@ $('acctSaveBtn').addEventListener('click', async () => {
     msg.className = 'msg error';
     return;
   }
-  msg.textContent = 'Saved.';
-  msg.className = 'msg ok';
+
+  // v643: department/title/grade go through their own RPC, because profiles
+  // UPDATE is self-only and manage-user does not own these columns. Reported
+  // separately and honestly -- name/role/email are already saved by now, so
+  // a failure here is "some of it saved", not "nothing saved".
+  const department = $('acctDepartment').value;
+  const title = $('acctTitle').value.trim();
+  const grade = $('acctGrade').value;
+  const org = await saveStaffOrgInfo(currentDetailAgent.id, department, title, grade);
+  if(!org.ok){
+    msg.textContent = `Name, user type and email were saved, but the department/title was not: ${org.error}`;
+    msg.className = 'msg error';
+  }else{
+    msg.textContent = 'Saved.';
+    msg.className = 'msg ok';
+    currentDetailAgent.department = department || null;
+    currentDetailAgent.title = title || null;
+    currentDetailAgent.grade = grade || null;
+    detailSetTitleDept(currentDetailAgent); // refresh the line under the name
+  }
+
   const wasRole = currentDetailAgent.role;
   currentDetailAgent.full_name = full_name;
   currentDetailAgent.role = role;
   currentDetailAgent.email = email;
   $('detailName').textContent = full_name || currentDetailAgent.email;
-  logActivity('user.update', 'agent', currentDetailAgent.id, `Updated ${email} — name: "${full_name}", role: ${role}`);
+  logActivity('user.update', 'agent', currentDetailAgent.id, `Updated ${email} — name: "${full_name}", role: ${role}, ${[title, department, grade].filter(Boolean).join(' · ') || 'uncategorised'}`);
   if(role !== wasRole && PROTECTED_ROLES.has(role)){
     // promoted out of the agent list — nothing left here to manage
     $('backLink').click();
   }
   loadTeam();
+  // v643: the Users list has Title and Department columns, so it is stale
+  // the moment either changes here.
+  if(typeof umActiveSection !== 'undefined' && umActiveSection === 'users') loadUmUsersList();
 });
 
 $('acctSetPasswordBtn').addEventListener('click', async () => {
