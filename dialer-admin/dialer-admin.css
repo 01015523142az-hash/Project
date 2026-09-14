@@ -236,3 +236,44 @@
 #daHost #tab-floor.da-wall td{font-size:17px;padding:14px}
 #daHost #tab-floor.da-wall .panel h2{font-size:18px}
 #daHost #tab-floor.da-wall p.hint{display:none}
+
+/* ---- v688: floor map --------------------------------------------------------- */
+#daHost .fm{display:grid;grid-template-columns:1fr 250px;gap:14px;align-items:start}
+@media (max-width: 900px){ #daHost .fm{grid-template-columns:1fr} }
+#daHost .fm-canvas{position:relative;height:480px;overflow:auto;border:1px solid var(--border);border-radius:10px;
+  background-color:var(--inset);background-image:radial-gradient(var(--border-light) 1px,transparent 1px);background-size:20px 20px}
+#daHost .fm-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:20px;
+  text-align:center;color:var(--text-dim);font-size:13px}
+#daHost .fm-tile{position:absolute;width:150px;height:64px;box-sizing:border-box;padding:6px 8px;border-radius:6px;
+  background:var(--card);border:1.5px solid var(--border-light);color:var(--text);font-size:11px;line-height:1.3;
+  box-shadow:0 1px 3px rgba(0,0,0,.25);user-select:none;touch-action:none}
+#daHost .fm-tile.movable{cursor:grab}
+#daHost .fm-tile.dragging{cursor:grabbing;z-index:5;box-shadow:0 8px 20px rgba(0,0,0,.4)}
+#daHost .fm-top{font-size:9.5px;color:var(--text-dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:14px}
+#daHost .fm-name{font-weight:700;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#daHost .fm-st{display:flex;justify-content:space-between;gap:6px;font-size:10.5px;white-space:nowrap}
+#daHost .fm-st span:first-child{overflow:hidden;text-overflow:ellipsis}
+#daHost .fm-timer{font-family:var(--mono);font-variant-numeric:tabular-nums;opacity:.85}
+#daHost .fm-x{position:absolute;top:2px;right:3px;padding:0 4px;border:0;background:none;color:inherit;
+  opacity:0;font-size:13px;line-height:1;cursor:pointer}
+#daHost .fm-tile:hover .fm-x{opacity:.75}
+#daHost .fm-pop{position:absolute;z-index:6;min-width:190px;max-width:250px;padding:9px 11px;border-radius:8px;
+  background:var(--card);border:1px solid var(--border-light);box-shadow:0 10px 30px rgba(0,0,0,.4);
+  font-size:12px;line-height:1.55;pointer-events:none}
+#daHost .fm-side{border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--card)}
+#daHost .fm-side input:not([type=checkbox]),#daHost .fm-side select{width:100%;box-sizing:border-box;margin-bottom:10px}
+#daHost .fm-lbl{font-weight:700;font-size:12px;margin-bottom:5px}
+#daHost .fm-row{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:12px;font-weight:700;margin-bottom:10px}
+#daHost .fm-leg{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-2);padding:3px 0}
+#daHost .fm-sw{width:14px;height:14px;border-radius:3px;border:1.5px solid var(--border-light);background:var(--card);flex:0 0 auto;box-sizing:border-box}
+/* The states. Tiles and legend swatches share these rules, so the legend cannot drift from the map. */
+#daHost .fms-off{background:var(--inset);border-style:dashed;color:var(--text-dim)}
+#daHost .fms-ready{border-color:var(--focus)}
+#daHost .fms-call{background:var(--focus);border-color:var(--focus);color:#fff}
+#daHost .fms-call .fm-top{color:rgba(255,255,255,.8)}
+#daHost .fms-wrap{background:color-mix(in srgb,var(--focus) 22%,var(--card));border-color:var(--focus)}
+#daHost .fms-prep{border-color:var(--text-dim)}
+#daHost .fms-paused{background:color-mix(in srgb,var(--away) 18%,var(--card));border-color:var(--away)}
+#daHost .fms-alert1{border-color:var(--danger);box-shadow:0 0 0 1px var(--danger)}
+#daHost .fms-alert2{background:color-mix(in srgb,var(--danger) 26%,var(--card));border-color:var(--danger)}
+#daHost #tab-floor.da-wall .fm-canvas{height:62vh}

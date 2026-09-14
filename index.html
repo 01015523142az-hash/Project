@@ -2790,7 +2790,7 @@
         <button class="da-subtab-btn" data-da-section="overview" style="display:none">Overview</button>
         <button class="da-subtab-btn" data-da-section="campaigns" style="display:none">Campaigns</button>
         <button class="da-subtab-btn" data-da-section="conversations" style="display:none">Conversations</button>
-        <button class="da-subtab-btn" data-da-section="numbers" style="display:none">Numbers</button>
+        <button class="da-subtab-btn" data-da-section="numbers" style="display:none">DIDs &amp; Research Calls</button>
         <button class="da-subtab-btn" data-da-section="team" style="display:none">Team &amp; settings</button>
       </div>
     </div>
@@ -40194,7 +40194,7 @@ const DIALER_ADMIN_SECTIONS = [
   { key: 'overview', label: 'Overview (live floor, performance, pipeline)', editable: true },
   { key: 'campaigns', label: 'Campaigns (campaigns, lists, inbound queues)', editable: true },
   { key: 'conversations', label: 'Conversations (inbox, contacts, call log)', editable: true },
-  { key: 'numbers', label: 'Numbers (numbers, research & DNC)', editable: true },
+  { key: 'numbers', label: 'DIDs & Research Calls (numbers, research & DNC)', editable: true },
   { key: 'team', label: 'Team & settings (statuses, availability, settings, change history)', editable: true },
 ];
 // Pre-v676 links name a section; map them to the group that now holds it.
@@ -40231,7 +40231,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '680'; // 680: dialer campaigns no longer carry a client (679: Edit fix, list download, coverage planner, autopilot, voicemail)
+const DIALER_ADMIN_VERSION = '688'; // 688: Live floor shows a floor map instead of the "Who is on shift" table
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"

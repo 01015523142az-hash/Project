@@ -199,9 +199,11 @@ function startFloorTimer(now) {
   stopFloorTimer();
   if (now) loadFloor();
   floorTimer = setInterval(() => { if (!document.hidden) loadFloor(); }, 15000);
+  fmStartTick();   // v688: the floor map's per-second status timers
 }
 function stopFloorTimer() {
   if (floorTimer) { clearInterval(floorTimer); floorTimer = null; }
+  if (fmTick) { clearInterval(fmTick); fmTick = null; }
 }
 
 async function loadFloor() {
@@ -234,7 +236,7 @@ async function loadFloor() {
   kpi('kReply', cvRows.filter((r) => r.last_direction === 'inbound').length,
     cvRows.some((r) => r.last_direction === 'inbound') ? 'warn' : '');
 
-  await Promise.all([loadShift(), loadWaiting()]);
+  await Promise.all([loadFloorMap(ss), loadWaiting()]);
   const waiting = $('waitingRows').querySelectorAll('tr td[class="mono"]').length;
   kpi('kWaiting', waiting, waiting ? 'bad' : '');
   $('floorUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -2906,7 +2908,6 @@ async function loadStatusEditor() {
   </tr>`).join('') || '<tr><td colspan="5">No statuses defined.</td></tr>';
 
   $('statusSave').disabled = !canManage;
-  loadShift();
 }
 
 $('statusSave').onclick = async () => {
@@ -2948,26 +2949,240 @@ $('statusSave').onclick = async () => {
 //
 // A stale heartbeat inside that window still means a crashed tab rather than
 // a logout, so it is flagged rather than hidden.
-async function loadShift() {
-  const { data, error } = await sb.rpc('dialer_live_floor');
+// ---------------------------------------------------------- v688: floor map --
+// Replaces the "Who is on shift" table: every dialer agent sits where a
+// manager put them, coloured by what they are doing now (the ReadyMode floor
+// map). The layout -- floor name and each agent's spot -- is ONE
+// dialer_settings row, 'floor_map', so every screen shows the same map.
+// "Managing"/"Managed" from ReadyMode's legend are left out: nothing in this
+// dialer lets a supervisor listen in, so those states could never occur.
+const FM_STATES = [
+  ['off', 'Offline — not signed in'],
+  ['ready', 'Ready — waiting for a call'],
+  ['call', 'On a call'],
+  ['wrap', 'Wrap-up'],
+  ['prep', 'Preparation — prep work or a lead'],
+  ['paused', 'Paused — break, meeting, coaching'],
+  ['alert1', 'Alert — 15+ minutes in a paused or prep status'],
+  ['alert2', 'Alert — no heartbeat (tab closed or crashed)'],
+];
+const FM_ALERT_MIN = { prep: 15, paused: 15 };
+const FM_TILE_W = 150, FM_TILE_H = 64, FM_GRID = 10;
+let fmLayout = { name: 'Office floor', spots: {} };
+let fmRoster = [];          // { id, name, role }
+let fmRosterAt = 0;
+let fmLive = {};            // agent_id -> { state, label, since, queue, heartbeat }
+let fmDragging = null;
+let fmSaveTimer = null;
+let fmTick = null;
+
+const fmPreviewOn = () => lsGet('da.fm.preview') !== '0';
+const fmRoleLabel = (r) => (r ? r.charAt(0).toUpperCase() + r.slice(1) : 'Agent');
+function fmDur(since) {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1000));
+  if (s >= 3600) return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m`;
+  return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+function fmStartTick() {
+  if (fmTick) clearInterval(fmTick);
+  fmTick = setInterval(() => {
+    document.querySelectorAll('#fmCanvas [data-since]').forEach((el) => { el.textContent = fmDur(el.dataset.since); });
+  }, 1000);
+}
+
+// A pending save wins over a re-read, or a refresh mid-drag would snap a tile back.
+async function fmLoadLayout() {
+  if (fmSaveTimer || fmDragging) return;
+  const { data } = await sb.from('dialer_settings').select('value').eq('key', 'floor_map').maybeSingle();
+  const v = data?.value || {};
+  fmLayout = { name: v.name || 'Office floor', spots: v.spots && typeof v.spots === 'object' ? v.spots : {} };
+}
+async function fmLoadRoster() {
+  if (fmRoster.length && Date.now() - fmRosterAt < 300000) return;
+  const [{ data: roles }, { data: people }] = await Promise.all([
+    sb.from('roles').select('name, can_use_dialer'),
+    sb.from('profiles').select('id, full_name, role').order('full_name'),
+  ]);
+  const dialerRoles = new Set((roles || []).filter((r) => r.can_use_dialer).map((r) => r.name));
+  fmRoster = (people || []).filter((p) => dialerRoles.has(p.role))
+    .map((p) => ({ id: p.id, name: p.full_name || 'Agent', role: p.role || '' }));
+  fmRosterAt = Date.now();
+}
+
+function fmClassify(r, sessionStatus) {
+  if (r.is_stale) return 'alert2';
+  let base;
+  if (sessionStatus === 'on_call') base = 'call';
+  else if (sessionStatus === 'wrap_up') base = 'wrap';
+  else if (r.agent_status === 'ready' || r.agent_status === 'inbound_only') base = 'ready';
+  else if (r.agent_status === 'prep_work' || r.agent_status === 'lead') base = 'prep';
+  else base = 'paused';
+  if (FM_ALERT_MIN[base] && (r.seconds_in_state || 0) >= FM_ALERT_MIN[base] * 60) return 'alert1';
+  return base;
+}
+
+async function loadFloorMap(sessions) {
+  const [{ data, error }] = await Promise.all([sb.rpc('dialer_live_floor'), fmLoadLayout(), fmLoadRoster()]);
   if (error) {
-    $('shiftRows').innerHTML =
-      `<tr><td colspan="4">Could not load the floor: ${esc(error.message)}</td></tr>`;
+    $('fmCanvas').innerHTML = `<div class="fm-empty">Could not load the floor: ${esc(error.message)}</div>`;
     return;
   }
-  const rows = data || [];
-  if (!rows.length) {
-    $('shiftRows').innerHTML = '<tr><td colspan="4">Nobody on the floor.</td></tr>'; return;
-  }
-
-  $('shiftRows').innerHTML = rows.map((r) => `<tr>
-      <td>${esc(r.agent_name || r.agent_id)}${r.is_stale
-          ? ' <span class="tag t-resting">no heartbeat</span>' : ''}</td>
-      <td>${esc(r.status_label || r.agent_status || '—')}</td>
-      <td>${esc(r.campaign_name || '—')}</td>
-      <td>${r.seconds_in_state === null ? '—' : Math.floor(r.seconds_in_state / 60) + 'm'}</td>
-    </tr>`).join('');
+  // An agent can have two tabs open; a call on either one is what counts.
+  const sess = {};
+  (sessions || []).forEach((s) => { if (!sess[s.agent_id] || s.status === 'on_call') sess[s.agent_id] = s.status; });
+  fmLive = {};
+  (data || []).forEach((r) => {
+    if (fmLive[r.agent_id]) return;   // the RPC lists the freshest session first
+    const state = fmClassify(r, sess[r.agent_id]);
+    fmLive[r.agent_id] = {
+      state,
+      label: state === 'call' ? 'On a call' : state === 'wrap' ? 'Wrap-up'
+        : state === 'alert2' ? 'No heartbeat' : (r.status_label || r.agent_status || 'Signed in'),
+      since: r.since, queue: r.campaign_name, heartbeat: r.heartbeat_age_seconds,
+    };
+    if (!fmRoster.some((p) => p.id === r.agent_id)) {
+      fmRoster.push({ id: r.agent_id, name: r.agent_name || 'Agent', role: '' });
+    }
+  });
+  if (document.activeElement !== $('fmName')) $('fmName').value = fmLayout.name;
+  fmRender();
 }
+
+function fmTileHtml(p) {
+  const spot = fmLayout.spots[p.id];
+  const L = fmLive[p.id];
+  const st = L ? L.state : 'off';
+  return `<div class="fm-tile fms-${st}${canManage ? ' movable' : ''}" data-agent="${esc(p.id)}"
+      style="left:${Number(spot.x) || 0}px;top:${Number(spot.y) || 0}px">
+    <div class="fm-top">${esc((L && L.queue) || fmRoleLabel(p.role))}</div>
+    <div class="fm-name">${esc(p.name)}</div>
+    <div class="fm-st"><span>${esc(L ? L.label : 'Offline')}</span>${L && L.since
+      ? `<span class="fm-timer" data-since="${esc(L.since)}" title="Time in this status">${fmDur(L.since)}</span>` : ''}</div>
+    ${canManage ? '<button type="button" class="fm-x" data-fmx="1" title="Take off the map">×</button>' : ''}
+  </div>`;
+}
+
+function fmRender() {
+  const canvas = $('fmCanvas');
+  if (!canvas || fmDragging) return;
+  $('fmTitle').textContent = `Floor map — ${fmLayout.name}`;
+  const placed = fmRoster.filter((p) => fmLayout.spots[p.id]);
+  canvas.innerHTML = placed.map(fmTileHtml).join('')
+    + (placed.length ? '' : `<div class="fm-empty">${canManage
+      ? 'Nobody is on this map yet. Pick an agent on the right, then drag them to where they sit.'
+      : 'Nobody has been placed on this map yet.'}</div>`)
+    + '<div class="fm-pop hide" id="fmPop"></div>';
+  fmWire(canvas);
+
+  const un = fmRoster.filter((p) => !fmLayout.spots[p.id]);
+  const unLive = un.filter((p) => fmLive[p.id]).length;
+  $('fmUnCount').textContent = `${un.length} agent${un.length === 1 ? ' is' : 's are'} not on this map`
+    + (unLive ? ` (${unLive} on shift now)` : '') + ':';
+  $('fmPick').innerHTML = '<option value="">Pick one</option>' + un.map((p) =>
+    `<option value="${esc(p.id)}">${esc(p.name)}${fmLive[p.id] ? ' — on shift' : ''}</option>`).join('');
+  $('fmPick').disabled = !canManage;
+  show($('fmUnassigned'), un.length > 0);
+}
+
+function fmWire(canvas) {
+  canvas.querySelectorAll('.fm-tile').forEach((t) => {
+    const id = t.dataset.agent;
+    t.addEventListener('mouseenter', () => fmShowPop(t, id));
+    t.addEventListener('mouseleave', () => show($('fmPop'), false));
+    const x = t.querySelector('[data-fmx]');
+    if (x) x.onclick = (e) => { e.stopPropagation(); delete fmLayout.spots[id]; fmSave(); fmRender(); };
+    if (!canManage) return;
+    t.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || e.target.closest('[data-fmx]')) return;
+      e.preventDefault();
+      show($('fmPop'), false);
+      const r = t.getBoundingClientRect();
+      fmDragging = { t, dx: e.clientX - r.left, dy: e.clientY - r.top };
+      t.setPointerCapture(e.pointerId);
+      t.classList.add('dragging');
+    });
+    t.addEventListener('pointermove', (e) => {
+      if (!fmDragging || fmDragging.t !== t) return;
+      const c = canvas.getBoundingClientRect();
+      const nx = e.clientX - c.left + canvas.scrollLeft - fmDragging.dx;
+      const ny = e.clientY - c.top + canvas.scrollTop - fmDragging.dy;
+      t.style.left = Math.max(0, Math.min(canvas.clientWidth - FM_TILE_W, nx)) + 'px';
+      t.style.top = Math.max(0, Math.min(Math.max(canvas.clientHeight, canvas.scrollHeight) - FM_TILE_H, ny)) + 'px';
+    });
+    const drop = () => {
+      if (!fmDragging || fmDragging.t !== t) return;
+      const snap = (v) => Math.round(parseFloat(v) / FM_GRID) * FM_GRID;
+      fmLayout.spots[id] = { x: snap(t.style.left), y: snap(t.style.top) };
+      t.style.left = fmLayout.spots[id].x + 'px';
+      t.style.top = fmLayout.spots[id].y + 'px';
+      t.classList.remove('dragging');
+      fmDragging = null;
+      fmSave();
+    };
+    t.addEventListener('pointerup', drop);
+    t.addEventListener('pointercancel', drop);
+  });
+}
+
+function fmShowPop(t, id) {
+  if (!fmPreviewOn() || fmDragging) return;
+  const p = fmRoster.find((x) => x.id === id) || {};
+  const L = fmLive[id];
+  const pop = $('fmPop');
+  pop.innerHTML = `<b>${esc(p.name || 'Agent')}</b> <span class="muted">${esc(fmRoleLabel(p.role))}</span>
+    <div>${esc(L ? L.label : 'Offline')}${L && L.since
+      ? ` · since ${esc(new Date(L.since).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }))}` : ''}</div>
+    ${L && L.queue ? `<div>Queue: ${esc(L.queue)}</div>` : ''}
+    ${L ? `<div class="muted">Last heartbeat ${Number(L.heartbeat) || 0}s ago</div>` : ''}
+    <div class="muted">${esc((FM_STATES.find((s) => s[0] === (L ? L.state : 'off')) || [])[1] || '')}</div>`;
+  const left = t.offsetLeft + FM_TILE_W + 8;
+  pop.style.left = (left + 250 > $('fmCanvas').scrollWidth ? Math.max(0, t.offsetLeft - 258) : left) + 'px';
+  pop.style.top = t.offsetTop + 'px';
+  show(pop, true);
+}
+
+// First free cell in a grid, left to right, for an agent picked from the list.
+function fmFreeSpot() {
+  const cols = Math.max(1, Math.floor(($('fmCanvas').clientWidth - 20) / (FM_TILE_W + 20)));
+  const taken = Object.values(fmLayout.spots);
+  for (let i = 0; i < 300; i++) {
+    const x = 20 + (i % cols) * (FM_TILE_W + 20);
+    const y = 20 + Math.floor(i / cols) * (FM_TILE_H + 20);
+    if (!taken.some((s) => Math.abs(s.x - x) < FM_TILE_W && Math.abs(s.y - y) < FM_TILE_H)) return { x, y };
+  }
+  return { x: 20, y: 20 };
+}
+
+function fmSave() {
+  if (!canManage) return;
+  clearTimeout(fmSaveTimer);
+  fmSaveTimer = setTimeout(async () => {
+    const { error } = await sb.from('dialer_settings').upsert({
+      key: 'floor_map', value: { name: fmLayout.name, spots: fmLayout.spots },
+      updated_by: meId, updated_at: new Date().toISOString(),
+    });
+    fmSaveTimer = null;
+    $('fmMsg').textContent = error ? `Not saved: ${error.message}` : '';
+  }, 700);
+}
+
+$('fmLegend').innerHTML = FM_STATES.map(([k, label]) =>
+  `<div class="fm-leg"><span class="fm-sw fms-${k}"></span>${esc(label)}</div>`).join('');
+$('fmPreview').checked = fmPreviewOn();
+$('fmPreview').onchange = () => lsSet('da.fm.preview', $('fmPreview').checked ? '1' : '0');
+$('fmPick').onchange = () => {
+  const id = $('fmPick').value;
+  if (!id || !canManage) return;
+  fmLayout.spots[id] = fmFreeSpot();
+  fmSave();
+  fmRender();
+};
+$('fmName').onchange = () => {
+  if (!canManage) { $('fmName').value = fmLayout.name; return; }
+  fmLayout.name = $('fmName').value.trim().slice(0, 60) || 'Office floor';
+  $('fmTitle').textContent = `Floor map — ${fmLayout.name}`;
+  fmSave();
+};
 
 $('cCreate').onclick = async () => {
   const name = $('cName').value.trim();

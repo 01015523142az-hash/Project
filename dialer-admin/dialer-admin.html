@@ -24,14 +24,25 @@
       <span class="da-wall-clock" id="floorClock"></span>
       <button id="floorWall" class="sm">Wall screen</button>
     </div>
+    <!-- v688: the floor map (ReadyMode-style) replaces "Who is on shift". -->
     <div class="panel">
-      <h2>Who is on shift</h2>
-      <p class="hint">Live sessions, newest first — what each agent is set to right now.</p>
-      <div class="scroll">
-        <table>
-          <thead><tr><th>Agent</th><th>Status</th><th>Queue</th><th>Since</th></tr></thead>
-          <tbody id="shiftRows"><tr><td colspan="4">Loading…</td></tr></tbody>
-        </table>
+      <h2 id="fmTitle">Floor map</h2>
+      <p class="hint">Every agent where they sit, coloured by what they are doing right now.
+        Managers drag a tile to move it, or take it off the map with its ×.</p>
+      <div class="fm">
+        <div class="fm-canvas" id="fmCanvas"><div class="fm-empty">Loading…</div></div>
+        <aside class="fm-side">
+          <label class="fm-lbl" for="fmName">Floor name</label>
+          <input id="fmName" maxlength="60" placeholder="Office floor">
+          <label class="fm-row"><span>Preview profile on mouseover</span><input type="checkbox" id="fmPreview"></label>
+          <div id="fmUnassigned">
+            <div class="fm-lbl" id="fmUnCount"></div>
+            <select id="fmPick"><option value="">Pick one</option></select>
+          </div>
+          <div class="fm-lbl" style="margin-top:12px">Floor map status</div>
+          <div id="fmLegend"></div>
+          <div class="hint" id="fmMsg" style="margin:8px 0 0"></div>
+        </aside>
       </div>
     </div>
     <div class="panel">
