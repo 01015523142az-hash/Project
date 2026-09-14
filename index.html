@@ -11643,7 +11643,7 @@ function staffNotifKindAllowed(kind){
 // dialer follow-up coming due is the first -- so unread ones load at sign-in
 // and new ones arrive over realtime. Opening or clearing one marks it read,
 // so it does not come back at the next sign-in.
-const STAFF_NOTIF_KIND_ICONS = { dialer_follow_up: '📞', missed_call: '📞', dialer_handoff: '🤝', dialer_appointment: '📅', dialer_task: '✅', client_chat_queue: '💬' };
+const STAFF_NOTIF_KIND_ICONS = { dialer_follow_up: '📞', missed_call: '📞', dialer_handoff: '🤝', dialer_appointment: '📅', dialer_task: '✅', client_chat_queue: '💬', leads_import: '📥' };
 // v700: the kinds that need the person to act go to the Priority tab -- the
 // same set the dialer's bell uses (staff-shell.js KIND), plus a missed call
 // (written by the voice_calls_missed_notify trigger).
@@ -11666,6 +11666,8 @@ function showDurableStaffNotification(row, silent){
       // conversation in the Client Inbox here -- not the portal again in a
       // new tab.
       if(row.kind === 'client_chat_queue' && row.ref_id && ciCanUseInbox()){ ciOpenFromElsewhere(row.ref_id); return; }
+      // v711: a file import's one summary -- open the PrimeHome Buyers queue.
+      if(row.kind === 'leads_import'){ activateTab('leads'); activateLeadsSection('queue_review_ispeedtolead'); return; }
       // v702: a missed call -- click to call them back.
       if(row.kind === 'missed_call' && row.ref_id){ voiceCallBackFromCallId(row.ref_id); return; }
       // The dialer is its own origin, so a new tab rather than a tab switch.
@@ -11718,13 +11720,21 @@ async function subscribeStaffOpsRealtime(){
       // dedicated subtab, high postback volume, would otherwise flood
       // this) — same exclusivity excludedFromGeneralQueue() already uses
       // to decide what belongs in the plain Leads Queue Review table.
-      if(!lead.ticket_stage && !isPrimeHomeBuyersLead(lead) && staffNotifKindAllowed('lead_submitted')){
+      // v711: an AGENT's PrimeHome Buyers submission now notifies too, the
+      // same way as any other lead (the owner's request) -- it opens the
+      // PrimeHome Buyers queue instead. What stays quiet is a FILE IMPORT
+      // (imported / last_import_batch set on insert): a 200-row file used to
+      // be the reason PrimeHome was excluded at all, and it now gets ONE
+      // summary notification from the importer (leads_import_notify).
+      const fromFile = !!(lead.imported || lead.last_import_batch);
+      if(!lead.ticket_stage && !fromFile && staffNotifKindAllowed('lead_submitted')){
+        const prime = isPrimeHomeBuyersLead(lead);
         pushStaffNotification({
           priority: true,   // v645: needs someone to act
           icon: '📥',
-          title: 'New lead submitted',
-          body: lead.seller_investor_name ? `${lead.seller_investor_name} — awaiting review.` : 'A new lead needs review in Leads Queue Review.',
-          onClick: () => { activateTab('leads'); activateLeadsSection('queue_review'); },
+          title: prime ? 'New PrimeHome Buyers lead submitted' : 'New lead submitted',
+          body: lead.seller_investor_name ? `${lead.seller_investor_name} — awaiting review.` : (prime ? 'A new lead needs review in the PrimeHome Buyers queue.' : 'A new lead needs review in Leads Queue Review.'),
+          onClick: () => { activateTab('leads'); activateLeadsSection(prime ? 'queue_review_ispeedtolead' : 'queue_review'); },
         });
       }
     })
@@ -32070,7 +32080,7 @@ async function loadLeads(){
       return defKeys
         .filter(k => k !== 'recording_url')
         .sort((a, b) => (defs[a].sort_order || 0) - (defs[b].sort_order || 0))
-        .map(k => ({ key: k, label: defs[k].label, value: (ef[k] != null ? ef[k] : ''), required: !!defs[k].required, type: defs[k].type || 'text', options: defs[k].options || [] }))
+        .map(k => ({ key: k, label: defs[k].label, value: (ef[k] != null && String(ef[k]).trim() !== '' ? ef[k] : leadSemanticFallback(ef, k, defs[k].label)), required: !!defs[k].required, type: defs[k].type || 'text', options: defs[k].options || [] }))   // v711: carry the address / email across forms
         .concat(leftoverEntries);
     }
     const keys = Object.keys(ef).filter(k => k !== 'recording_url' && ef[k] !== null && ef[k] !== '');
@@ -32410,6 +32420,42 @@ async function loadLeads(){
 // history. A lead already correctly tagged with the PrimeHome Buyers
 // form still counts too, same as before — this only ever ADDS rows to
 // the view, never removes any.
+// v711 (the Wendy Carter lead: the property address held the seller's
+// PHONE and the email held her NAME). Two helpers:
+//   leadFieldProblem -- what an address or email field must never hold: an
+//     address that is only a phone number, an email with no "@" (na / none /
+//     n/a are allowed -- agents type them for "no email").
+//   leadSemanticFallback -- when a form's address or email key is empty, the
+//     lead's own value under ANOTHER form's key (Ticket: property_address,
+//     email). A ticket moved between forms used to show those boxes blank
+//     and required, which is how the wrong values went in.
+const LEAD_PHONE_ONLY_RE = /^\s*\+?1?[\s.-]*\(?\d{3}\)?[\s.-]*\d{3}[\s.-]*\d{4}\s*$/;
+function leadFieldKind(key, label){
+  const t = `${key || ''} ${label || ''}`;
+  if(/e-?mail/i.test(t)) return 'email';
+  if(/address/i.test(t)) return 'address';
+  return null;
+}
+function leadFieldProblem(key, label, value){
+  const v = String(value || '').trim();
+  if(!v) return null;
+  const kind = leadFieldKind(key, label);
+  if(kind === 'address' && LEAD_PHONE_ONLY_RE.test(v)) return `${label || 'Property address'} holds a phone number (${v}), not an address.`;
+  if(kind === 'email' && !v.includes('@') && !/^(n\/?a|none|no email|-)$/i.test(v)) return `${label || 'Email'} does not look like an email address (${v}).`;
+  return null;
+}
+function leadSemanticFallback(ef, key, label){
+  const kind = leadFieldKind(key, label);
+  if(!kind || !ef) return '';
+  for(const [k, v] of Object.entries(ef)){
+    if(k === key || v == null || String(v).trim() === '') continue;
+    if(leadFieldKind(k, '') !== kind) continue;
+    if(leadFieldProblem(k, '', v)) continue;          // never carry a bad value forward
+    return String(v);
+  }
+  return '';
+}
+
 function isPrimeHomeBuyersLead(r){
   return (!!leadsPrimeHomeBuyersFormId && r.submission_form_id === leadsPrimeHomeBuyersFormId)
     || !!leadsIspeedtoleadSendByLeadId[r.id];
@@ -33838,6 +33884,19 @@ $('ticketAcceptConfirmBtn').addEventListener('click', async () => {
   });
   if(missingRequired.length){
     msgEl.textContent = `Required fields missing: ${missingRequired.join(', ')}.`;
+    msgEl.style.display = '';
+    return;
+  }
+  // v711: an address that is a phone number, or an email that is a name, is
+  // refused here rather than saved onto the lead.
+  const badValues = [];
+  document.querySelectorAll('#ticketAcceptExtraFields .ticket-accept-extra-field').forEach(el => {
+    const label = el.closest('div')?.querySelector('label')?.textContent.replace(/[\s*]+$/, '') || el.dataset.key;
+    const problem = leadFieldProblem(el.dataset.key, label, el.value);
+    if(problem) badValues.push(problem);
+  });
+  if(badValues.length){
+    msgEl.textContent = badValues.join(' ');
     msgEl.style.display = '';
     return;
   }
@@ -35839,6 +35898,12 @@ $('ispdConfirmImportBtn').addEventListener('click', async () => {
     + (!defaultCampaignFormId ? `<div style="margin-top:6px;">Warning: could not resolve the PrimeHome Buyers campaign &mdash; these leads were NOT tagged and may not show under Lead Reviewing. Try the import again, or check Submission Forms Creator.</div>` : '');
   msg.className = (failed || !defaultCampaignFormId) ? 'msg error' : 'msg';
   msg.style.display = 'block';
+  // v711: ONE notification for the whole file -- the same lines shown here --
+  // to everyone who gets "New lead submitted", instead of one per lead.
+  sb.rpc('leads_import_notify', {
+    p_title: `PrimeHome Buyers file imported: ${created} new lead${created === 1 ? '' : 's'}${failed ? `, ${failed} failed` : ''}`,
+    p_body: importSummaryLines.join('\n'),
+  }).then(({ error }) => { if(error) console.warn('import summary notification failed:', error.message); });
   btn.disabled = false;
   btn.textContent = 'Import';
   ispdParsedRows = [];
@@ -36112,7 +36177,7 @@ function renderIspeedToLeadFields(extraFields, sellerName){
   return ISPEEDTOLEAD_FIELD_GROUPS.map(group => `
     <h4 style="margin:16px 0 8px; font-size:12px; color:var(--text-2); text-transform:uppercase; letter-spacing:0.04em;">${escapeHtml(group.title)}</h4>
     ${group.fields.map(f => {
-      let existingValue = ef[f.key] != null ? ef[f.key] : (f.default || '');
+      let existingValue = ef[f.key] != null ? ef[f.key] : (leadSemanticFallback(ef, f.key, f.label) || f.default || '');   // v711
       // Only pre-fill from the split if there's no explicit override
       // already saved — an existing form_first_name/form_last_name in
       // extra_fields always wins, same as the edge function's own logic.
@@ -36127,6 +36192,19 @@ function renderIspeedToLeadFields(extraFields, sellerName){
 // object: the lead's existing extra_fields with just the iSpeedToLead keys
 // overwritten (set if non-empty, removed if left blank) — any unrelated
 // key some other category's custom field put there is left untouched.
+// v711: the same check for the Send to PrimeHome Buyers panel. Returns the
+// problem to show, or null.
+function ispdContactFieldProblem(){
+  const container = $('ispeedtoleadModalFields');
+  if(!container) return null;
+  for(const key of ['form_address', 'form_email']){
+    const el = container.querySelector(`[data-field-key="${key}"]`);
+    if(!el) continue;
+    const problem = leadFieldProblem(key, key === 'form_address' ? 'Property address' : 'Email', el.value);
+    if(problem) return problem;
+  }
+  return null;
+}
 function collectIspeedToLeadFields(existingExtraFields){
   const result = { ...(existingExtraFields || {}) };
   const container = $('ispeedtoleadModalFields');
@@ -37416,6 +37494,8 @@ $('ispeedtoleadModalGyhomesBtn').addEventListener('click', async () => {
   if(!ispeedtoleadModalLead) return;
   const msg = $('ispeedtoleadModalMsg');
   msg.style.display = 'none';
+  const ispdProblem = ispdContactFieldProblem();   // v711
+  if(ispdProblem){ msg.textContent = ispdProblem; msg.style.display = 'block'; return; }
   const updated = collectIspeedToLeadFields(ispeedtoleadModalLead.extra_fields);
   const { error } = await sb.from('leads').update({ extra_fields: updated }).eq('id', ispeedtoleadModalLead.id);
   if(error){ msg.textContent = error.message; msg.style.display = 'block'; return; }
@@ -37430,6 +37510,8 @@ $('ispeedtoleadModalSaveBtn').addEventListener('click', async () => {
   if(!ispeedtoleadModalLead) return;
   const msg = $('ispeedtoleadModalMsg');
   msg.style.display = 'none';
+  const ispdProblem = ispdContactFieldProblem();   // v711
+  if(ispdProblem){ msg.textContent = ispdProblem; msg.style.display = 'block'; return; }
   const updated = collectIspeedToLeadFields(ispeedtoleadModalLead.extra_fields);
   const { error } = await sb.from('leads').update({ extra_fields: updated }).eq('id', ispeedtoleadModalLead.id);
   if(error){ msg.textContent = error.message; msg.style.display = 'block'; return; }
@@ -37450,6 +37532,8 @@ $('ispeedtoleadModalSendBtn').addEventListener('click', async () => {
 
   // Save whatever's currently in the form first, so Send always reflects
   // what's on screen even if the admin forgot to click "Save details".
+  const ispdSendProblem = ispdContactFieldProblem();   // v711
+  if(ispdSendProblem){ msg.textContent = ispdSendProblem; msg.style.display = 'block'; return; }
   const updated = collectIspeedToLeadFields(ispeedtoleadModalLead.extra_fields);
   const { error: saveErr } = await sb.from('leads').update({ extra_fields: updated }).eq('id', ispeedtoleadModalLead.id);
   if(saveErr){ msg.textContent = saveErr.message; msg.style.display = 'block'; return; }
