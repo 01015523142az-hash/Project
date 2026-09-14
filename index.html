@@ -14715,6 +14715,19 @@ async function startVoiceCallToClient(clientId, clientName){
 
   const { data: callRow } = await sb.from('voice_calls').insert({ caller_id: myUserId, callee_client_id: clientId }).select().single();
 
+  // v697: the client is now TOLD. The note above ("no push notification
+  // here") was the bug the owner hit: a client whose portal was not open
+  // never knew they were being called. send-push-notification's client
+  // branch checks this staff member can see the client and forwards to the
+  // client's phone (the Android app); the in-portal banner still rings for
+  // a client who has the portal open.
+  sb.functions.invoke('send-push-notification', { body: {
+    client_id: clientId,
+    title: `Incoming call from ${myFullName || 'PropTech AI'}`,
+    body: 'Open the PropTech AI app or client portal to answer.',
+    tag: `call-${callRow ? callRow.id : clientId}`, url: '/', require_interaction: true,
+  } }).then(({ error }) => { if(error) console.warn('call push to client failed', error); }).catch(() => {});
+
   voiceCallState = { role: 'caller', isClientCall: true, peerId: clientId, peerName: clientName, pc, localStream, outboundChannel, callRowId: callRow ? callRow.id : null, status: 'ringing', remoteDescSet: false, pendingCandidates: [], videoSender: null, screenStream: null, hasScreenShare: false, peerSharing: false, videoPanelMinimized: false, videoPanelMaximized: false, groupId: voiceGenId(), extraPeers: {} };
 
   const offer = await pc.createOffer();
@@ -40447,7 +40460,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '692'; // 692: shared readable light theme (691: dialing speed, coverage recommendations)
+const DIALER_ADMIN_VERSION = '697'; // 697: coverage leaves out test campaigns and says what is left out (692: light theme)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"

@@ -1011,10 +1011,22 @@ async function loadCoverageFacts() {
     $('covCap').value = Number(v.dials_per_number) || COV_DEFAULTS.dials_per_number;
     covPlanLoaded = true;
   }
-  const live = new Set(campaigns.filter((c) => c.status === 'active').map((c) => c.id));
+  // v697: a test campaign (tsr_exempt -- test numbers only) is not a floor
+  // that needs numbers either; counting it planned "9 numbers, buy 7 in 312"
+  // off nine test contacts.
+  const live = new Set(campaigns.filter((c) => c.status === 'active' && !c.tsr_exempt).map((c) => c.id));
   const dids = didsRes.data || [];
   const salesReps = new Set(dids.filter((d) => d.assigned_to).map((d) => d.assigned_to));
   const dialing = new Set((agentsRes.data || []).filter((a) => live.has(a.campaign_id)).map((a) => a.agent_id));
+  // v697: and SAY which active campaigns are out of the plan and why -- an
+  // empty table with no reason reads as missing data.
+  const leftOut = campaigns.filter((c) => c.status === 'active').map((c) => {
+    if (c.tsr_exempt) return { name: c.name, why: 'test campaign, test numbers only' };
+    const reps = (agentsRes.data || []).filter((a) => a.campaign_id === c.id).map((a) => a.agent_id);
+    if (!reps.length) return { name: c.name, why: 'no reps assigned yet' };
+    if (reps.every((id) => salesReps.has(id))) return { name: c.name, why: 'its reps dial from their own number' };
+    return null;
+  }).filter(Boolean);
   covFacts = {
     reps: [...dialing].filter((id) => !salesReps.has(id)).length,
     salesRepsLeftOut: [...dialing].filter((id) => salesReps.has(id)).length,
@@ -1022,6 +1034,7 @@ async function loadCoverageFacts() {
     resting: dids.filter((d) => !d.assigned_to && d.status === 'resting').length,
     salesNumbers: dids.filter((d) => d.assigned_to).length,
     poolNpas: dids.filter((d) => !d.assigned_to && d.status === 'active' && d.area_code).map((d) => d.area_code),
+    leftOut,
   };
 }
 
@@ -1152,7 +1165,17 @@ function renderCoverageRows() {
 
 function renderCoverageRec(p, rec) {
   const el = $('covRec');
-  if (!p || !rec) { el.innerHTML = ''; return; }
+  const left = (covFacts?.leftOut || []);
+  const leftHtml = left.length
+    ? `<p class="hint" style="margin:0 0 8px"><strong>Not in this plan:</strong> ${left.map((x) =>
+        `${esc(x.name)} <span class="muted">(${esc(x.why)})</span>`).join(' &middot; ')}.</p>`
+    : '';
+  if (!p || !rec) {
+    el.innerHTML = leftHtml + (p && !covRowsData.length
+      ? '<p class="hint" style="margin:0 0 8px">No live campaign that dials from the shared pool has contacts waiting, '
+        + 'so there is nothing to place yet. Load a list on one and this fills in.</p>' : '');
+    return;
+  }
   const owned = covFacts.poolNpas || [];
   const picks = Object.entries(rec.buy).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   el.innerHTML = `<p class="hint" style="margin:0 0 8px">
@@ -1162,7 +1185,7 @@ function renderCoverageRec(p, rec) {
         : '. Nothing to buy.'}
     </p>
     ${picks.length ? `<div class="row" style="gap:6px;margin-bottom:12px">${picks.map(([npa, n]) =>
-      `<button class="sm" data-npa="${esc(npa)}" title="Search Telnyx for numbers in ${esc(npa)}">${esc(npa)}${n > 1 ? ` &times;${n}` : ''}</button>`).join('')}</div>` : ''}`;
+      `<button class="sm" data-npa="${esc(npa)}" title="Search Telnyx for numbers in ${esc(npa)}">${esc(npa)}${n > 1 ? ` &times;${n}` : ''}</button>`).join('')}</div>` : ''}${leftHtml}`;
 }
 
 async function loadCoverage() {
@@ -1346,7 +1369,7 @@ $('syncBtn').onclick = async () => {
 // ------------------------------------------------------------- campaigns --
 async function loadCampaigns() {
   const { data } = await sb.from('dialer_campaigns')
-    .select('id, name, dial_mode, status, calling_window_start, calling_window_end, autopilot_enabled')
+    .select('id, name, dial_mode, status, calling_window_start, calling_window_end, autopilot_enabled, tsr_exempt')
     .neq('status', 'archived').order('name');
   campaigns = data || [];
   $('impCampaign').innerHTML = campaigns.map((c) =>
