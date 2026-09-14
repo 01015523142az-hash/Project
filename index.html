@@ -2445,6 +2445,11 @@
   }
   .nc-tab:hover{ color:var(--text-2); }
   .nc-tab.active{ color:var(--text); border-bottom-color:var(--focus); }
+  /* v699: the global `button{ border-radius:999px }` above rounded these tabs
+     too, so the active tab's underline bent into a curve. The client portal
+     has no such global rule, which is why its underline is straight -- this
+     makes the two portals match. */
+  .nc-tab{ border-radius:0; }
   .notif-center-list{ padding:10px 12px 12px; max-height:none; flex:1; overflow-y:auto; }
   .notif-center-empty{ padding:26px 14px; text-align:center; font-size:12px; color:var(--text-dim); }
 
