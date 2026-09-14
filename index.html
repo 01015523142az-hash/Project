@@ -28617,6 +28617,9 @@ function renderCsubListOrders(){
     if(o.status !== 'fulfilled'){
       actionHtml += ` <button class="btn-secondary lbm-open-btn owner-admin-export-only" data-order-type="list_order" data-order-id="${o.id}" style="width:auto; padding:4px 8px; font-size:10px;">Match</button>`;
     }
+    if(myIsOwner){
+      actionHtml += ` <button class="btn-secondary csub-list-order-delete-btn" data-order-id="${o.id}" style="width:auto; padding:4px 8px; font-size:10px; color:var(--danger); border-color:var(--danger);">Delete</button>`;
+    }
     return `<tr>
       <td class="mono" style="color:var(--text-2); font-size:11px;">${submitted}${clientLabel ? `<br><span style="color:var(--text-dim);">${escapeHtml(clientLabel)}</span>` : ''}</td>
       <td>${escapeHtml(o.type_of_leads || '—')}</td>
@@ -28647,6 +28650,30 @@ document.addEventListener('click', (e) => {
   if(!btn) return;
   csubListOrderUploadTargetId = btn.dataset.orderId;
   $('csubListOrderUploadInput').click();
+});
+
+// v682: owner-only delete. Order Readiness reads open orders live but keeps a
+// per-session copy, so it is re-fetched right after -- a deleted order must
+// not linger there.
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.csub-list-order-delete-btn');
+  if(!btn || !myIsOwner) return;
+  const order = csubListOrders.find(o => o.id === btn.dataset.orderId);
+  if(!order) return;
+  const who = order.client_accounts ? (order.client_accounts.full_name || order.client_accounts.email || 'this client') : 'this client';
+  const what = `${order.target_market || 'no market given'}${order.record_count ? `, ${Number(order.record_count).toLocaleString()} records` : ''}`;
+  if(!confirm(`Delete the list request from ${who} (${what})?${order.status === 'fulfilled' ? ' The client loses access to the delivered list.' : ''} This can't be undone.`)) return;
+  btn.disabled = true;
+  const { data: gone, error } = await sb.from('client_list_orders').delete().eq('id', order.id).select('id');
+  if(error || !gone || !gone.length){
+    alert(error ? `Couldn't delete: ${error.message}` : 'Nothing was deleted — your role may not be allowed to delete list requests.');
+    btn.disabled = false;
+    return;
+  }
+  if(order.file_path) sb.storage.from('client-list-orders').remove([order.file_path]);
+  logActivity('client_list_order.delete', 'client_list_order', order.id, `Deleted list request (${what})`);
+  loadCsubListOrders();
+  loadOrderReadiness(true);
 });
 
 // SECURITY FIX (audit finding edge_audit_skiptrace.md M4, prep): was a
@@ -37571,6 +37598,7 @@ async function updateDataOrderStatus(id, status){
   // away -- e.g. filtering to "pending" and marking one fulfilled should
   // make it disappear from view immediately, not just on the next refresh.
   renderDataOrdersTable();
+  loadOrderReadiness(true);   // v682: a closed order leaves Order readiness at once
 }
 $('doSearchInput')?.addEventListener('input', () => { doSearchQuery = $('doSearchInput').value; renderDataOrdersTable(); });
 $('doStatusFilter')?.addEventListener('change', () => { doStatusFilterValue = $('doStatusFilter').value; renderDataOrdersTable(); });
@@ -39735,7 +39763,9 @@ function renderOrderReadiness(){
         ? `Coverage measured ${new Date(data.geoComputedAt).toLocaleString([], nonAgentDisplayTz() ? { timeZone: nonAgentDisplayTz() } : {})}`
         : '';
     }
-    const rows = (data.orders || []).filter(o => o.kind === kind);
+    // v682: an unpaid list order (abandoned checkout) is not shown in List
+    // Orders, so it cannot be worked or deleted there -- and is left out here.
+    const rows = (data.orders || []).filter(o => o.kind === kind && o.status !== 'pending_payment');
     if(!rows.length){
       body.innerHTML = '<tr><td colspan="7" style="color:var(--text-dim);">No open orders.</td></tr>';
       return;
