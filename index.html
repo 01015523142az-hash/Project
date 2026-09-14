@@ -10857,6 +10857,16 @@ function staffPlayOpsNotificationSound(){
     });
   }catch(e){ console.error('Ops notification sound failed', e); }
 }
+// v687: browsers keep audio switched off until the person clicks or types, and
+// a context first created by a notification stays silent -- so the first
+// notification sound of a session often never played. Create and resume it
+// on the first interaction, so every later notification is heard.
+['pointerdown', 'keydown', 'touchstart'].forEach(ev => document.addEventListener(ev, () => {
+  try{
+    if(!chatAudioCtx) chatAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if(chatAudioCtx.state === 'suspended') chatAudioCtx.resume();
+  }catch(e){ /* no audio is not an error */ }
+}, { capture: true, passive: true }));
 
 // A quieter, single soft tone for the "recipient is offline" send-time hint
 // — informational, not something worth interrupting for, so it's shorter
