@@ -19,7 +19,11 @@
       <button class="da-kpi" data-go="overview/pipeline"><b id="kOverdue">–</b><span>Follow-ups overdue</span></button>
       <button class="da-kpi" data-go="conversations/inbox"><b id="kReply">–</b><span>Texts awaiting reply</span></button>
     </div>
-    <div class="hint" id="floorUpdated" style="margin:0 0 10px"></div>
+    <div class="da-floor-bar">
+      <div class="hint" id="floorUpdated" style="margin:0"></div>
+      <span class="da-wall-clock" id="floorClock"></span>
+      <button id="floorWall" class="sm">Wall screen</button>
+    </div>
     <div class="panel">
       <h2>Who is on shift</h2>
       <p class="hint">Live sessions, newest first — what each agent is set to right now.</p>
@@ -211,6 +215,18 @@
         </table>
       </div>
       <div id="valMsg" style="margin-top:10px;font-size:13px"></div>
+      <!-- v677: requeue a whole list -->
+      <div id="lrqPanel" class="da-addform hide" style="margin-top:12px">
+        <div class="fb-label" style="margin-bottom:8px">Requeue <span id="lrqName"></span></div>
+        <div class="btn-row" id="lrqScopes" style="margin-bottom:10px"></div>
+        <div class="btn-row">
+          <button id="lrqGo" class="primary sm">Requeue</button>
+          <button id="lrqCancel" class="sm">Cancel</button>
+          <span id="lrqMsg" class="hint" style="margin:0"></span>
+        </div>
+        <p class="hint" style="margin:8px 0 0">Requeued contacts go back to <b>new</b> with their retry cadence started over.
+          Numbers on do-not-call, suppressed or invalid are never requeued.</p>
+      </div>
     </div>
   </section>
 
@@ -604,7 +620,7 @@
       <div class="da-convo-bar">
         <input id="cvSearch" type="search" placeholder="Search name, number, message…" style="flex:1;min-width:200px">
         <select id="cvRep"><option value="">All reps</option></select>
-        <select id="cvChannel"><option value="">All channels</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select>
+        <select id="cvChannel"><option value="">All channels</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option></select>
         <select id="cvView">
           <option value="">Everything</option>
           <option value="reply">Needs a reply</option>
@@ -612,6 +628,7 @@
           <option value="nocontact">Not in the dialer</option>
         </select>
         <button id="inboxRefresh" class="sm">Refresh</button>
+        <button id="cvSyncEmail" class="sm" title="Pull new email from connected mailboxes now">Sync email</button>
         <span id="inboxMsg" class="result-count"></span>
       </div>
       <div class="da-convo-grid">
@@ -621,10 +638,18 @@
           <div class="da-convo-tabs hide" id="cvTabs">
             <button class="sm active" data-cv="all">Everything</button>
             <button class="sm" data-cv="sms">Messages</button>
+            <button class="sm" data-cv="email">Emails</button>
             <button class="sm" data-cv="call">Calls</button>
             <button class="sm" data-cv="note">Notes</button>
           </div>
           <div class="da-convo-thread" id="inboxThreadWrap"><div id="inboxThread"></div></div>
+          <div class="hint" id="cvEmailStatus" style="margin:0 0 6px"></div>
+          <div class="btn-row" style="margin-bottom:6px">
+            <select id="cvReplyChannel" style="padding:6px 10px;font-size:12.5px">
+              <option value="sms">Reply by SMS</option><option value="email">Reply by email</option>
+            </select>
+            <input id="cvSubject" class="hide" placeholder="Subject" style="flex:1;min-width:200px;padding:6px 10px">
+          </div>
           <div class="da-convo-reply">
             <textarea id="inboxBody" rows="2" placeholder="Reply by SMS…" disabled></textarea>
             <button class="primary" id="inboxSend" disabled>Send</button>
@@ -769,6 +794,34 @@
         <tbody id="pipeOpps"><tr><td colspan="6">Loading…</td></tr></tbody>
       </table></div>
       <div id="pipeOppNotes" class="hide" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <!-- ========================================== CHANGE HISTORY ======== -->
+  <!-- v677. Every change to a dialer setting, recorded by a database trigger
+       (dialer_settings_audit), so nothing can change without showing here. -->
+  <section id="tab-history" class="hide">
+    <div class="panel">
+      <div class="da-convo-bar">
+        <select id="hsArea"><option value="">Every area</option></select>
+        <select id="hsWho"><option value="">Anyone</option></select>
+        <select id="hsDays">
+          <option value="1">Last 24 hours</option><option value="7" selected>Last 7 days</option>
+          <option value="30">Last 30 days</option><option value="365">Last year</option>
+        </select>
+        <label class="fb-check"><input type="checkbox" id="hsSystem"> Include automatic changes</label>
+        <button id="hsRefresh" class="sm">Refresh</button>
+        <span id="hsCount" class="result-count"></span>
+      </div>
+      <div class="scroll" style="max-height:none">
+        <table>
+          <thead><tr><th>When</th><th>Who</th><th>Area</th><th>Item</th><th>What changed</th></tr></thead>
+          <tbody id="hsRows"><tr><td colspan="5">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="da-pager">
+        <button id="hsMore" class="sm hide">Load more</button>
+      </div>
     </div>
   </section>
 

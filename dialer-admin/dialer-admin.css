@@ -212,3 +212,27 @@
   #daHost .da-convo-list{max-height:280px}
 }
 #daHost .da-convo-reply button{align-self:flex-end}
+
+/* ---- v677 ------------------------------------------------------------------- */
+#daHost .da-floor-bar{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+#daHost .da-floor-bar .hint{flex:1}
+#daHost .da-wall-clock{display:none;font-family:var(--mono);font-size:28px;color:var(--text)}
+#daHost .da-scope{display:flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--border-light);
+  border-radius:999px;font-size:12.5px;cursor:pointer}
+#daHost .da-scope input{width:14px;height:14px}
+#daHost .hs-change{font-size:12px;line-height:1.7}
+#daHost .hs-change b{font-family:var(--mono);font-size:11px;color:var(--text-2);font-weight:600}
+#daHost .hs-old{color:var(--danger);text-decoration:line-through;opacity:.8}
+#daHost .hs-new{color:var(--good)}
+#daHost .tl.email .tl-b{border-style:solid;border-left:3px solid var(--teal)}
+/* Wall screen: the Live floor on a TV. Fullscreen when the browser allows it,
+   otherwise a fixed overlay; either way Esc or the button leaves it. */
+#daHost #tab-floor.da-wall{position:fixed;inset:0;z-index:1000;overflow:auto;background:var(--bg);padding:28px 36px}
+#daHost #tab-floor.da-wall .da-kpis{grid-template-columns:repeat(3,1fr);gap:18px}
+#daHost #tab-floor.da-wall .da-kpi{padding:26px 30px}
+#daHost #tab-floor.da-wall .da-kpi b{font-size:64px}
+#daHost #tab-floor.da-wall .da-kpi span{font-size:14px}
+#daHost #tab-floor.da-wall .da-wall-clock{display:inline}
+#daHost #tab-floor.da-wall td{font-size:17px;padding:14px}
+#daHost #tab-floor.da-wall .panel h2{font-size:18px}
+#daHost #tab-floor.da-wall p.hint{display:none}

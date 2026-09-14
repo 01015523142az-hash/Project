@@ -40115,13 +40115,13 @@ const DIALER_ADMIN_SECTIONS = [
   { key: 'campaigns', label: 'Campaigns (campaigns, lists, inbound queues)', editable: true },
   { key: 'conversations', label: 'Conversations (inbox, contacts, call log)', editable: true },
   { key: 'numbers', label: 'Numbers (numbers, research & DNC)', editable: true },
-  { key: 'team', label: 'Team & settings (statuses, availability, settings)', editable: true },
+  { key: 'team', label: 'Team & settings (statuses, availability, settings, change history)', editable: true },
 ];
 // Pre-v676 links name a section; map them to the group that now holds it.
 const DIALER_ADMIN_LEGACY = {
   reports: 'overview', pipeline: 'overview', agents: 'team', settings: 'team',
   lists: 'campaigns', inbound: 'campaigns', inbox: 'conversations', calllog: 'conversations',
-  research: 'numbers', contacts: 'conversations', floor: 'overview',
+  research: 'numbers', contacts: 'conversations', floor: 'overview', history: 'team',
 };
 // A new role with the tab can LOOK at every section; changing anything is
 // closed until someone ticks Edit -- the same defaults as the other sub-tabs.
@@ -40151,7 +40151,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '676'; // 676: five groups, Live floor, all-rep inbox, Contacts
+const DIALER_ADMIN_VERSION = '677'; // 677: list requeue, wall screen, change history, email in the inbox
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"

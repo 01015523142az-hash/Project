@@ -115,14 +115,14 @@ const DA_GROUPS = {
   campaigns:     [['campaigns', 'Campaigns'], ['lists', 'Lists'], ['inbound', 'Inbound queues']],
   conversations: [['inbox', 'Inbox'], ['contacts', 'Contacts'], ['calllog', 'Call log']],
   numbers:       [['numbers', 'Numbers'], ['research', 'Research & DNC']],
-  team:          [['agents', 'Statuses & availability'], ['settings', 'Settings']],
+  team:          [['agents', 'Statuses & availability'], ['settings', 'Settings'], ['history', 'Change history']],
 };
 const DA_PANES = Object.values(DA_GROUPS).flat().map(([k]) => k);
 // Links and bookmarks from before v676 name a section, not a group.
 const DA_LEGACY = {
   reports: 'overview', pipeline: 'overview', agents: 'team', settings: 'team',
   lists: 'campaigns', inbound: 'campaigns', inbox: 'conversations', calllog: 'conversations',
-  research: 'numbers', contacts: 'conversations', floor: 'overview',
+  research: 'numbers', contacts: 'conversations', floor: 'overview', history: 'team',
 };
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } };
@@ -168,19 +168,20 @@ async function showSection(path) {
   applyReadOnly(pane);
   if (typeof DA.onNavigate === 'function') DA.onNavigate(group + '/' + pane);
 
-  if (pane === 'floor') startFloorTimer(true); else stopFloorTimer();
+  if (pane === 'floor') startFloorTimer(true); else { stopFloorTimer(); setWall(false); }
   const first = !daLoadedOnce.has(pane);
   daLoadedOnce.add(pane);
 
   // Loaded on first open rather than at boot: most sessions never look at
   // the call log, and the query reads the whole CDR table.
   if (pane === 'calllog' && !callLogLoaded) initCallLog();
-  if (pane === 'inbox') loadInbox();
+  if (pane === 'inbox') { loadInbox(); if (first) loadEmailStatus(); }
   if (pane === 'contacts') initContacts();
   if (pane === 'agents') { loadStatusEditor(); loadCalendarAdmin(); }
   if (pane === 'inbound') loadQueues();
   if (pane === 'pipeline') loadPipeline();    // v595: fresh each time it is opened
   if (pane === 'settings') loadSettingsTab(); // v648
+  if (pane === 'history') initHistory();      // v677
   if (pane === 'lists' && first) loadLists();
   if (pane === 'numbers' && first) { loadCoverage(); loadPool(); }
 }
@@ -237,8 +238,31 @@ async function loadFloor() {
     + ' · refreshes every 15 seconds while this screen is open';
 }
 $('floorKpis').querySelectorAll('[data-go]').forEach((b) => {
-  b.onclick = () => showSection(b.dataset.go);
+  b.onclick = () => { if (!$('tab-floor').classList.contains('da-wall')) showSection(b.dataset.go); };
 });
+
+// v677: wall screen -- the Live floor, big, for a TV on the floor.
+let wallClockTimer = null;
+function setWall(on) {
+  const el = $('tab-floor');
+  if (on === el.classList.contains('da-wall')) return;
+  el.classList.toggle('da-wall', on);
+  $('floorWall').textContent = on ? 'Exit wall screen' : 'Wall screen';
+  if (on) {
+    const tick = () => { $('floorClock').textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
+    tick();
+    wallClockTimer = setInterval(tick, 15000);
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => { /* the overlay alone is fine */ });
+  } else {
+    clearInterval(wallClockTimer);
+    if (document.fullscreenElement === el && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  }
+}
+$('floorWall').onclick = () => setWall(!$('tab-floor').classList.contains('da-wall'));
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement && $('tab-floor').classList.contains('da-wall')) setWall(false);
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setWall(false); });
 
 // ------------------------------------------------------------- settings --
 // v648. Number assignment and console access, both of which used to require
@@ -2868,15 +2892,61 @@ async function loadLists() {
         <td class="num">${(l.loaded_rows ?? 0).toLocaleString()}</td>
         <td class="num ${l.blocked ? 'gap' : ''}">${l.blocked.toLocaleString()}</td>
         <td>${l.readymode_scrubbed_at ? esc(l.readymode_scrubbed_at.slice(0, 10)) : '—'}</td>
-        <td>${canManage ? (l.blocked
+        <td style="white-space:nowrap">${canManage ? (l.blocked
             ? `<button class="sm" data-val="${esc(l.id)}" data-tz="1">Resolve ${l.blocked.toLocaleString()} time zones</button>`
-            : `<button class="sm" data-val="${esc(l.id)}">Carrier check</button>`) : ''}</td>
+            : `<button class="sm" data-val="${esc(l.id)}">Carrier check</button>`)
+            + ` <button class="sm" data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button>` : ''}</td>
       </tr>`).join('')
     : '<tr><td colspan="7">No lists yet.</td></tr>';
 
   $('listRows').querySelectorAll('button[data-val]').forEach((b) => {
     b.onclick = () => validateList(b.dataset.val, b, b.dataset.tz === '1');
   });
+  $('listRows').querySelectorAll('button[data-rq]').forEach((b) => {
+    b.onclick = () => openListRequeue(b.dataset.rq, b.dataset.rqname);
+  });
+}
+
+// ------------------------------------------------------- v677: requeue a list --
+let lrqList = null;
+async function openListRequeue(listId, name, keepMsg) {
+  lrqList = listId;
+  $('lrqName').textContent = name || 'list';
+  if (!keepMsg) $('lrqMsg').textContent = '';
+  $('lrqScopes').innerHTML = '<span class="hint" style="margin:0">Counting…</span>';
+  show($('lrqPanel'), true);
+  $('lrqPanel').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const base = () => sb.from('dialer_contacts').select('id', { count: 'exact', head: true })
+    .eq('list_id', listId).not('status', 'in', '(suppressed,invalid)');
+  const [dialed, retired, all] = await Promise.all([
+    base().or('status.neq.new,attempt_count.gt.0'),
+    base().eq('status', 'retired'),
+    base(),
+  ]);
+  if (lrqList !== listId) return;
+  const opt = (v, label, n, checked) => `<label class="da-scope"><input type="radio" name="lrqScope" value="${v}"${checked ? ' checked' : ''}>
+    ${label} <b>${(n ?? 0).toLocaleString()}</b></label>`;
+  $('lrqScopes').innerHTML = opt('dialed', 'Already dialed', dialed.count, true)
+    + opt('retired', 'Retired only', retired.count, false)
+    + opt('all', 'Whole list', all.count, false);
+}
+$('lrqCancel').onclick = () => { show($('lrqPanel'), false); lrqList = null; };
+$('lrqGo').onclick = async () => {
+  if (!lrqList || !canManage) return;
+  const scope = (document.querySelector('input[name="lrqScope"]:checked') || {}).value || 'dialed';
+  const label = { dialed: 'every already-dialed contact', retired: 'every retired contact', all: 'the whole list' }[scope];
+  if (!confirm(`Requeue ${label} in "${$('lrqName').textContent}"? Their retry cadence starts over.`)) return;
+  $('lrqGo').disabled = true;
+  $('lrqMsg').textContent = 'Requeuing…';
+  const { data, error } = await sb.rpc('dialer_admin_requeue_list', { p_list: lrqList, p_scope: scope });
+  $('lrqGo').disabled = false;
+  if (error) { $('lrqMsg').textContent = error.message; return; }
+  const r = (data || [])[0] || {};
+  $('lrqMsg').textContent = `Requeued ${(r.requeued || 0).toLocaleString()}`
+    + (r.skipped_dnc ? ` · ${r.skipped_dnc.toLocaleString()} skipped (do-not-call)` : '')
+    + '.';
+  openListRequeue(lrqList, $('lrqName').textContent, true);
+  loadLists();
 }
 
 // THE PAID PATH, WHICH IS NOW OPTIONAL.
@@ -3615,7 +3685,7 @@ function renderInbox() {
       </div>
       <div class="cv-last">${r.last_direction === 'inbound' ? '' : '<b>Team:</b> '}${esc(r.last_body || '')}</div>
       <div class="cv-meta">
-        ${(r.channels || []).map((c) => `<span class="chip">${c === 'whatsapp' ? 'WhatsApp' : 'SMS'}</span>`).join('')}
+        ${(r.channels || []).map((c) => `<span class="chip">${c === 'whatsapp' ? 'WhatsApp' : c === 'email' ? 'Email' : 'SMS'}</span>`).join('')}
         ${Number(r.calls) ? `<span class="chip">${r.calls} call${Number(r.calls) === 1 ? '' : 's'}</span>` : ''}
         ${r.on_dnc ? '<span class="chip bad">DNC</span>' : ''}
         ${r.last_direction === 'inbound' ? '<span class="chip good">Needs reply</span>' : ''}
@@ -3659,6 +3729,13 @@ function timelineHtml(items, kind, newestFirst) {
       return `<div class="tl ${out ? 'out' : ''}"><div class="tl-b">
         <div class="tl-body">${esc(i.body || '')}</div>
         <div class="tl-foot">${m.provider === 'telnyx_whatsapp' ? 'WhatsApp · ' : ''}${foot}</div></div></div>`;
+    }
+    if (i.kind === 'email') {
+      const out = i.direction !== 'inbound';
+      return `<div class="tl email ${out ? 'out' : ''}"><div class="tl-b">
+        <div>✉️ <b>${esc(i.title || '(no subject)')}</b></div>
+        ${i.body ? `<div class="tl-body">${esc(i.body)}</div>` : ''}
+        <div class="tl-foot">${esc(out ? 'to ' + (m.to || '') : 'from ' + (m.from || ''))} · ${foot}</div></div></div>`;
     }
     if (i.kind === 'call') {
       const bits = [i.direction === 'inbound' ? 'Inbound call' : 'Outbound call', i.title,
@@ -3737,12 +3814,42 @@ async function openThread(row) {
       row.unread = 0; updateInboxBadge(); renderInbox();
     });
   }
-  const canSend = canManage && !row.on_dnc;
-  $('inboxBody').disabled = !canSend;
-  $('inboxSend').disabled = !canSend;
-  $('inboxBody').placeholder = row.on_dnc ? 'This number is on do-not-call and cannot be texted.'
-    : canManage ? 'Reply by SMS…' : 'View only — your role cannot send from here.';
+  cvContactEmail = null;
+  if (row.contact_id) {
+    const { data: c } = await sb.from('dialer_contacts').select('email').eq('id', row.contact_id).maybeSingle();
+    cvContactEmail = c && /@/.test(c.email || '') ? c.email : null;
+  }
+  if (cvActive !== row) return;
+  const emailOpt = $('cvReplyChannel').querySelector('option[value="email"]');
+  emailOpt.disabled = !cvContactEmail;
+  emailOpt.textContent = cvContactEmail ? `Reply by email (${cvContactEmail})` : 'Reply by email (no address on file)';
+  // Default to whichever channel the conversation last used.
+  const lastEmail = [...cvItems].filter((x) => x.kind === 'email' || x.kind === 'sms')
+    .sort((a, b) => new Date(b.at) - new Date(a.at))[0];
+  $('cvReplyChannel').value = cvContactEmail && lastEmail && lastEmail.kind === 'email' ? 'email' : 'sms';
+  if ($('cvReplyChannel').value === 'email' && lastEmail) {
+    const t = lastEmail.title || '';
+    $('cvSubject').value = /^re:/i.test(t) ? t : (t ? 'Re: ' + t : '');
+  } else {
+    $('cvSubject').value = '';
+  }
+  applyReplyChannel();
 }
+
+let cvContactEmail = null;
+function applyReplyChannel() {
+  const row = cvActive;
+  const email = $('cvReplyChannel').value === 'email';
+  show($('cvSubject'), email);
+  const blocked = !row || !canManage || (!email && row.on_dnc) || (email && !cvContactEmail);
+  $('inboxBody').disabled = blocked;
+  $('inboxSend').disabled = blocked;
+  $('inboxBody').placeholder = !row ? 'Pick a conversation.'
+    : !canManage ? 'View only — your role cannot send from here.'
+    : email ? (cvContactEmail ? 'Write an email… it goes from your own connected Gmail.' : 'This contact has no email address.')
+    : row.on_dnc ? 'This number is on do-not-call and cannot be texted.' : 'Reply by SMS…';
+}
+$('cvReplyChannel').addEventListener('change', applyReplyChannel);
 
 $('inboxBody').addEventListener('input', () => {
   const t = $('inboxBody').value;
@@ -3756,20 +3863,59 @@ $('inboxBody').addEventListener('input', () => {
 $('inboxSend').onclick = async () => {
   const text = $('inboxBody').value.trim();
   if (!inboxPhone || !text || !canManage) return;
+  const byEmail = $('cvReplyChannel').value === 'email';
   $('inboxSend').disabled = true;
+  if (byEmail) {
+    // v677: sent AS the signed-in person from their own Gmail (the address is
+    // resolved server-side from the contact), then pulled into the store so it
+    // shows in the thread straight away.
+    const subject = $('cvSubject').value.trim();
+    if (!subject) { $('inboxSend').disabled = false; $('inboxLen').textContent = 'Add a subject.'; return; }
+    const r = await callFn('dialer-conversations', { action: 'send_email', contact_id: cvActive.contact_id, subject, body: text });
+    $('inboxSend').disabled = false;
+    if (!r?.ok) { $('inboxLen').textContent = r?.error || 'Email not sent.'; return; }
+    $('inboxLen').textContent = `Email sent from ${r.from || 'your Gmail'}.`;
+    await callFn('dialer-email-sync', { action: 'sync' }).catch(() => null);
+  } else {
   const r = await callFn('dialer-sms', {
     action: 'send', to: inboxPhone, body: text, name: inboxName || undefined,
   });
   $('inboxSend').disabled = false;
   if (!r?.ok) { $('inboxLen').textContent = r?.error || 'Send failed'; return; }
   if (!r.sent) { $('inboxLen').textContent = r.detail || 'Not sent.'; return; }
+  }
   $('inboxBody').value = '';
-  $('inboxLen').textContent = '';
+  if (!byEmail) $('inboxLen').textContent = '';
   // Re-read rather than appending optimistically: dialer-sms writes the row
   // itself, so the thread is the source of truth.
   const row = cvActive;
   await loadInbox();
   openThread(cvRows.find((x) => x.phone_key === row.phone_key) || row);
+};
+
+// v677: email arrives by dialer-email-sync every 5 minutes; this pulls now.
+async function loadEmailStatus() {
+  const r = await callFn('dialer-email-sync', { action: 'status' }).catch(() => null);
+  if (!r?.ok) { $('cvEmailStatus').textContent = ''; return; }
+  const readable = (r.mailboxes || []).filter((m) => m.can_read);
+  const sendOnly = (r.mailboxes || []).filter((m) => !m.can_read);
+  $('cvEmailStatus').textContent = `Email from ${readable.length} connected Gmail${readable.length === 1 ? '' : 's'}`
+    + (r.shared_configured ? ' and the shared inbox' : '')
+    + (sendOnly.length ? ` · ${sendOnly.map((m) => m.owner || m.address).join(', ')} connected for sending only (reconnect to show their email)` : '');
+}
+$('cvSyncEmail').onclick = async () => {
+  $('cvSyncEmail').disabled = true;
+  $('cvSyncEmail').textContent = 'Syncing…';
+  const r = await callFn('dialer-email-sync', { action: 'sync' }).catch(() => null);
+  $('cvSyncEmail').disabled = false;
+  $('cvSyncEmail').textContent = 'Sync email';
+  const stored = (r?.results || []).reduce((n, x) => n + (Number(x.stored) || 0), 0);
+  const errs = (r?.results || []).filter((x) => x.error).map((x) => `${x.mailbox}: ${x.error}`);
+  $('inboxMsg').textContent = r?.ok ? `${stored} new email${stored === 1 ? '' : 's'}` : (r?.error || 'Sync failed');
+  if (errs.length) $('cvEmailStatus').textContent = errs.join(' · ');
+  const k = cvActive && cvActive.phone_key;
+  await loadInbox();
+  if (k) openThread(cvRows.find((x) => x.phone_key === k));
 };
 
 $('inboxRefresh').onclick = async () => {
@@ -4068,6 +4214,85 @@ $('cdNoteSave').onclick = async () => {
   $('cdActMsg').textContent = 'Note added.';
 };
 
+
+// ------------------------------------------------------ v677: change history --
+const HS_AREAS = {
+  dialer_campaigns: 'Campaigns', dialer_dispositions: 'Wrap-up outcomes', dialer_campaign_dispositions: 'Campaign outcomes',
+  dialer_disposition_actions: 'Outcome messages (legacy)', dialer_outcome_rules: 'Outcome rules', dialer_message_templates: 'Message templates',
+  dialer_settings: 'Hand-offs & settings', dialer_inbound_queues: 'Inbound queues', dialer_queue_agents: 'Queue agents',
+  dialer_campaign_agents: 'Campaign agents', dialer_agent_statuses: 'Agent statuses', dialer_calendars: 'Booking availability',
+  dialer_dids: 'Numbers', dialer_role_access: 'Console access', dialer_field_defs: 'List fields',
+};
+const HS_PAGE = 100;
+let hsInit = false;
+let hsOffset = 0;
+let hsNames = {};
+let hsLabels = {};
+
+async function initHistory() {
+  if (!hsInit) {
+    hsInit = true;
+    $('hsArea').innerHTML = '<option value="">Every area</option>' + Object.entries(HS_AREAS)
+      .sort((a, b) => a[1].localeCompare(b[1])).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
+    const [people, queues, dispos] = await Promise.all([
+      sb.from('profiles').select('id, full_name'),
+      sb.from('dialer_inbound_queues').select('id, name'),
+      sb.from('dialer_dispositions').select('id, code, label'),
+    ]);
+    (people.data || []).forEach((p) => { hsNames[p.id] = p.full_name || p.id.slice(0, 8); });
+    campaigns.forEach((c) => { hsLabels[c.id] = c.name; });
+    (queues.data || []).forEach((q) => { hsLabels[q.id] = q.name; });
+    (dispos.data || []).forEach((d) => { hsLabels[d.id] = d.label || d.code; });
+    Object.entries(hsNames).forEach(([id, n]) => { hsLabels[id] = n; });
+    $('hsWho').innerHTML = '<option value="">Anyone</option>' + Object.entries(hsNames)
+      .sort((a, b) => String(a[1]).localeCompare(String(b[1]))).map(([id, n]) => `<option value="${id}">${esc(n)}</option>`).join('');
+  }
+  hsOffset = 0;
+  loadHistory(false);
+}
+
+function hsValue(v) {
+  if (v === null || v === undefined) return '<i>empty</i>';
+  if (typeof v === 'string' && hsLabels[v]) return esc(hsLabels[v]);
+  const s = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  return esc(s.length > 90 ? s.slice(0, 90) + '…' : s);
+}
+
+async function loadHistory(append) {
+  const since = new Date(Date.now() - Number($('hsDays').value) * 86400000).toISOString();
+  let q = sb.from('dialer_settings_audit').select('*', { count: 'exact' })
+    .gte('at', since).order('at', { ascending: false }).range(hsOffset, hsOffset + HS_PAGE - 1);
+  if ($('hsArea').value) q = q.eq('table_name', $('hsArea').value);
+  if ($('hsWho').value) q = q.eq('actor_id', $('hsWho').value);
+  else if (!$('hsSystem').checked) q = q.not('actor_id', 'is', null);
+  if (!append) $('hsRows').innerHTML = '<tr><td colspan="5">Loading…</td></tr>';
+  const { data, error, count } = await q;
+  if (error) { $('hsRows').innerHTML = `<tr><td colspan="5">${esc(error.message)}</td></tr>`; return; }
+  const rows = data || [];
+  const html = rows.map((r) => {
+    const ch = r.changes || {};
+    const keys = Object.keys(ch);
+    const body = r.action === 'update'
+      ? keys.map((k) => `<div><b>${esc(k.replace(/_/g, ' '))}</b> <span class="hs-old">${hsValue(ch[k][0])}</span> → <span class="hs-new">${hsValue(ch[k][1])}</span></div>`).join('')
+      : `<div>${r.action === 'insert' ? 'Created' : 'Deleted'}${keys.length ? ` — <span class="hint" style="margin:0">${esc(keys.slice(0, 6).join(', '))}${keys.length > 6 ? '…' : ''}</span>` : ''}</div>`;
+    const item = r.row_label || (r.row_key || '').split('|').map((x) => hsLabels[x] || x.slice(0, 8)).join(' · ');
+    return `<tr>
+      <td style="white-space:nowrap">${esc(new Date(r.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }))}</td>
+      <td>${r.actor_id ? esc(hsNames[r.actor_id] || r.actor_id.slice(0, 8)) : '<span class="hint" style="margin:0">Automatic</span>'}</td>
+      <td>${esc(HS_AREAS[r.table_name] || r.table_name)}</td>
+      <td>${esc(item || '—')}</td>
+      <td class="hs-change">${body}</td>
+    </tr>`;
+  }).join('');
+  if (append) $('hsRows').insertAdjacentHTML('beforeend', html);
+  else $('hsRows').innerHTML = html || '<tr><td colspan="5">No changes in this period.</td></tr>';
+  hsOffset += rows.length;
+  $('hsCount').textContent = `${(count || 0).toLocaleString()} change${count === 1 ? '' : 's'}`;
+  show($('hsMore'), hsOffset < (count || 0));
+}
+['hsArea', 'hsWho', 'hsDays', 'hsSystem'].forEach((id) => $(id).addEventListener('change', () => { hsOffset = 0; loadHistory(false); }));
+$('hsRefresh').onclick = () => { hsOffset = 0; loadHistory(false); };
+$('hsMore').onclick = () => loadHistory(true);
 
 window.DialerAdmin = { showSection };
 })();
