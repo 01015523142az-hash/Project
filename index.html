@@ -4263,6 +4263,7 @@
               <option value="" selected>All queues</option>
               <option value="queue_review">Leads Queue Review</option>
               <option value="primehome">PrimeHome Buyers</option>
+              <option value="sales">Sales (converted opportunity)</option>
               <option value="tickets">Tickets Review</option>
               <option value="dispute_feedback">Dispute/Feedback</option>
               <option value="client_submission">Client Submission</option>
@@ -10148,7 +10149,71 @@ function applyRolePermissionsToNav(){
   const landingBtn = canLandOnDashboard
     ? tmBtn
     : Array.from(document.querySelectorAll('.tab-btn')).find(btn => btn.style.display !== 'none');
+  // v714: a refresh reopens the page this browser tab was on (staffPageRestore).
+  if(staffPageRestore()) return;
   if(landingBtn) activateTab(landingBtn.dataset.tab);
+}
+
+// v714 (the owner: "if I click Dialer Management, change to Activity and
+// refresh, it takes me back to Dialer Management -- it should bring me back
+// to the page I was on"). Two halves:
+//  1. the #dialer-admin/... address Dialer Management writes (so its own
+//     deep links work) is dropped the moment another page opens -- it was
+//     outliving the page and pulling every refresh back there;
+//  2. the page -- top-level tab plus each page's remembered sub-tab -- is
+//     written to this browser tab's sessionStorage as the page unloads, and
+//     the login landing reopens it instead of Dashboard. sessionStorage is
+//     per browser tab: it survives a refresh, not a new tab. The saved user
+//     id stops a different sign-in in the same tab inheriting it, and each
+//     page's own init still checks the sub-tab against the role, so nothing
+//     the role cannot see is reachable this way.
+const STAFF_PAGE_KEY = 'pt.staffPage';
+let staffPageMemoryOff = false;   // set by sign-out, so the unload after it saves nothing
+function staffPageSnapshot(){
+  if(staffPageMemoryOff || !myUserId) return;
+  const panel = document.querySelector('.tab-panel.active');
+  const tab = panel && panel.id.startsWith('tab-') ? panel.id.slice(4) : null;
+  if(!tab) return;
+  const state = {
+    uid: myUserId, tab,
+    tm: tmActiveSection, um: umActiveSection, audit: auditActiveSection,
+    leads: leadsActiveSection, csub: csubActiveSection, finance: financeActiveSection,
+    dataSci: dataSciActiveSection, taxes: taxesActiveSection, hr: hrActiveSection,
+    da: daActiveSection, daPath: daActivePath,
+    actGroup: activeActivityGroup, actKind: activeActivityKind,
+  };
+  try { sessionStorage.setItem(STAFF_PAGE_KEY, JSON.stringify(state)); } catch(e){}
+}
+window.addEventListener('pagehide', staffPageSnapshot);
+document.addEventListener('visibilitychange', () => { if(document.hidden) staffPageSnapshot(); });
+// Called by the login landing. True when it reopened a saved page.
+function staffPageRestore(){
+  let st = null;
+  try { st = JSON.parse(sessionStorage.getItem(STAFF_PAGE_KEY) || 'null'); } catch(e){}
+  if(!st || !st.tab || st.uid !== myUserId) return false;
+  // An explicit #dialer-admin/... link (admin.proptechnologyai.com redirects
+  // to one) wins over the remembered page.
+  if(/^#dialer-admin/.test(location.hash || '')) return false;
+  const btn = document.querySelector(`.tab-btn[data-tab="${st.tab}"]`);
+  if(!btn || !document.getElementById('tab-' + st.tab)) return false;
+  for(let el = btn; el && el !== document.body; el = el.parentElement){
+    if(el.style && el.style.display === 'none') return false;   // hidden for this role
+  }
+  if(st.tab === 'dialer_management' && !daVisibleSections().length) return false;
+  if(st.tm) tmActiveSection = st.tm;
+  if(st.um) umActiveSection = st.um;
+  if(st.audit) auditActiveSection = st.audit;
+  if(st.leads) leadsActiveSection = st.leads;
+  if(st.csub) csubActiveSection = st.csub;
+  if(st.finance) financeActiveSection = st.finance;
+  if(st.dataSci) dataSciActiveSection = st.dataSci;
+  if(st.taxes) taxesActiveSection = st.taxes;
+  if(st.hr) hrActiveSection = st.hr;
+  if(st.da){ daActiveSection = st.da; daActivePath = st.daPath || null; }
+  if(st.actGroup) activeActivityGroup = st.actGroup;
+  if(st.actKind) activeActivityKind = st.actKind;
+  activateTab(st.tab);
+  return true;
 }
 
 // Shared by the nav click handler and the login flow above — switches
@@ -10156,6 +10221,11 @@ function applyRolePermissionsToNav(){
 function activateTab(tabKey){
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabKey));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${tabKey}`));
+  // v714: leaving Dialer Management drops its #dialer-admin/... address (see
+  // staffPageSnapshot above) -- otherwise a refresh deep-links back into it.
+  if(tabKey !== 'dialer_management' && /^#dialer-admin/.test(location.hash || '')){
+    try { history.replaceState(null, '', location.pathname + location.search); } catch(e){}
+  }
   // Skip Trace sub-tab polls every 10s while visible (see
   // startCsubSkiptracePolling()) -- stop it the moment the person leaves
   // Data Science entirely, not just when switching sub-tabs. (v358: Skip
@@ -10203,6 +10273,8 @@ async function performSignOut({ idleTimeout = false } = {}){
     console.error('Sign-out encountered an error', e);
   }finally{
     try{ sessionStorage.removeItem(IDLE_LAST_ACTIVITY_KEY); }catch(e){}
+    staffPageMemoryOff = true;   // v714: the next sign-in starts on its landing page
+    try{ sessionStorage.removeItem(STAFF_PAGE_KEY); }catch(e){}
     if(idleTimeout){
       try{ sessionStorage.setItem(IDLE_SIGNOUT_MESSAGE_KEY, 'You were signed out after 4 hours of inactivity — please sign in again.'); }catch(e){}
     }
@@ -11727,7 +11799,9 @@ async function subscribeStaffOpsRealtime(){
       // be the reason PrimeHome was excluded at all, and it now gets ONE
       // summary notification from the importer (leads_import_notify).
       const fromFile = !!(lead.imported || lead.last_import_batch);
-      if(!lead.ticket_stage && !fromFile && staffNotifKindAllowed('lead_submitted')){
+      // v713: nor a Sales rep's converted opportunity -- it does not go to the
+      // agents' QA queue, so a "needs review" alert pointing there is wrong.
+      if(!lead.ticket_stage && !fromFile && !isSalesConversionLead(lead) && staffNotifKindAllowed('lead_submitted')){
         const prime = isPrimeHomeBuyersLead(lead);
         pushStaffNotification({
           priority: true,   // v645: needs someone to act
@@ -25825,7 +25899,10 @@ async function initActivityTab(){
   document.querySelectorAll('.act-group-btn').forEach(b => {
     b.style.display = activitySubtabBtns(b.dataset.actGroup).length > 0 ? '' : 'none';
   });
-  const firstUsableGroup = ACTIVITY_GROUPS.find(g => activitySubtabBtns(g.key).length > 0);
+  // v714: back to the group this person was last on (a refresh restores it)
+  // while it still has a sub-tab they can see; otherwise the first usable one.
+  const rememberedGroup = ACTIVITY_GROUPS.find(g => g.key === activeActivityGroup && activitySubtabBtns(g.key).length > 0);
+  const firstUsableGroup = rememberedGroup || ACTIVITY_GROUPS.find(g => activitySubtabBtns(g.key).length > 0);
   activateActivityGroup(firstUsableGroup ? firstUsableGroup.key : activeActivityGroup);
 }
 
@@ -32657,8 +32734,18 @@ function isTicketInFlight(r){
   // Review table) since staff can still redirect it to another campaign.
   return r.ticket_stage === 'staff_review' || r.ticket_stage === 'client_review' || r.ticket_stage === 'client_rejected';
 }
+// v713 (the owner: "leads from sales which is opportunity and converted to
+// leads shouldn't be routed to Leads Queue Review -- that is for agents, not
+// sales"). A Sales rep's "Convert to lead" on a dialer opportunity creates
+// the lead with extra_fields.dialer_opportunity_id (dialer-call-control,
+// convert_opportunity); an agent's submission never carries it. Those leads
+// stay out of the agents' QA queue -- and out of its counts and export --
+// but remain in All Queue with everything else.
+function isSalesConversionLead(r){
+  return !!(r && r.extra_fields && r.extra_fields.dialer_opportunity_id);
+}
 function excludedFromGeneralQueue(r){
-  return isPrimeHomeBuyersLead(r) || isTicketInFlight(r);
+  return isPrimeHomeBuyersLead(r) || isTicketInFlight(r) || isSalesConversionLead(r);
 }
 // v217: a lead that reached Leads Queue Review after a client said Yes to
 // a ticket is otherwise indistinguishable from one submitted directly —
@@ -33533,6 +33620,9 @@ let allQueueExpandedKey = null; // `${source}-${id}` of the row currently showin
 function allQueueClassifyLead(r){
   if(r.ticket_stage) return 'tickets';
   if(isPrimeHomeBuyersLead(r)) return 'primehome';
+  // v713: a Sales rep's converted opportunity never enters Leads Queue
+  // Review (see isSalesConversionLead), so it is not labelled as if it had.
+  if(isSalesConversionLead(r)) return 'sales';
   return 'queue_review';
 }
 
@@ -33568,6 +33658,7 @@ function renderAllQueueTable(){
   const QUEUE_META = {
     queue_review: { label: 'Leads Queue Review', color: 'var(--text)' },
     primehome: { label: 'PrimeHome Buyers', color: 'var(--focus)' },
+    sales: { label: 'Sales (converted opportunity)', color: 'var(--good)' },   // v713
     tickets: { label: 'Tickets Review', color: 'var(--away)' },
     dispute_feedback: { label: 'Dispute/Feedback', color: 'var(--danger)' },
     client_submission: { label: 'Client Submission', color: 'var(--text-dim)' },
