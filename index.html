@@ -2793,6 +2793,29 @@
   .profile-menu-avatar img{ width:38px; height:38px; border-radius:50%; object-fit:cover; display:block; }
   .profile-menu-btn img{ width:34px; height:34px; border-radius:50%; object-fit:cover; display:block; }
 
+  /* v715 (the owner: "make the tabs / subtabs font style on the staff portal
+     the same as the dialer"). The dialer's nav is its sans face, normal case,
+     semibold -- no mono, no uppercase, no letter-spacing (dialer .tab-btn:
+     var(--sans) 13.5px / 600). Same type here for the sidebar tabs, every
+     sidebar sub-tab and the in-page pill sub-tabs; colours, shapes and
+     spacing are untouched. Last in the sheet so it wins over the per-tab
+     rules above. */
+  .side-main-nav .tab-btn,
+  .um-subtab-btn, .leads-subtab-btn, .csub-subtab-btn, .finance-subtab-btn, .hr-subtab-btn,
+  .datasci-subtab-btn, .taxes-subtab-btn, .tm-subtab-btn, .audit-subtab-btn,
+  .ispd-subtab-btn, .sf-subtab-btn, .act-subtab-btn, .act-group-btn, .integ-subtab-btn,
+  .side-subnav .dialer-subtab-btn, .side-subnav .da-subtab-btn{
+    font-family:var(--sans); text-transform:none; letter-spacing:0; font-weight:600;
+  }
+  .side-main-nav > .side-nav-group > .tab-btn{ font-size:13.5px; }
+  .um-subtab-btn, .leads-subtab-btn, .csub-subtab-btn, .finance-subtab-btn, .hr-subtab-btn,
+  .datasci-subtab-btn, .taxes-subtab-btn, .tm-subtab-btn, .audit-subtab-btn,
+  .ispd-subtab-btn, .sf-subtab-btn, .act-subtab-btn, .act-group-btn, .integ-subtab-btn,
+  .side-subnav .dialer-subtab-btn, .side-subnav .da-subtab-btn,
+  .side-subnav .um-subtab-btn, .side-subnav .leads-subtab-btn, .side-subnav .csub-subtab-btn,
+  .side-subnav .finance-subtab-btn, .side-subnav .hr-subtab-btn, .side-subnav .datasci-subtab-btn,
+  .side-subnav .taxes-subtab-btn, .side-subnav .tm-subtab-btn, .side-subnav .audit-subtab-btn,
+  .side-subnav .act-subtab-btn, .side-subnav .act-group-btn{ font-size:12.5px; }
 </style>
 </head>
 <body>
@@ -29960,11 +29983,29 @@ async function loadCampaignCriteriaKeywords(){
 }
 
 let leadCriteriaEvaluationsByLeadId = {}; // lead_id -> criterionNormLabel -> row
+// v715: .in(column, ids) for a long id list, split into 200-id requests that
+// all go out at once. A single .in() with every lead id (~2,300 ids -> an
+// ~86 KB URL) is past what the API gateway accepts: those requests never
+// reached the server (none in the API logs), so the maps they fill -- saved
+// Campaign Fit ratings and AI verdicts -- were silently empty in the queue.
+// Rows come back in chunk order (each chunk newest-first by orderCol when
+// given), with the first error, if any.
+async function selectInChunks(table, cols, column, ids, orderCol){
+  const chunks = [];
+  for(let i = 0; i < ids.length; i += 200) chunks.push(ids.slice(i, i + 200));
+  const results = await Promise.all(chunks.map(c => {
+    let q = sb.from(table).select(cols).in(column, c);
+    if(orderCol) q = q.order(orderCol, { ascending: false });
+    return q.then(r => r);
+  }));
+  const failed = results.find(r => r.error);
+  return { data: results.flatMap(r => r.data || []), error: failed ? failed.error : null };
+}
+
 async function loadLeadCriteriaEvaluations(leadIds){
   if(!leadIds || !leadIds.length){ leadCriteriaEvaluationsByLeadId = {}; return; }
-  const { data, error } = await sb.from('lead_criteria_evaluations')
-    .select('lead_id, campaign_norm_name, criterion_norm_label, criterion_label, expected_value, rating, source')
-    .in('lead_id', leadIds);
+  const { data, error } = await selectInChunks('lead_criteria_evaluations',
+    'lead_id, campaign_norm_name, criterion_norm_label, criterion_label, expected_value, rating, source', 'lead_id', leadIds);   // v715: chunked
   if(error){ console.error('Failed to load lead criteria evaluations', error); return; }
   const map = {};
   (data || []).forEach(r => { (map[r.lead_id] ||= {})[r.criterion_norm_label] = r; });
@@ -29977,9 +30018,8 @@ async function loadLeadCriteriaEvaluations(leadIds){
 let leadAiFitEvaluationsByLeadId = {}; // lead_id -> campaignNormName -> row
 async function loadLeadAiFitEvaluations(leadIds){
   if(!leadIds || !leadIds.length){ leadAiFitEvaluationsByLeadId = {}; return; }
-  const { data, error } = await sb.from('lead_ai_fit_evaluations')
-    .select('lead_id, campaign_norm_name, overall, summary, criteria, model, created_at')
-    .in('lead_id', leadIds);
+  const { data, error } = await selectInChunks('lead_ai_fit_evaluations',
+    'lead_id, campaign_norm_name, overall, summary, criteria, model, created_at', 'lead_id', leadIds);   // v715: chunked
   if(error){ console.error('Failed to load lead AI fit evaluations', error); return; }
   const map = {};
   (data || []).forEach(r => {
@@ -32020,7 +32060,84 @@ document.querySelectorAll('.sf-subtab-btn').forEach(btn => {
   btn.addEventListener('click', () => activateSfSection(btn.dataset.sfSection));
 });
 
-async function loadLeads(){
+// v715: the leads in the loaded window, 1,000-row pages. The first page also
+// asks for the row count, so every other page is requested at the same time;
+// the old one-page-at-a-time rule (stop at the first short page) still
+// finishes the job if the count is missing or rows arrived after it was
+// taken. Same order and tiebreaker as before (v489: submitted_at, then id).
+// v561: the "Imported" filter REPLACES the date bounds (a re-import never
+// moves submitted_at). v133: an error goes back to the caller, who shows it.
+const LEADS_SELECT_COLS = 'id, user_id, task_id, submission_form_id, count, submitted_at, status, seller_investor_name, seller_phone, extra_fields, review_note, imported, ticket_stage, desouky_chat_message_id, istl_export_status, istl_export_status_at, manual_delivery_at, manual_delivery_note';
+const LEADS_PAGE_SIZE = 1000;
+function leadsPageQuery(from, start, end, withCount){
+  let query = sb.from('leads')
+    .select(LEADS_SELECT_COLS, withCount ? { count: 'exact' } : undefined)
+    .order('submitted_at', { ascending: false })
+    .order('id', { ascending: true })
+    .range(from, from + LEADS_PAGE_SIZE - 1);
+  if(leadsImportBatchFilter){
+    query = query.eq('last_import_batch', leadsImportBatchFilter);
+  } else {
+    if(start) query = query.gte('submitted_at', start);
+    if(end) query = query.lte('submitted_at', end);
+  }
+  return query.then(r => r);
+}
+async function fetchAllLeadsRows(start, end){
+  const first = await leadsPageQuery(0, start, end, true);
+  if(first.error) return { rows: [], error: first.error };
+  const rows = (first.data || []).slice();
+  let lastLen = rows.length;
+  let next = LEADS_PAGE_SIZE;
+  if(lastLen === LEADS_PAGE_SIZE && typeof first.count === 'number' && first.count > next){
+    const froms = [];
+    for(let f = next; f < first.count; f += LEADS_PAGE_SIZE) froms.push(f);
+    const pages = await Promise.all(froms.map(f => leadsPageQuery(f, start, end, false)));
+    for(const p of pages){
+      if(p.error) return { rows, error: p.error };
+      rows.push(...(p.data || []));
+      lastLen = (p.data || []).length;
+    }
+    next += froms.length * LEADS_PAGE_SIZE;
+  }
+  while(lastLen === LEADS_PAGE_SIZE){
+    const p = await leadsPageQuery(next, start, end, false);
+    if(p.error) return { rows, error: p.error };
+    rows.push(...(p.data || []));
+    lastLen = (p.data || []).length;
+    next += LEADS_PAGE_SIZE;
+  }
+  return { rows, error: null };
+}
+// v715: latest outbound send per lead, split by channel (was inline below;
+// the live queue update uses it too).
+function leadsNoteSendRow(s){
+  if(!leadsIspeedtoleadSendByLeadId[s.lead_id]) leadsIspeedtoleadSendByLeadId[s.lead_id] = s;
+  if(s.channel === 'gyhomes'){ if(!leadsGyhomesSendByLeadId[s.lead_id]) leadsGyhomesSendByLeadId[s.lead_id] = s; }
+  else { if(!leadsPrimehomeSendByLeadId[s.lead_id]) leadsPrimehomeSendByLeadId[s.lead_id] = s; }
+}
+
+// v715: one Leads load at a time. A call that arrives while one is running
+// gets ONE follow-up load after it (the running one may predate the change
+// that caller just made), shared by everyone who arrives meanwhile -- rather
+// than full reloads stacking on top of each other.
+let leadsLoadInFlight = null;
+let leadsLoadQueued = null;
+let leadsLoadedOnce = false;
+function loadLeads(){
+  if(leadsLoadInFlight){
+    if(!leadsLoadQueued){
+      leadsLoadQueued = leadsLoadInFlight.catch(() => {}).then(() => { leadsLoadQueued = null; return loadLeads(); });
+    }
+    return leadsLoadQueued;
+  }
+  const p = loadLeadsNow();
+  leadsLoadInFlight = p;
+  const clear = () => { if(leadsLoadInFlight === p) leadsLoadInFlight = null; };
+  p.then(clear, clear);
+  return p;
+}
+async function loadLeadsNow(){
   // v134/v217: restore whatever range was last set (see
   // restoreLeadsDateRange() above).
   if(!$('leadsFromDateInput').value && !$('leadsToDateInput').value) restoreLeadsDateRange();
@@ -32033,7 +32150,25 @@ async function loadLeads(){
     $('leadsToDateInput').value = DEFAULT_DATE_RANGE_TO;
   }
 
-  const { data: agents } = await sb.from('profiles').select('id, full_name, email, role').order('full_name');
+  // v715 (the owner: "any subtab under Leads takes 20 seconds after a
+  // refresh -- it should be near instant"). This made ~35 requests one after
+  // another: six lookups, the leads in 1,000-row pages, then postbacks and
+  // send history in 200-id chunks, each waiting for the last (API logs:
+  // ~0.2 s apart, ~8 s of pure waiting before any download or drawing). Every
+  // request now leaves as soon as what it needs is known: the lookups and the
+  // first leads page together, the other pages together once the count is
+  // back, the four id-keyed reads together (below). Same queries, same data,
+  // nothing cached. A query builder only sends when awaited; .then() sends now.
+  const pAgents = sb.from('profiles').select('id, full_name, email, role').order('full_name').then(r => r);
+  const pTasks = sb.from('tasks').select('id, name, category_id').order('name').then(r => r);
+  const pForms = sb.from('lead_submission_forms').select('id, name').then(r => r);
+  const pSchedules = sb.from('schedules').select('user_id, timezone').then(r => r);
+  const pCatFields = sb.from('task_category_fields').select('category_id, field_key, label, field_type, options, required, sort_order').then(r => r);
+  const pFormFields = sb.from('lead_submission_form_fields').select('form_id, field_key, label, field_type, options, required, sort_order').then(r => r);
+  const { start, end } = leadsFetchRangeBounds();
+  const pLeads = fetchAllLeadsRows(start, end);
+
+  const { data: agents } = await pAgents;
   leadsAllAgents = (agents || []).filter(a => !PROTECTED_ROLES.has(a.role));
   // v85: unfiltered — agentName() below needs to resolve EVERY submitter,
   // including an Owner/Admin who submitted a lead via the dashboard's own
@@ -32043,13 +32178,13 @@ async function loadLeads(){
   // Owner/Admin's own name silently came up blank everywhere a lead they
   // personally submitted was displayed.
   leadsAllProfiles = agents || [];
-  const { data: tasks } = await sb.from('tasks').select('id, name, category_id').order('name');
+  const { data: tasks } = await pTasks;
   leadsAllTasks = tasks || [];
   // v88: campaigns = Submission Forms (see leadsAllForms/leadsFormNameFn
   // comments above) — fetched the same way, right alongside tasks.
-  const { data: forms } = await sb.from('lead_submission_forms').select('id, name');
+  const { data: forms } = await pForms;
   leadsAllForms = forms || [];
-  const { data: leadsScheduleRows } = await sb.from('schedules').select('user_id, timezone');
+  const { data: leadsScheduleRows } = await pSchedules;
   leadsAgentTz = {};
   (leadsScheduleRows || []).forEach(s => { if(s.timezone) leadsAgentTz[s.user_id] = s.timezone; });
 
@@ -32066,7 +32201,7 @@ async function loadLeads(){
   // below, this is what lets the Review popup render a real <select>
   // matching the form's own dropdown options instead of a free-text input
   // for select/multi fields.
-  const { data: catFieldRows } = await sb.from('task_category_fields').select('category_id, field_key, label, field_type, options, required, sort_order');
+  const { data: catFieldRows } = await pCatFields;
   const fieldDefsByCategory = {};
   (catFieldRows || []).forEach(f => {
     (fieldDefsByCategory[f.category_id] ||= {})[f.field_key] = { label: f.label, type: f.field_type || 'text', options: f.options || [], required: !!f.required, sort_order: f.sort_order || 0 };
@@ -32078,7 +32213,7 @@ async function loadLeads(){
   // submission_form_id set, so this is a second, separate lookup rather
   // than folding into fieldDefsByCategory above (there's no category to
   // key it by).
-  const { data: formFieldRows } = await sb.from('lead_submission_form_fields').select('form_id, field_key, label, field_type, options, required, sort_order');
+  const { data: formFieldRows } = await pFormFields;
   const fieldDefsByForm = {};
   (formFieldRows || []).forEach(f => {
     (fieldDefsByForm[f.form_id] ||= {})[f.field_key] = { label: f.label, type: f.field_type || 'text', options: f.options || [], required: !!f.required, sort_order: f.sort_order || 0 };
@@ -32184,7 +32319,6 @@ async function loadLeads(){
     sel.value = prev;
   });
 
-  const { start, end } = leadsFetchRangeBounds();
   const label = leadsRangeLabel();
 
   // v217: start/end are only null when no range was picked at all (see
@@ -32207,44 +32341,9 @@ async function loadLeads(){
   // handling/surfacing (console + the visible banner) is unchanged.
   // v568: manual_delivery_at carries a staff "this is closed, never send"
   // decision — see ispdManuallyDelivered().
-  const LEADS_SELECT_COLS = 'id, user_id, task_id, submission_form_id, count, submitted_at, status, seller_investor_name, seller_phone, extra_fields, review_note, imported, ticket_stage, desouky_chat_message_id, istl_export_status, istl_export_status_at, manual_delivery_at, manual_delivery_note';
-  const LEADS_PAGE_SIZE = 1000;
-  const rows = [];
-  let leadsFetchError = null;
-  for(let from = 0; ; from += LEADS_PAGE_SIZE){
-    let query = sb.from('leads')
-      .select(LEADS_SELECT_COLS)
-      .order('submitted_at', { ascending: false })
-      .order('id', { ascending: true })
-      .range(from, from + LEADS_PAGE_SIZE - 1);
-    // v561: "Imported" filter. This deliberately REPLACES the date bounds
-    // rather than narrowing within them, because the whole problem it
-    // solves is that a re-import is invisible to a date filter: matching a
-    // row to an existing lead updates its fields but never moves
-    // submitted_at, so leads from today's upload stay filed under whenever
-    // they were first submitted (live example: 320 of a 347-row re-upload
-    // sat under 30 Aug while the agent's September range showed 19). A
-    // client-side filter could not fix that -- those rows are not fetched
-    // at all -- so this has to change what is fetched.
-    if(leadsImportBatchFilter){
-      query = query.eq('last_import_batch', leadsImportBatchFilter);
-    } else {
-      if(start) query = query.gte('submitted_at', start);
-      if(end) query = query.lte('submitted_at', end);
-    }
-    // v133: this used to only destructure `data`, silently discarding
-    // `error` — a failed fetch (bad RLS, a malformed date range, a network
-    // blip, anything) meant `rows` came back null/undefined and every
-    // subtab on this tab quietly rendered "0 leads" with NOTHING printed
-    // anywhere, not even the console, since nothing here ever called
-    // console.error on it. Now it's surfaced two ways: logged so it shows
-    // up in DevTools, and written into a visible banner so it doesn't look
-    // like an empty date range when it's actually a failed request.
-    const { data, error } = await query;
-    if(error){ leadsFetchError = error; console.error('Failed to load leads:', error); break; }
-    rows.push(...(data || []));
-    if(!data || data.length < LEADS_PAGE_SIZE) break;
-  }
+  // v715: started at the top of this function (fetchAllLeadsRows).
+  const { rows, error: leadsFetchError } = await pLeads;
+  if(leadsFetchError) console.error('Failed to load leads:', leadsFetchError);
   const leadsErrorBanner = $('leadsFetchErrorBanner');
   if(leadsErrorBanner){
     leadsErrorBanner.style.display = leadsFetchError ? 'block' : 'none';
@@ -32271,52 +32370,32 @@ async function loadLeads(){
   // safe size regardless of how wide the date range gets, and logging
   // any chunk's error means a future failure is visible instead of
   // silently wiping the whole map again.
-  const IN_QUERY_CHUNK_SIZE = 200;
+  // v715: the chunks go out together (they were awaited one by one).
   async function fetchInChunks(table, selectCols, column, ids, orderCol){
-    const rows = [];
-    for(let i = 0; i < ids.length; i += IN_QUERY_CHUNK_SIZE){
-      const chunk = ids.slice(i, i + IN_QUERY_CHUNK_SIZE);
-      const { data, error } = await sb.from(table).select(selectCols).in(column, chunk).order(orderCol, { ascending: false });
-      if(error){ console.error(`Failed to load a chunk of ${table}:`, error); continue; }
-      rows.push(...(data || []));
-    }
-    return rows;
+    const { data, error } = await selectInChunks(table, selectCols, column, ids, orderCol);
+    if(error) console.error(`Failed to load a chunk of ${table}:`, error);
+    return data;
   }
 
+  // v715: these four were awaited one after another (the first two chunk by
+  // chunk); they only need the lead ids, so they now run together.
+  //   postbacks   -- v564: matched_via tells a REAL match from a
+  //                  correlation-only one (see ispdHasPostbackDelivery()).
+  //   submissions -- v69: OUTBOUND send status, latest row per lead, kept on
+  //                  module-level maps so the modal needs no second round trip.
+  //   v98 / v381  -- saved per-criterion ratings and AI Second Opinion verdicts.
+  const [postbacks, submissions] = await Promise.all([
+    leadIds.length ? fetchInChunks('ispeedtolead_postbacks', 'matched_lead_id, mapped_status, status_raw, reason, amount, received_at, matched_via', 'matched_lead_id', leadIds, 'received_at') : [],
+    leadIds.length ? fetchInChunks('ispeedtolead_submissions', 'lead_id, success, created_at, error, submitted_by, channel', 'lead_id', leadIds, 'created_at') : [],
+    loadLeadCriteriaEvaluations(leadIds),
+    loadLeadAiFitEvaluations(leadIds),
+  ]);
   const ispeedtoleadByLeadId = {};
-  if(leadIds.length){
-    // v564: matched_via is needed to tell a REAL match from a
-    // correlation-only one — see ispdHasPostbackDelivery(). Without it the
-    // "Delivered (postback)" signal cannot distinguish the two and marks
-    // leads as delivered that never were.
-    const postbacks = await fetchInChunks('ispeedtolead_postbacks', 'matched_lead_id, mapped_status, status_raw, reason, amount, received_at, matched_via', 'matched_lead_id', leadIds, 'received_at');
-    postbacks.forEach(p => { if(!ispeedtoleadByLeadId[p.matched_lead_id]) ispeedtoleadByLeadId[p.matched_lead_id] = p; });
-  }
-
-  // v69: OUTBOUND send status — separate from the inbound postbacks above.
-  // Latest ispeedtolead_submissions row per lead (any outcome), used to
-  // show "Sent" / "Send failed" / nothing yet in the new iSpeedToLead
-  // column. Kept on a module-level map so the modal can read it without a
-  // second round trip when it's opened right after this render.
+  postbacks.forEach(p => { if(!ispeedtoleadByLeadId[p.matched_lead_id]) ispeedtoleadByLeadId[p.matched_lead_id] = p; });
   leadsIspeedtoleadSendByLeadId = {};
   leadsGyhomesSendByLeadId = {};
   leadsPrimehomeSendByLeadId = {};
-  if(leadIds.length){
-    const submissions = await fetchInChunks('ispeedtolead_submissions', 'lead_id, success, created_at, error, submitted_by, channel', 'lead_id', leadIds, 'created_at');
-    submissions.forEach(s => {
-      if(!leadsIspeedtoleadSendByLeadId[s.lead_id]) leadsIspeedtoleadSendByLeadId[s.lead_id] = s;
-      if(s.channel === 'gyhomes'){ if(!leadsGyhomesSendByLeadId[s.lead_id]) leadsGyhomesSendByLeadId[s.lead_id] = s; }
-      else { if(!leadsPrimehomeSendByLeadId[s.lead_id]) leadsPrimehomeSendByLeadId[s.lead_id] = s; }
-    });
-  }
-
-  // v98: manual per-criterion ratings already saved for these leads —
-  // needed so leadsCampaignFitFor()/the Review popup can show a reviewer's
-  // prior verdict instead of re-guessing from scratch every render.
-  await loadLeadCriteriaEvaluations(leadIds);
-  // v381: AI Second Opinion results already saved for these leads — lets
-  // leadsCampaignFitFor() prefer the real AI verdict over the heuristic.
-  await loadLeadAiFitEvaluations(leadIds);
+  submissions.forEach(leadsNoteSendRow);
 
   const agentName = id => { const a = leadsAllProfiles.find(x => x.id === id); return a ? (a.full_name || a.email) : '—'; };
   const taskName = id => { const t = leadsAllTasks.find(x => x.id === id); return t ? t.name : 'No campaign'; };
@@ -32470,6 +32549,111 @@ async function loadLeads(){
   leadsTicketFormId = (leadsAllForms.find(f => f.name === TICKET_FORM_NAME) || {}).id || null;
   populateLeadsCampaignFilterOptions();
   populateLeadsIspdSentByFilterOptions(agentName);
+  renderLeadsQueueTable();
+  renderIspdReviewTable();
+  renderTicketsReviewTable();
+  if(leadsActiveSection === 'all_queue') renderAllQueueTable();
+  leadsLoadedOnce = true;
+  subscribeLeadsLive();   // v715: from here on the queues update live
+}
+
+// v715: live Leads queues (the owner: "the lead queues should be updated, not
+// cached -- real-time or 2-3 seconds delayed"). Every INSERT / UPDATE / DELETE
+// on `leads` this person may see (Realtime applies the same row rules) is
+// gathered for 0.7 s, then ONLY those leads are re-read -- the row plus its
+// send history and postbacks -- merged into leadsFullData, and the queue
+// tables redraw. No full reload per change. A full reload is still used where
+// it is the only accurate answer: the Dashboard subtab (its cards are worked
+// out inside loadLeadsNow), the Imported filter, a burst of more than 150
+// leads (a file import), a failed re-read, and after the socket reconnects
+// (changes made while it was down were never delivered). ispeedtolead_*
+// tables are NOT in the realtime publication -- binding one would kill the
+// channel (see the realtime memory note) -- so a send shows up through the
+// lead row's own update, or the next load.
+let leadsLiveChannel = null;
+let leadsLiveEverSubscribed = false;
+let leadsLiveRetryTimer = null;
+let leadsLiveRetryDelay = 2000;
+let leadsLiveTimer = null;
+const leadsLivePending = new Set();
+function subscribeLeadsLive(){
+  if(leadsLiveChannel || !sb) return;
+  const ch = sb.channel('leads-live-queues');
+  leadsLiveChannel = ch;
+  ch.on('postgres_changes', { event: '*', schema: 'public', table: 'leads' }, (payload) => {
+      const id = (payload.new && payload.new.id) || (payload.old && payload.old.id);
+      if(!id) return;
+      leadsLivePending.add(id);
+      leadsLiveSchedule();
+    })
+    .subscribe((status) => {
+      if(ch !== leadsLiveChannel) return;   // an old channel being torn down
+      if(status === 'SUBSCRIBED'){
+        leadsLiveRetryDelay = 2000;
+        if(leadsLiveEverSubscribed && leadsLoadedOnce) loadLeads();   // catch up on what the outage missed
+        leadsLiveEverSubscribed = true;
+      } else if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT'){
+        leadsLiveScheduleRetry();
+      }
+    });
+}
+function leadsLiveScheduleRetry(){
+  if(leadsLiveRetryTimer) return;
+  const delay = leadsLiveRetryDelay;
+  leadsLiveRetryDelay = Math.min(delay * 2, 60000);
+  leadsLiveRetryTimer = setTimeout(() => {
+    leadsLiveRetryTimer = null;
+    const old = leadsLiveChannel;
+    leadsLiveChannel = null;
+    try{ if(old) sb.removeChannel(old); }catch(e){ /* already gone */ }
+    subscribeLeadsLive();
+  }, delay);
+}
+function leadsLiveSchedule(){
+  if(!leadsLiveTimer) leadsLiveTimer = setTimeout(leadsLiveFlush, 700);
+}
+document.addEventListener('visibilitychange', () => { if(!document.hidden && leadsLivePending.size) leadsLiveSchedule(); });
+function leadsRowInLoadedWindow(r){
+  const { start, end } = leadsFetchRangeBounds();
+  const t = new Date(r.submitted_at).getTime();
+  if(start && t < new Date(start).getTime()) return false;
+  if(end && t > new Date(end).getTime()) return false;
+  return true;
+}
+function leadsRowOrder(a, b){
+  const ta = new Date(a.submitted_at).getTime(), tb = new Date(b.submitted_at).getTime();
+  if(ta !== tb) return tb - ta;                          // newest first
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;         // then id, as the fetch orders
+}
+async function leadsLiveFlush(){
+  leadsLiveTimer = null;
+  if(!leadsLoadedOnce){ leadsLivePending.clear(); return; }            // never opened: it loads fresh when it is
+  const panel = $('tab-leads');
+  if(!panel || !panel.classList.contains('active')){ leadsLivePending.clear(); return; }   // reloads on the next open
+  if(document.hidden) return;                                           // kept; flushed when looked at again
+  const ids = [...leadsLivePending];
+  leadsLivePending.clear();
+  if(!ids.length) return;
+  if(leadsLoadInFlight){ try{ await leadsLoadInFlight; }catch(e){ /* shown by the load itself */ } }
+  if(leadsActiveSection === 'dashboard' || leadsImportBatchFilter || ids.length > 150){ loadLeads(); return; }
+  const [leadRes, subRes, pbRes] = await Promise.all([
+    selectInChunks('leads', LEADS_SELECT_COLS, 'id', ids),
+    selectInChunks('ispeedtolead_submissions', 'lead_id, success, created_at, error, submitted_by, channel', 'lead_id', ids, 'created_at'),
+    selectInChunks('ispeedtolead_postbacks', 'matched_lead_id, mapped_status, status_raw, reason, amount, received_at, matched_via', 'matched_lead_id', ids, 'received_at'),
+  ]);
+  if(leadRes.error || subRes.error || pbRes.error){ loadLeads(); return; }
+  if(leadsLoadInFlight) return;   // a full load started meanwhile, and it carries these too
+  const idSet = new Set(ids);
+  const merged = leadsFullData.filter(r => !idSet.has(r.id));
+  leadRes.data.forEach(r => { if(leadsRowInLoadedWindow(r)) merged.push(r); });   // deleted / hidden / out of range -> dropped
+  merged.sort(leadsRowOrder);
+  leadsFullData = merged;
+  ids.forEach(id => {
+    delete leadsIspeedtoleadSendByLeadId[id]; delete leadsGyhomesSendByLeadId[id];
+    delete leadsPrimehomeSendByLeadId[id]; delete leadsInboundPostbackByLeadId[id];
+  });
+  subRes.data.forEach(leadsNoteSendRow);
+  pbRes.data.forEach(p => { if(!leadsInboundPostbackByLeadId[p.matched_lead_id]) leadsInboundPostbackByLeadId[p.matched_lead_id] = p; });
   renderLeadsQueueTable();
   renderIspdReviewTable();
   renderTicketsReviewTable();
