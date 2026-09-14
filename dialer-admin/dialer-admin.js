@@ -1,0 +1,3345 @@
+/* dialer-admin/dialer-admin.js
+ *
+ * v675: Dialer Admin inside the staff portal (Dialer Management sub-tabs).
+ * Generated once from dialer/admin.html by tools/convert-dialer-admin.py and
+ * now the source. The portal sets window.__dialerAdminCtx, injects
+ * dialer-admin.html into #daHost, then loads this; it exposes
+ * window.DialerAdmin.showSection(key).
+ *
+ * Wrapped in one closure so its `$`, `sb`, `esc`, `show` and friends cannot
+ * collide with the portal's globals of the same names.
+ */
+(function () {
+
+'use strict';
+
+const DA = window.__dialerAdminCtx;   // set by the portal before this loads
+const SUPABASE_URL = DA.supabaseUrl;
+const SUPABASE_ANON_KEY = DA.anonKey;
+// MUST match dialer/index.html's client config, and for the same reason: the
+// staff portal stores its Supabase session in sessionStorage, NOT the
+// supabase-js default of localStorage. A default client here looks in the
+// wrong place, finds nothing, and reports "Not signed in" to someone who is
+// very much signed in one tab over.
+// The portal's own client and session -- no second sign-in.
+const sb = DA.sb;
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function callFn(name, body) {
+  const { data: { session } } = await sb.auth.getSession();
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${session?.access_token || SUPABASE_ANON_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body || {}),
+  });
+  return res.json();
+}
+function say(el, text, kind) {
+  el.className = 'msg ' + (kind || 'ok');
+  el.textContent = text;
+  el.classList.toggle('hide', !text);
+}
+
+// ------------------------------------------------------------------ boot --
+let campaigns = [];
+let meId = null;            // written into dialer_campaign_agents.assigned_by
+let isOwnerAdmin = false;   // may order numbers (spends money)
+let canManage = false;      // may change campaigns, lists, DID status
+let isDialerAdmin = false;  // v592: may edit the outcome catalogue (its RLS is admin-only)
+let canReview = false;      // may look, and nothing else
+
+// Read-only viewers see the same screens with every write control removed
+// rather than a stripped-down page: the point of giving Quality access is
+// that they see what the floor sees. Ordering is hidden even from managers,
+// because it charges a live carrier account.
+const DA_WRITE_IDS = {
+  numbers: ['searchBtn', 'orderBtn', 'syncBtn', 'searchNpa', 'searchLimit'],
+  lists: ['impBtn', 'impCampaign', 'impName', 'impFile', 'impCsv', 'impScrubbed', 'impScrubDate'],
+  campaigns: ['cCreate', 'cName', 'cMode', 'cStart', 'cEnd'],
+  inbound: ['qCreate', 'qName', 'qOpen', 'qClose'],
+};
+function applyReadOnly(tab) {
+  // Everything back on, then this section's rules.
+  Object.values(DA_WRITE_IDS).flat().forEach((id) => { const el = $(id); if (el) { el.disabled = false; el.title = ''; } });
+  document.querySelectorAll('#tab-lists .panel:first-child, #tab-campaigns .panel:first-child, #tab-inbound .panel:first-child')
+    .forEach((el) => el.classList.remove('hide'));
+  const note = $('daReadOnlyNote');
+  if (!canManage) {
+    (DA_WRITE_IDS[tab] || []).forEach((id) => { const el = $(id); if (el) el.disabled = true; });
+    const create = document.querySelector('#tab-' + tab + ' .panel:first-child');
+    if (create && ['lists', 'campaigns', 'inbound'].includes(tab)) create.classList.add('hide');
+    note.textContent = 'View only. Your role can see this section but not change it.';
+    show(note, true);
+  } else {
+    show(note, false);
+    if (!isOwnerAdmin) {
+      // Managers run the floor but do not buy.
+      const ob = $('orderBtn');
+      if (ob) { ob.disabled = true; ob.title = 'Ordering numbers is owner/admin only.'; }
+    }
+  }
+}
+// v675: identity and permissions come from the staff portal, which has
+// already signed this person in and knows their role.
+let booted = false;
+async function boot() {
+  if (booted) return;
+  booted = true;
+  meId = DA.userId;
+  isOwnerAdmin = DA.role === 'owner' || DA.role === 'admin';
+  isDialerAdmin = isOwnerAdmin;
+  canReview = true;                 // the portal only mounts this for a role that may view a section
+  canManage = DA.canEdit('numbers');
+  $('impScrubDate').value = new Date().toISOString().slice(0, 10);
+  await loadCampaigns();
+  loadCoverage(); loadPool(); loadLists();
+}
+
+const DA_SECTIONS = ['numbers', 'lists', 'campaigns', 'agents', 'inbound', 'calllog', 'research', 'reports', 'inbox', 'pipeline', 'settings'];
+
+// v675: the portal's sidebar calls this. Edit is PER SECTION (the portal's
+// role editor), so canManage is set for the section being opened before it
+// renders -- every existing `canManage` check in this file then answers for
+// the screen on show.
+async function showSection(tab) {
+  if (!DA_SECTIONS.includes(tab)) tab = 'numbers';
+  await boot();
+  canManage = DA.canEdit(tab);
+  DA_SECTIONS.forEach((t) => $('tab-' + t).classList.toggle('hide', t !== tab));
+  applyReadOnly(tab);
+
+    // Loaded on first open rather than at boot: most sessions never look at
+    // the call log, and the query reads the whole CDR table.
+    if (tab === 'calllog' && !callLogLoaded) initCallLog();
+    // Same reasoning for the inbox: it is a per-agent read most sessions
+    // never open, and it should be fresh when it IS opened rather than as
+    // of whenever the page loaded.
+    if (tab === 'inbox') loadInbox();
+    if (tab === 'agents') { loadStatusEditor(); loadCalendarAdmin(); }
+    if (tab === 'inbound') loadQueues();
+    if (tab === 'pipeline') loadPipeline();   // v595: fresh each time it is opened
+    if (tab === 'settings') loadSettingsTab(); // v648
+}
+
+// ------------------------------------------------------------- settings --
+// v648. Number assignment and console access, both of which used to require
+// a deploy to change.
+const DIALER_SECTIONS = [
+  { key: 'calls',         label: 'Calls' },
+  { key: 'conversations', label: 'Conversations' },
+  { key: 'session',       label: 'Shift analysis' },
+  { key: 'followups',     label: 'Follow-ups' },
+  { key: 'opps',          label: 'Opportunities' },
+  { key: 'contacts',      label: 'Contacts' },
+  { key: 'appts',         label: 'Appointments' },
+  { key: 'tasks',         label: 'Tasks' },
+];
+let setRoles = [];
+let setAccess = {};
+
+async function loadSettingsTab() {
+  await Promise.all([loadSettingsNumbers(), loadSettingsAccess(), loadSettingsWhatsapp(),
+                     loadTemplates(), loadHandoffs()]);
+}
+
+// ------------------------------------------------ v669: message templates --
+function tplCard(t) {
+  const el = document.createElement('div');
+  el.className = 'tpl-card';
+  el.dataset.tpl = t.id || '';
+  const sms = t.channel === 'sms';
+  el.innerHTML = `
+    <div class="row" style="margin-bottom:8px">
+      <div class="field" style="flex:1;min-width:240px"><label>${sms ? 'Text' : 'Email'} template name</label>
+        <input data-t="name" value="${esc(t.name || '')}" style="width:100%"></div>
+      ${sms ? '' : `<div class="field"><label>Sent from</label><select data-t="sender">
+        <option value="shared"${t.sender !== 'rep' ? ' selected' : ''}>Shared sender</option>
+        <option value="rep"${t.sender === 'rep' ? ' selected' : ''}>The rep's own Gmail</option></select></div>`}
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:9px">
+        <input type="checkbox" data-t="is_active"${t.is_active !== false ? ' checked' : ''}> On</label>
+    </div>
+    ${sms ? '' : `<input data-t="subject" placeholder="Subject" style="width:100%;margin-bottom:8px" value="${esc(t.subject || '')}">`}
+    <textarea data-t="body" rows="${sms ? 3 : 7}" placeholder="Hi {{first_name}}, ...">${esc(t.body || '')}</textarea>
+    <div class="hint" data-t-len style="margin:4px 0 8px"></div>
+    <div class="row" style="margin-bottom:0;align-items:center">
+      <button class="sm primary" data-t-save>Save</button>
+      <button class="sm" data-t-del>Delete</button>
+      <span style="flex:1"></span>
+      <input data-t-to placeholder="${sms ? 'Test to a 10-digit mobile' : 'Test to an email address'}" style="min-width:220px">
+      <button class="sm" data-t-test${t.id ? '' : ' disabled'}>Send a test</button>
+    </div>
+    <div data-t-msg class="msg hide" style="margin-top:8px"></div>`;
+  const msg = el.querySelector('[data-t-msg]');
+  const len = () => {
+    const n = el.querySelector('[data-t="body"]').value.length;
+    el.querySelector('[data-t-len]').textContent = sms
+      ? `${n} characters. One text is 160 — merge fields change the length, and one emoji drops it to 70.` : '';
+  };
+  el.querySelector('[data-t="body"]').oninput = len;
+  len();
+  el.querySelector('[data-t-save]').onclick = async () => {
+    const row = {
+      name: el.querySelector('[data-t="name"]').value.trim(),
+      channel: t.channel,
+      sender: sms ? 'rep' : el.querySelector('[data-t="sender"]').value,
+      subject: sms ? null : (el.querySelector('[data-t="subject"]').value.trim() || null),
+      body: el.querySelector('[data-t="body"]').value.trim(),
+      is_active: el.querySelector('[data-t="is_active"]').checked,
+      updated_by: meId, updated_at: new Date().toISOString(),
+    };
+    if (!row.name || !row.body) { say(msg, 'A template needs a name and a message.', 'err'); return; }
+    if (!sms && !row.subject) { say(msg, 'An email needs a subject.', 'err'); return; }
+    const res = el.dataset.tpl
+      ? await sb.from('dialer_message_templates').update(row).eq('id', el.dataset.tpl).select('id')
+      : await sb.from('dialer_message_templates').insert(row).select('id');
+    if (res.error) { say(msg, 'Could not save: ' + res.error.message, 'err'); return; }
+    if (!res.data?.length) { say(msg, 'Not saved — your role cannot change templates.', 'err'); return; }
+    el.dataset.tpl = res.data[0].id;
+    el.querySelector('[data-t-test]').disabled = false;
+    say(msg, 'Saved. Rules using it send the new wording from the next outcome.', 'ok');
+  };
+  el.querySelector('[data-t-del]').onclick = async () => {
+    if (!el.dataset.tpl) { el.remove(); return; }
+    if (!confirm('Delete this template? Any rule using it stops sending that message.')) return;
+    const { error } = await sb.from('dialer_message_templates').delete().eq('id', el.dataset.tpl);
+    if (error) { say(msg, 'Could not delete: ' + error.message, 'err'); return; }
+    el.remove();
+  };
+  el.querySelector('[data-t-test]').onclick = async () => {
+    const to = el.querySelector('[data-t-to]').value.trim();
+    if (!to) { say(msg, sms ? 'Enter a mobile number to test.' : 'Enter an email address to test.', 'err'); return; }
+    const toVal = sms ? '+1' + to.replace(/\D/g, '').slice(-10) : to;
+    say(msg, 'Sending the saved version…', 'ok');
+    const r = await callFn('dialer-outcome-rules', { action: 'test_template', template_id: el.dataset.tpl, to: toVal })
+      .catch((e) => ({ ok: false, error: e.message }));
+    say(msg, r?.ok ? (r.detail || 'Sent.') : (r?.detail || r?.error || 'Not sent.'), r?.ok ? 'ok' : 'err');
+  };
+  return el;
+}
+
+async function loadTemplates() {
+  const box = $('tplList');
+  const { data, error } = await sb.from('dialer_message_templates').select('*').order('channel').order('name');
+  if (error) { box.innerHTML = `<p class="hint">${esc(error.message)}</p>`; return; }
+  box.innerHTML = (data || []).length ? '' : '<p class="hint">No templates yet.</p>';
+  (data || []).forEach((t) => box.appendChild(tplCard(t)));
+  $('tplAddEmail').disabled = $('tplAddSms').disabled = !canManage;
+  $('tplAddEmail').onclick = () => box.prepend(tplCard({ channel: 'email', sender: 'shared', is_active: true }));
+  $('tplAddSms').onclick = () => box.prepend(tplCard({ channel: 'sms', sender: 'rep', is_active: true }));
+}
+
+// ---------------------------------------------- v669: hand-offs & sender --
+async function loadHandoffs() {
+  const [{ data: rows }, { data: roles }, { data: people }, { data: camps }] = await Promise.all([
+    sb.from('dialer_settings').select('key, value'),
+    sb.from('roles').select('name, can_use_dialer'),
+    sb.from('profiles').select('id, full_name, role').order('full_name'),
+    sb.from('dialer_campaigns').select('id, name, status').order('name'),
+  ]);
+  const s = Object.fromEntries((rows || []).map((r) => [r.key, r.value]));
+  const dialerRoles = new Set((roles || []).filter((r) => r.can_use_dialer).map((r) => r.name));
+  const owner = s.sales_handoff_owner || '';
+  $('setSalesOwner').innerHTML = '<option value="">Nobody — keep it with the agent</option>' + (people || [])
+    .filter((p) => dialerRoles.has(p.role) || p.id === owner || p.role === 'owner' || p.role === 'admin')
+    .map((p) => `<option value="${esc(p.id)}"${p.id === owner ? ' selected' : ''}>${esc(p.full_name || p.id)} (${esc(p.role)})</option>`).join('');
+  const sp = s.spanish_campaign_id || '';
+  $('setSpanishQueue').innerHTML = '<option value="">No Spanish queue — retire the contact</option>' + (camps || [])
+    .map((c) => `<option value="${esc(c.id)}"${c.id === sp ? ' selected' : ''}>${esc(c.name)}${c.status === 'active' ? '' : ' (' + esc(c.status) + ')'}</option>`).join('');
+  $('setCbHold').value = s.callback_reserve_hours ?? 24;
+  const se = s.shared_email || {};
+  $('setFromName').value = se.from_name || '';
+  $('setFromAddr').value = se.from_address || '';
+  $('setHandoffSave').disabled = !canManage;
+}
+
+$('setHandoffSave').onclick = async () => {
+  const msg = $('setHandoffMsg');
+  const hold = Number($('setCbHold').value);
+  const addr = $('setFromAddr').value.trim();
+  if (!(hold >= 1 && hold <= 720)) { msg.textContent = 'Callback hold must be between 1 and 720 hours.'; return; }
+  if (addr && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(addr)) { msg.textContent = 'The from address is not an email address.'; return; }
+  const { data: cur } = await sb.from('dialer_settings').select('value').eq('key', 'shared_email').maybeSingle();
+  const rows = [
+    { key: 'sales_handoff_owner', value: $('setSalesOwner').value || null },
+    { key: 'spanish_campaign_id', value: $('setSpanishQueue').value || null },
+    { key: 'callback_reserve_hours', value: hold },
+    { key: 'shared_email', value: { ...(cur?.value || {}), from_name: $('setFromName').value.trim(), from_address: addr } },
+  ].map((r) => ({ ...r, updated_by: meId, updated_at: new Date().toISOString() }));
+  const { data, error } = await sb.from('dialer_settings').upsert(rows, { onConflict: 'key' }).select('key');
+  msg.textContent = error ? 'Could not save: ' + error.message
+    : (data?.length || 0) < rows.length ? 'Not saved — your role cannot change these settings.' : 'Saved.';
+};
+
+// v650: WhatsApp sender.
+async function loadSettingsWhatsapp() {
+  const { data } = await sb.from('app_settings')
+    .select('value').eq('key', 'whatsapp_from_number').maybeSingle();
+  $('setWaNumber').value = data?.value || '';
+}
+function setWaSay(text, kind) {
+  const el = $('setWaMsg');
+  el.classList.remove('hide');
+  el.className = 'msg ' + (kind || 'info');
+  el.textContent = text;
+}
+$('setWaSave').onclick = async () => {
+  const value = $('setWaNumber').value.trim();
+  if (!value) { setWaSay('Enter the number first.', 'err'); return; }
+  // upsert: the row may not exist yet on a fresh environment, and an update
+  // that matches nothing looks identical to a permissions refusal otherwise.
+  const { error } = await sb.from('app_settings')
+    .upsert({ key: 'whatsapp_from_number', value }, { onConflict: 'key' });
+  setWaSay(error ? `Could not save: ${error.message}` : 'Saved. Check status to confirm Telnyx accepts it.', error ? 'err' : 'ok');
+};
+// Asks the function itself rather than guessing from the number's shape --
+// it is the thing that knows whether TELNYX_API_KEY is set and whether the
+// sender resolves.
+$('setWaTest').onclick = async () => {
+  setWaSay('Checking…', 'info');
+  try {
+    const { data: { session } } = await sb.auth.getSession();
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/dialer-whatsapp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${session?.access_token || SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify({ action: 'status' }),
+    });
+    const b = await res.json().catch(() => ({}));
+    if (!b?.ok) { setWaSay(b?.error || `Status check failed (${res.status}).`, 'err'); return; }
+    setWaSay(
+      b.configured
+        ? `Configured. Sending as ${b.from}. WhatsApp is reply-only, so a send still needs the contact to have messaged within 24 hours.`
+        : 'Not configured: either no number is set or TELNYX_API_KEY is missing on the server.',
+      b.configured ? 'ok' : 'err');
+  } catch (e) {
+    setWaSay(`Could not reach the function: ${e.message}`, 'err');
+  }
+};
+
+async function loadSettingsNumbers() {
+  const body = $('setNumbersBody');
+  // Only staff who can actually use the dialer are offered -- assigning a
+  // number to somebody who never signs into the console would quietly take
+  // it out of rotation for no one's benefit.
+  const [{ data: dids, error: didErr }, { data: people }] = await Promise.all([
+    sb.from('dialer_dids').select('id, phone_e164, area_code, status, assigned_to').order('phone_e164'),
+    sb.rpc('dialer_assignable_staff'),
+  ]);
+  if (didErr) { body.innerHTML = `<tr><td colspan="4">Could not load numbers: ${esc(didErr.message)}</td></tr>`; return; }
+  const staff = people || [];
+  if (!(dids || []).length) { body.innerHTML = '<tr><td colspan="4">No numbers yet.</td></tr>'; return; }
+  body.innerHTML = (dids || []).map((d) => {
+    const opts = ['<option value="">— unassigned —</option>'].concat(
+      staff.map((p) => `<option value="${p.id}"${p.id === d.assigned_to ? ' selected' : ''}>${esc(p.full_name || p.email || p.id)}</option>`)
+    ).join('');
+    return `<tr>
+      <td class="mono">${esc(d.phone_e164)}</td>
+      <td>${esc(d.area_code || '—')}</td>
+      <td>${esc(d.status || '—')}</td>
+      <td><select class="set-assign" data-did="${d.id}" style="min-width:180px">${opts}</select></td>
+    </tr>`;
+  }).join('');
+  body.querySelectorAll('.set-assign').forEach((sel) => {
+    sel.onchange = async () => {
+      const msg = $('setNumbersMsg');
+      const value = sel.value || null;
+      // One number per rep is a UNIQUE INDEX, so handing somebody a second
+      // number errors rather than silently splitting their identity. Clear
+      // their old one first, which is what "assign" is understood to mean.
+      if (value) await sb.from('dialer_dids').update({ assigned_to: null }).eq('assigned_to', value);
+      const { error } = await sb.from('dialer_dids').update({ assigned_to: value }).eq('id', sel.dataset.did);
+      msg.classList.remove('hide');
+      msg.className = 'msg ' + (error ? 'err' : 'ok');
+      msg.textContent = error ? `Could not save: ${error.message}` : 'Saved.';
+      await loadSettingsNumbers();
+    };
+  });
+}
+
+async function loadSettingsAccess() {
+  const head = $('setAccessHead');
+  const body = $('setAccessBody');
+  head.innerHTML = '<th>Role</th>' + DIALER_SECTIONS.map((s) => `<th class="num">${esc(s.label)}</th>`).join('');
+  const [{ data: roles, error: rErr }, { data: access }] = await Promise.all([
+    sb.from('roles').select('name').order('name'),
+    sb.from('dialer_role_access').select('role_name, sections'),
+  ]);
+  if (rErr) { body.innerHTML = `<tr><td colspan="9">Could not load roles: ${esc(rErr.message)}</td></tr>`; return; }
+  // Owner and Admin are deliberately absent: they always see everything, and
+  // a screen that lets you untick your own access is a way to lock the floor
+  // out of its own console.
+  setRoles = (roles || []).map((r) => r.name).filter((n) => n !== 'owner' && n !== 'admin');
+  setAccess = {};
+  (access || []).forEach((a) => { setAccess[a.role_name] = a.sections || {}; });
+  body.innerHTML = setRoles.map((name) => {
+    const cfg = setAccess[name];
+    const configured = cfg && Object.keys(cfg).length;
+    const cells = DIALER_SECTIONS.map((s) => {
+      const on = configured ? cfg[s.key] === true : false;
+      return `<td class="num"><input type="checkbox" class="set-acc" data-role="${esc(name)}" data-key="${s.key}"${on ? ' checked' : ''}></td>`;
+    }).join('');
+    return `<tr><td>${esc(name)}${configured ? '' : ' <span class="muted">(not configured)</span>'}</td>${cells}</tr>`;
+  }).join('');
+}
+
+$('setAccessSave').onclick = async () => {
+  const msg = $('setAccessMsg');
+  msg.textContent = 'Saving…';
+  const byRole = {};
+  setRoles.forEach((r) => { byRole[r] = {}; });
+  document.querySelectorAll('.set-acc').forEach((cb) => {
+    byRole[cb.dataset.role][cb.dataset.key] = cb.checked;
+  });
+  const rows = Object.keys(byRole).map((r) => ({ role_name: r, sections: byRole[r], updated_at: new Date().toISOString() }));
+  const { error } = await sb.from('dialer_role_access').upsert(rows, { onConflict: 'role_name' });
+  msg.textContent = error ? `Could not save: ${error.message}` : 'Saved. Reps see this next time they load the console.';
+  if (!error) await loadSettingsAccess();
+};
+
+// -------------------------------------------------------------- call log --
+// Everything on this screen comes from the dialer_call_log /
+// dialer_call_log_summary RPCs rather than from table reads. The rows need
+// campaign and list names beside each call, and those tables are gated on
+// role_can_use_dialer() -- which Quality deliberately does not hold, since
+// they review calls rather than place them. Reading them directly would hand
+// a reviewer a table with the name columns silently blank. The functions
+// apply one visibility rule (own calls, unless admin or reviewer) and return
+// the joined shape.
+//
+// The stored dialer_attempts.recording_path is NOT used for playback. Telnyx
+// hands out recording links as presigned S3 urls with X-Amz-Expires=600, so
+// every one of them is a 403 within ten minutes of the call ending. Playback
+// goes through dialer-recording, which asks the carrier for a fresh url (and
+// re-checks that this person may hear that particular call).
+let callLogLoaded = false;
+let callLogRows = [];        // last fetched page, reused by Export
+
+function mmss(total) {
+  const s = Math.max(0, Math.floor(Number(total) || 0));
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+// "217 hours 28 min" reads better than 782880 for a period total.
+function humanSeconds(total) {
+  const s = Math.max(0, Math.floor(Number(total) || 0));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (h) return `${h} hour${h === 1 ? '' : 's'} ${m} min`;
+  if (m) return `${m} min ${s % 60}s`;
+  return `${s}s`;
+}
+function fmtWhen(iso) {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    + ', ' + d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+function prettyPhone(e164) {
+  const m = /^\+1(\d{3})(\d{3})(\d{4})$/.exec(e164 || '');
+  return m ? `(${m[1]}) ${m[2]}-${m[3]}` : (e164 || '');
+}
+
+// Reads every filter control into the argument object both RPCs take. Empty
+// string means "All …" and is sent as null so the SQL skips that predicate.
+function callLogFilters() {
+  const from = $('recFrom').value, to = $('recTo').value;
+  return {
+    p_from: from ? new Date(from + 'T00:00:00').toISOString() : null,
+    // Inclusive end date: the SQL compares with < p_to, so push to midnight
+    // after the chosen day or "to = today" would hide today's calls.
+    p_to: to ? new Date(new Date(to + 'T00:00:00').getTime() + 86400000).toISOString() : null,
+    p_agent: $('recAgent').value || null,
+    p_campaign: $('recCampaign').value || null,
+    p_list: $('recList').value || null,
+    p_source: $('recSource').value || null,
+    p_duration: $('recDuration').value || null,
+    p_status: $('recStatus').value || null,
+    p_disp: dispSelection(),
+    p_recorded: $('recRecorded').checked ? true : null,
+  };
+}
+
+async function initCallLog() {
+  callLogLoaded = true;
+  // Default to the last 30 days rather than all history, so the first open is
+  // a small query.
+  const d = new Date();
+  $('recTo').value = d.toISOString().slice(0, 10);
+  d.setDate(d.getDate() - 30);
+  $('recFrom').value = d.toISOString().slice(0, 10);
+
+  // Filter options come from the same tables the admin screens already load,
+  // plus the agents who actually appear in the CDR.
+  $('recCampaign').innerHTML = '<option value="">All campaigns</option>'
+    + campaigns.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+
+  const [{ data: lists }, { data: disps }] = await Promise.all([
+    sb.from('dialer_lists').select('id, name').order('created_at', { ascending: false }),
+    sb.from('dialer_dispositions').select('code, label, group_name').eq('is_active', true).order('sort_order'),
+  ]);
+  // A reviewer without can_use_dialer cannot read these two, which is fine --
+  // the selects just stay at "All …" rather than the screen failing.
+  if (lists) {
+    $('recList').innerHTML = '<option value="">All files</option>'
+      + lists.map((l) => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
+  }
+  buildDispMenu(disps || []);
+
+  await loadCallLog();
+}
+
+async function loadCallLog() {
+  const summary = $('recSummary').checked;
+  show($('recSummaryPanel'), summary);
+  show($('recListPanel'), !summary);
+  $('recMsg').textContent = 'Loading…';
+
+  const f = callLogFilters();
+  if (summary) await loadCallLogSummary(f);
+  else await loadCallLogRows(f);
+}
+
+async function loadCallLogRows(f) {
+  const tbody = $('recRows');
+  const { data, error } = await sb.rpc('dialer_call_log', { ...f, p_limit: 200, p_offset: 0 });
+  if (error) {
+    $('recMsg').textContent = '';
+    tbody.innerHTML = `<tr><td colspan="7">Could not load the call log: ${esc(error.message)}</td></tr>`;
+    return;
+  }
+  callLogRows = data || [];
+  const total = callLogRows.length ? Number(callLogRows[0].total_count) : 0;
+  // The count lives in the status line rather than the filter bar: the bar's
+  // leftmost control is the call-results multi-select, and two different
+  // "N call results" readings side by side would be read as the same number.
+  $('recMsg').textContent = total > callLogRows.length
+    ? `${total} calls match — showing the newest ${callLogRows.length}. Narrow the range to see the rest.`
+    : `${total} call${total === 1 ? '' : 's'}.`;
+
+  // Agent list is built from whoever actually appears in the CDR, so it never
+  // offers a name with no calls behind it.
+  const seen = new Map();
+  callLogRows.forEach((r) => { if (r.agent_id) seen.set(r.agent_id, r.agent_name || r.agent_id); });
+  if (seen.size) {
+    const keep = $('recAgent').value;
+    $('recAgent').innerHTML = '<option value="">All users</option>'
+      + [...seen.entries()].sort((a, b) => (a[1] || '').localeCompare(b[1] || ''))
+        .map(([id, n]) => `<option value="${esc(id)}">${esc(n)}</option>`).join('');
+    $('recAgent').value = keep;
+  }
+
+  if (!callLogRows.length) {
+    tbody.innerHTML = '<tr><td colspan="7">No calls match these filters.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = callLogRows.map((r) => {
+    const who = r.contact_name
+      ? `${esc(r.contact_name)}${r.contact_state ? ' ' + esc(r.contact_state) : ''} <span class="mono">${esc(prettyPhone(r.to_number))}</span>`
+      : `<span class="mono">${esc(prettyPhone(r.to_number))}</span>`;
+    const result = r.disposition_label
+      ? esc(r.disposition_label)
+      : `<span style="color:var(--text-dim)">${esc(r.status || '')}</span>`;
+    const src = r.is_manual ? 'Manual' : (esc(r.campaign_name || '—'));
+    const rec = r.has_recording
+      ? `<button class="sm" data-play="${esc(r.id)}">Play</button>
+         <button class="sm" data-dl="${esc(r.id)}" title="Download">↓</button>`
+      : '<span style="color:var(--text-dim)">—</span>';
+    return `<tr>
+      <td>${esc(r.agent_name || '—')}</td>
+      <td style="white-space:nowrap">${esc(fmtWhen(r.initiated_at))}</td>
+      <td>${result}</td>
+      <td style="white-space:nowrap">${rec}</td>
+      <td class="num mono">${r.talk_seconds == null ? '—' : mmss(r.talk_seconds)}</td>
+      <td>${who}</td>
+      <td>${src}${r.list_name ? ` <span style="color:var(--text-dim)">· ${esc(r.list_name)}</span>` : ''}</td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('button[data-play]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.play, false);
+  });
+  tbody.querySelectorAll('button[data-dl]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.dl, true);
+  });
+}
+
+async function loadCallLogSummary(f) {
+  const tbody = $('sumRows');
+  const { data, error } = await sb.rpc('dialer_call_log_summary', f);
+  if (error) {
+    $('recMsg').textContent = '';
+    tbody.innerHTML = `<tr><td colspan="3">Could not load the summary: ${esc(error.message)}</td></tr>`;
+    return;
+  }
+  const rows = data || [];
+  const total = rows.length ? Number(rows[0].total_calls) : 0;
+  const talk = rows.length ? Number(rows[0].total_talk_seconds) : 0;
+  const avg = rows.length ? Number(rows[0].avg_talk_seconds) : 0;
+
+  $('sumTotal').textContent = total.toLocaleString();
+  $('sumTime').textContent = humanSeconds(talk);
+  $('sumAvg').textContent = `${Math.round(avg)}s`;
+  $('recMsg').textContent = `${total} call${total === 1 ? '' : 's'} in range.`;
+
+  tbody.innerHTML = rows.length
+    ? rows.map((r) => `<tr class="d-${esc(r.category || 'none')}">
+        <td>${esc(r.label || r.disposition)}</td>
+        <td class="num mono">${Number(r.calls).toLocaleString()}</td>
+        <td class="num mono">${r.pct}%</td>
+      </tr>`).join('')
+    : '<tr><td colspan="3">No calls match these filters.</td></tr>';
+}
+
+// Export is of the rows currently loaded, not a second server query, so what
+// lands in the file is exactly what is on screen.
+function exportCallLog() {
+  if (!callLogRows.length) { $('recMsg').textContent = 'Nothing to export.'; return; }
+  const cols = ['initiated_at', 'agent_name', 'to_number', 'contact_name', 'contact_state',
+    'campaign_name', 'list_name', 'direction', 'is_manual', 'status', 'disposition_label',
+    'talk_seconds', 'billed_seconds', 'has_recording', 'cost_usd'];
+  const cell = (v) => {
+    const s = v === null || v === undefined ? '' : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [cols.join(',')]
+    .concat(callLogRows.map((r) => cols.map((c) => cell(r[c])).join(',')))
+    .join('\n');
+  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `call-log-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  $('recMsg').textContent = `Exported ${callLogRows.length} rows.`;
+}
+
+async function playRecording(btn, attemptId, download) {
+  const label = btn.textContent;
+  const msg = $(btn.closest('#tab-research') ? 'resMsg' : 'recMsg');
+  // Snapshot the cell BEFORE the button is put into its loading state.
+  // Taking it afterwards captured the disabled "…" button, so closing the
+  // player restored a Play button that was permanently stuck mid-load.
+  const cell = btn.closest('td');
+  const cellHtml = cell ? cell.innerHTML : null;
+  btn.disabled = true;
+  btn.textContent = '…';
+  try {
+    const res = await callFn('dialer-recording', { attempt_id: attemptId });
+    if (!res?.ok || !res.url) {
+      msg.textContent = res?.error || res?.detail || 'No recording available for that call.';
+      return;
+    }
+    if (download) {
+      // The signed url is short-lived, so the download has to start now
+      // rather than being handed to the person as a link to keep.
+      const a = document.createElement('a');
+      a.href = res.url;
+      a.download = `call-${attemptId}.mp3`;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.click();
+      msg.textContent = 'Download started.';
+      return;
+    }
+    // Playback happens INSIDE the row, replacing that row's Recording cell,
+    // rather than in a panel under the table. With fifty rows on screen a
+    // player parked at the bottom loses which call it belongs to the moment
+    // you scroll; in the row it cannot be misread. Only one plays at a time.
+    closeInlinePlayer();
+    if (!cell) return;
+    openPlayer = { cell, html: cellHtml };
+    cell.innerHTML =
+      '<div class="inline-player">'
+      + '<button type="button" class="ip-close" title="Close player">&times;</button>'
+      + '<audio controls autoplay preload="none"></audio>'
+      + '</div>';
+    cell.querySelector('audio').src = res.url;
+    cell.querySelector('.ip-close').onclick = closeInlinePlayer;
+    msg.textContent = '';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
+
+// The open player, so a second Play (or the row being re-rendered by a
+// filter change) restores the buttons rather than leaving a stranded widget.
+let openPlayer = null;
+function closeInlinePlayer() {
+  if (!openPlayer) return;
+  const a = openPlayer.cell.querySelector('audio');
+  if (a) { a.pause(); a.src = ''; }
+  openPlayer.cell.innerHTML = openPlayer.html;
+  // The restored markup is a fresh set of buttons, so re-bind them.
+  openPlayer.cell.querySelectorAll('button[data-play]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.play, false);
+  });
+  openPlayer.cell.querySelectorAll('button[data-dl]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.dl, true);
+  });
+  openPlayer = null;
+}
+
+function show(el, on) { el.classList.toggle('hide', !on); }
+
+$('recRefresh').onclick = () => loadCallLog();
+$('recExport').onclick = () => exportCallLog();
+$('recSummary').onchange = () => loadCallLog();
+// Changing any filter re-runs whichever view is showing. Re-running on change
+// rather than behind an Apply button keeps the summary honest: it can never
+// be describing a different filter set than the one on screen.
+['recFrom', 'recTo', 'recAgent', 'recCampaign', 'recList', 'recSource',
+ 'recDuration', 'recStatus', 'recRecorded'].forEach((id) => {
+  $(id).onchange = () => loadCallLog();
+});
+
+
+// ------------------------------------------------- call results multi-select
+// Mirrors the control the floor already uses: every result checked by
+// default, Check all / Uncheck all, grouped, and the button reporting how
+// many are selected. "Not logged" is the '(none)' sentinel the RPCs
+// understand -- calls that were never dispositioned at all.
+let dispAll = [];   // [{code, label, group_name}], plus the Not logged entry
+
+function buildDispMenu(rows) {
+  dispAll = rows.map((r) => ({ code: r.code, label: r.label, group: r.group_name || 'Call results' }));
+  dispAll.push({ code: '(none)', label: 'Not logged', group: 'Other' });
+
+  const groups = [...new Set(dispAll.map((d) => d.group))];
+  $('recDispList').innerHTML = groups.map((g) => {
+    const items = dispAll.filter((d) => d.group === g).map((d) => `
+      <label class="ms-item">
+        <input type="checkbox" value="${esc(d.code)}" checked>
+        <span>${esc(d.label)}</span>
+      </label>`).join('');
+    return `<div class="ms-group">${esc(g)}</div>${items}`;
+  }).join('');
+
+  $('recDispList').querySelectorAll('input').forEach((cb) => {
+    cb.onchange = () => { syncDispLabel(); loadCallLog(); };
+  });
+  syncDispLabel();
+}
+
+// null when everything is checked: the RPCs read that as "no filter", which
+// is cheaper than passing every code and means the untouched state and the
+// all-checked state behave identically.
+function dispSelection() {
+  const boxes = [...$('recDispList').querySelectorAll('input')];
+  if (!boxes.length) return null;
+  const on = boxes.filter((b) => b.checked).map((b) => b.value);
+  return on.length === boxes.length ? null : on;
+}
+
+function syncDispLabel() {
+  const boxes = [...$('recDispList').querySelectorAll('input')];
+  const on = boxes.filter((b) => b.checked).length;
+  $('recDispBtn').textContent = on === boxes.length
+    ? 'All call results'
+    : `${on} call result${on === 1 ? '' : 's'}`;
+}
+
+function setAllDisp(on) {
+  $('recDispList').querySelectorAll('input').forEach((cb) => { cb.checked = on; });
+  syncDispLabel();
+  loadCallLog();
+}
+
+$('recDispBtn').onclick = (e) => {
+  e.stopPropagation();
+  show($('recDispPanel'), $('recDispPanel').classList.contains('hide'));
+};
+$('recDispAll').onclick = () => setAllDisp(true);
+$('recDispNone').onclick = () => setAllDisp(false);
+// Clicks inside the panel must not close it, or ticking a box would shut the
+// menu after every single change.
+$('recDispPanel').onclick = (e) => e.stopPropagation();
+document.addEventListener('click', () => show($('recDispPanel'), false));
+
+// -------------------------------------------------------------- research --
+// One RPC round trip returns the contact rows, the internal DNC history and
+// every call to the number. Phone normalisation happens in SQL so that
+// "(815) 822-5358", "8158225358" and "+18158225358" all resolve to the same
+// number rather than each needing its own client-side guess.
+async function researchNumber() {
+  const raw = $('resNum').value.trim();
+  if (!raw) { $('resMsg').textContent = 'Enter a number to research.'; return; }
+  $('resMsg').textContent = 'Searching…';
+  show($('resResults'), false);
+
+  const { data, error } = await sb.rpc('dialer_research_number', { p_phone: raw });
+  if (error) { $('resMsg').textContent = 'Search failed: ' + error.message; return; }
+  if (!data?.ok) { $('resMsg').textContent = data?.error || 'Nothing found.'; return; }
+
+  $('resNumEcho').textContent = prettyPhone(data.phone_e164);
+  $('resMsg').textContent = '';
+  show($('resResults'), true);
+
+  const contacts = data.contacts || [], dnc = data.dnc || [], calls = data.calls || [];
+
+  $('resContacts').innerHTML = contacts.length ? contacts.map((c) => `<tr>
+      <td>${esc(c.contact_name || '—')}</td>
+      <td>${esc(c.list_name || '—')}</td>
+      <td>${esc(c.campaign_name || '—')}</td>
+      <td style="white-space:nowrap">${esc(fmtWhen(c.created_at))}</td>
+      <td class="num mono">${c.attempt_count ?? 0}</td>
+      <td>${esc(c.status || '')}${c.retired_reason ? ` <span style="color:var(--text-dim)">(${esc(c.retired_reason)})</span>` : ''}</td>
+      <td>${esc(c.last_outcome || '—')}</td>
+      <td style="white-space:nowrap">${c.next_attempt_at ? esc(fmtWhen(c.next_attempt_at)) : '—'}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="8">No contact rows found — this number is not on any loaded list.</td></tr>';
+
+  // Suppression is the one thing on this screen worth being unmissable.
+  $('resDnc').innerHTML = dnc.length ? dnc.map((d) => `<tr class="d-dnc">
+      <td style="white-space:nowrap">${esc(fmtWhen(d.created_at))}</td>
+      <td>${esc(d.source || '')}</td>
+      <td>${esc(d.reason || '—')}</td>
+      <td>${esc(d.added_by || '—')}</td>
+      <td>${d.synced_to_readymode_at ? esc(fmtWhen(d.synced_to_readymode_at))
+            : '<span style="color:var(--away)">Not yet exported</span>'}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="5">No internal DNC entries — this number is not suppressed.</td></tr>';
+
+  $('resCalls').innerHTML = calls.length ? calls.map((c) => `<tr>
+      <td style="white-space:nowrap">${esc(fmtWhen(c.initiated_at))}</td>
+      <td class="num mono">${c.talk_seconds == null ? '—' : mmss(c.talk_seconds)}</td>
+      <td>${esc(c.agent_name || '—')}</td>
+      <td>${c.is_manual ? 'Manual' : esc(c.campaign_name || c.direction || '—')}</td>
+      <td>${c.disposition_label ? esc(c.disposition_label)
+            : `<span style="color:var(--text-dim)">${esc(c.status || '')}</span>`}</td>
+      <td>${c.has_recording
+            ? `<button class="sm" data-play="${esc(c.id)}">Play</button>
+               <button class="sm" data-dl="${esc(c.id)}" title="Download">&darr;</button>`
+            : '<span style="color:var(--text-dim)">—</span>'}</td>
+    </tr>`).join('')
+    : '<tr><td colspan="6">No calls to this number.</td></tr>';
+
+  // The research tab reuses the call log's single player, so playback behaves
+  // identically on both screens.
+  $('resCalls').querySelectorAll('button[data-play]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.play, false);
+  });
+  $('resCalls').querySelectorAll('button[data-dl]').forEach((b) => {
+    b.onclick = () => playRecording(b, b.dataset.dl, true);
+  });
+}
+
+$('resGo').onclick = researchNumber;
+$('resNum').addEventListener('keydown', (e) => { if (e.key === 'Enter') researchNumber(); });
+
+// -------------------------------------------------------------- coverage --
+async function loadCoverage() {
+  const r = await callFn('dialer-pool', { action: 'coverage_gaps' });
+  if (!r?.ok) { $('covRows').innerHTML = `<tr><td colspan="4">${esc(r?.error || 'Failed')}</td></tr>`; return; }
+  const s = r.summary || {};
+  $('covSummary').innerHTML =
+    `<div class="stat"><b>${s.area_codes ?? 0}</b><span>Area codes in queue</span></div>` +
+    `<div class="stat"><b>${s.covered ?? 0}</b><span>Covered</span></div>` +
+    `<div class="stat"><b class="${s.uncovered ? 'gap' : ''}">${s.uncovered ?? 0}</b><span>No local DID</span></div>` +
+    `<div class="stat"><b class="${s.contacts_without_local_did ? 'gap' : ''}">${(s.contacts_without_local_did ?? 0).toLocaleString()}</b><span>Contacts affected</span></div>`;
+
+  $('covRows').innerHTML = (r.rows || []).length
+    ? r.rows.map((x) => `<tr>
+        <td class="mono">${esc(x.area_code)}</td>
+        <td class="num">${Number(x.contacts).toLocaleString()}</td>
+        <td class="num ${Number(x.active_dids) === 0 ? 'gap' : ''}">${x.active_dids}</td>
+        <td><button class="sm" data-npa="${esc(x.area_code)}">Find numbers</button></td>
+      </tr>`).join('')
+    : '<tr><td colspan="4">No dialable contacts queued yet.</td></tr>';
+
+  $('covRows').querySelectorAll('button[data-npa]').forEach((b) => {
+    b.onclick = () => { $('searchNpa').value = b.dataset.npa; $('searchBtn').click(); };
+  });
+}
+
+// ---------------------------------------------------------------- search --
+$('searchBtn').onclick = async () => {
+  const npa = $('searchNpa').value.replace(/\D/g, '');
+  if (npa.length !== 3) { say($('searchMsg'), 'Enter a 3-digit area code.', 'err'); return; }
+  say($('searchMsg'), 'Searching…', 'ok');
+  const r = await callFn('dialer-pool', {
+    action: 'search_numbers', area_code: npa, limit: Number($('searchLimit').value) || 10,
+  });
+  if (!r?.ok) { say($('searchMsg'), r?.error || 'Search failed', 'err'); return; }
+  if (!r.numbers?.length) { say($('searchMsg'), `No numbers available in ${npa}.`, 'warn'); return; }
+
+  say($('searchMsg'), '', null);
+  $('searchWrap').classList.remove('hide');
+  $('searchRows').innerHTML = r.numbers.map((n) => `<tr>
+      <td><input type="checkbox" class="pick" value="${esc(n.phone_number)}"
+                 data-state="${esc(n.state || '')}"></td>
+      <td class="mono">${esc(n.phone_number)}</td>
+      <td>${esc(n.state || '—')}</td>
+      <td>${esc(n.rate_center || '—')}</td>
+      <td class="num">${n.monthly_cost != null ? '$' + n.monthly_cost : '—'}</td>
+    </tr>`).join('');
+  // Ticking a box must not re-enable ordering for someone who may not order.
+  // applyReadOnly() disabled it once at boot; this is the path that would
+  // silently undo that.
+  $('searchRows').querySelectorAll('.pick').forEach((c) => {
+    c.onchange = () => {
+      $('orderBtn').disabled = !isOwnerAdmin
+        || !$('searchRows').querySelectorAll('.pick:checked').length;
+    };
+  });
+  $('orderBtn').disabled = true;
+};
+
+$('orderBtn').onclick = async () => {
+  const picked = [...$('searchRows').querySelectorAll('.pick:checked')];
+  if (!picked.length) return;
+  const nums = picked.map((c) => c.value);
+  if (!confirm(`Buy ${nums.length} number(s)? This charges your Telnyx account.\n\n${nums.join('\n')}`)) return;
+
+  $('orderBtn').disabled = true;
+  say($('searchMsg'), 'Ordering…', 'ok');
+  const r = await callFn('dialer-pool', {
+    action: 'order_numbers', phone_numbers: nums, state: picked[0].dataset.state || null,
+  });
+  if (!r?.ok) { say($('searchMsg'), r?.error || 'Order failed', 'err'); return; }
+  say($('searchMsg'), `Ordered ${r.ordered}. Added as resting — activate them below when ready to warm them in.`, 'ok');
+  loadPool(); loadCoverage();
+};
+
+// ------------------------------------------------------------------ pool --
+async function loadPool() {
+  const r = await callFn('dialer-pool', { action: 'list_dids' });
+  if (!r?.ok) { $('poolRows').innerHTML = `<tr><td colspan="8">${esc(r?.error || 'Failed')}</td></tr>`; return; }
+  const today = new Date().toISOString().slice(0, 10);
+  $('poolRows').innerHTML = (r.dids || []).length
+    ? r.dids.map((d) => {
+      const used = d.dials_today_date === today ? (d.dials_today ?? 0) : 0;
+      const next = d.status === 'active' ? 'resting' : 'active';
+      return `<tr>
+        <td class="mono">${esc(d.phone_e164)}</td>
+        <td class="mono">${esc(d.area_code || '—')}</td>
+        <td>${esc(d.state || '—')}</td>
+        <td><span class="tag t-${esc(d.status)}">${esc(d.status)}</span></td>
+        <td class="num">${used}</td>
+        <td class="num">${d.daily_cap ?? 80}</td>
+        <td>${repCell(d)}</td>
+        <td>${canManage ? `<button class="sm" data-did="${esc(d.id)}" data-next="${next}">
+          ${next === 'active' ? 'Activate' : 'Rest'}</button>` : ''}</td>
+      </tr>`;
+    }).join('')
+    : '<tr><td colspan="8">No numbers in the pool yet.</td></tr>';
+  poolDids = r.dids || [];
+
+  $('poolRows').querySelectorAll('button[data-did]').forEach((b) => {
+    b.onclick = async () => {
+      const d = poolDids.find((x) => x.id === b.dataset.did);
+      if (b.dataset.next === 'active' && d && ['flagged', 'remediating'].includes(d.reputation_status)
+          && !confirm(`${d.phone_e164} is marked ${d.reputation_status}. Put it back into rotation anyway?\n\n`
+                    + 'Mark it Clean instead once the label is gone -- that records the dispute as cleared.')) return;
+      b.disabled = true;
+      await callFn('dialer-pool', { action: 'set_did_status', did_id: b.dataset.did, status: b.dataset.next });
+      loadPool(); loadCoverage();
+    };
+  });
+
+  // v594: reputation. Changing the select is the whole workflow -- flagged or
+  // remediating takes the number out of rotation, clean puts it back.
+  $('poolRows').querySelectorAll('select[data-rep]').forEach((sel) => {
+    sel.onchange = async () => {
+      const d = poolDids.find((x) => x.id === sel.dataset.rep);
+      const to = sel.value;
+      if (!d) return;
+      if (['flagged', 'remediating'].includes(to) && d.status === 'active') {
+        const othersActive = poolDids.filter((x) => x.status === 'active' && x.id !== d.id).length;
+        const msg = othersActive
+          ? `Take ${d.phone_e164} out of rotation? Agents stop calling from it until you mark it Clean.`
+          : `${d.phone_e164} is the LAST active number. Taking it out means agents cannot place calls `
+            + 'until another number is active. Continue?';
+        if (!confirm(msg)) { sel.value = d.reputation_status || 'unknown'; return; }
+      }
+      sel.disabled = true;
+      const res = await callFn('dialer-pool', { action: 'set_did_reputation', did_id: d.id, reputation_status: to });
+      if (!res?.ok) { $('poolMsg').textContent = res?.error || 'Could not save.'; sel.disabled = false; return; }
+      $('poolMsg').textContent = res.active_remaining === 0
+        ? 'Saved. No active numbers are left -- agents cannot dial until one is activated.'
+        : `Saved. ${res.active_remaining} active number${res.active_remaining === 1 ? '' : 's'} in rotation.`;
+      loadPool(); loadCoverage();
+    };
+  });
+  $('poolRows').querySelectorAll('input[data-repflag]').forEach((cb) => {
+    cb.onchange = async () => {
+      cb.disabled = true;
+      const res = await callFn('dialer-pool', { action: 'set_did_reputation', did_id: cb.dataset.id,
+        [cb.dataset.repflag]: cb.checked });
+      if (!res?.ok) { $('poolMsg').textContent = res?.error || 'Could not save.'; cb.checked = !cb.checked; }
+      cb.disabled = false;
+    };
+  });
+}
+
+let poolDids = [];
+const REP_LABELS = { unknown: 'Not checked', clean: 'Clean', flagged: 'Flagged (spam label)',
+                     remediating: 'Dispute filed' };
+const shortDate = (t) => t ? new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' }) : null;
+
+function repCell(d) {
+  const rep = d.reputation_status || 'unknown';
+  const lines = [];
+  if (d.remediation_filed_at) {
+    lines.push(`Disputed ${shortDate(d.remediation_filed_at)}`
+      + (d.remediation_cleared_at ? ` · cleared ${shortDate(d.remediation_cleared_at)}`
+         : ` · open ${Math.max(0, Math.round((Date.now() - new Date(d.remediation_filed_at)) / 86400000))}d`));
+  }
+  if (d.last_reputation_check_at) lines.push(`Checked ${shortDate(d.last_reputation_check_at)}`);
+  const meta = lines.length ? `<div class="hint" style="margin:3px 0 0">${esc(lines.join(' · '))}</div>` : '';
+  if (!canManage) {
+    return `${esc(REP_LABELS[rep] || rep)}${meta}`
+      + `<div class="hint" style="margin:2px 0 0">CNAM ${d.cnam_registered ? 'yes' : 'no'}`
+      + ` · Registry ${d.caller_registry_registered ? 'yes' : 'no'}</div>`;
+  }
+  return `<select class="sm" data-rep="${esc(d.id)}" style="padding:4px 8px;font-size:12px">`
+    + Object.entries(REP_LABELS).map(([v, l]) =>
+        `<option value="${v}"${v === rep ? ' selected' : ''}>${esc(l)}</option>`).join('')
+    + `</select>${meta}
+    <div style="display:flex;gap:10px;margin-top:4px;font-size:11.5px">
+      <label style="display:flex;align-items:center;gap:4px" title="Caller ID name set on this number in Telnyx">
+        <input type="checkbox" data-repflag="cnam_registered" data-id="${esc(d.id)}"${d.cnam_registered ? ' checked' : ''}> CNAM</label>
+      <label style="display:flex;align-items:center;gap:4px" title="Registered at freecallerregistry.com">
+        <input type="checkbox" data-repflag="caller_registry_registered" data-id="${esc(d.id)}"${d.caller_registry_registered ? ' checked' : ''}> Registry</label>
+    </div>`;
+}
+
+$('syncBtn').onclick = async () => {
+  $('syncBtn').disabled = true;
+  $('poolMsg').textContent = 'Syncing…';
+  const r = await callFn('dialer-pool', { action: 'sync_dids' });
+  $('syncBtn').disabled = false;
+  $('poolMsg').textContent = r?.ok
+    ? `${r.telnyx_numbers} at Telnyx · ${r.retired_orphans} retired as no longer owned`
+    : (r?.error || 'Sync failed');
+  loadPool();
+};
+
+// ------------------------------------------------------------- campaigns --
+async function loadCampaigns() {
+  const { data } = await sb.from('dialer_campaigns')
+    .select('id, name, dial_mode, status, calling_window_start, calling_window_end')
+    .neq('status', 'archived').order('name');
+  campaigns = data || [];
+  $('impCampaign').innerHTML = campaigns.map((c) =>
+    `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
+    || '<option value="">No campaigns yet</option>';
+
+  const counts = {};
+  for (const c of campaigns) {
+    const { count } = await sb.from('dialer_contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('campaign_id', c.id).in('status', ['new', 'queued']);
+    counts[c.id] = count ?? 0;
+  }
+  // Assigned-agent counts, so the table shows at a glance which queues have
+  // nobody on them -- a queue with zero agents is silently dead work.
+  const { data: assigns } = await sb.from('dialer_campaign_agents')
+    .select('campaign_id, agent_id, is_active');
+  const agentCounts = {};
+  (assigns || []).forEach((a) => {
+    if (a.is_active) agentCounts[a.campaign_id] = (agentCounts[a.campaign_id] || 0) + 1;
+  });
+
+  $('campRows').innerHTML = campaigns.length
+    ? campaigns.map((c) => `<tr data-row="${esc(c.id)}">
+        <td>${esc(c.name)}</td>
+        <td>${esc(c.dial_mode)}</td>
+        <td class="mono">${esc(c.calling_window_start)}–${esc(c.calling_window_end)}</td>
+        <td><span class="tag ${c.status === 'active' ? 't-active' : 't-resting'}">${esc(c.status)}</span></td>
+        <td class="num">${counts[c.id].toLocaleString()}</td>
+        <td class="num">${agentCounts[c.id] ? agentCounts[c.id]
+            : '<span style="color:var(--away)">0</span>'}</td>
+        <td>${canManage ? `
+          <button class="sm" data-edit="${esc(c.id)}">Edit</button>
+          <button class="sm" data-camp="${esc(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">
+          ${c.status === 'active' ? 'Pause' : 'Activate'}</button>` : ''}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="7">No campaigns yet.</td></tr>';
+
+  $('campRows').querySelectorAll('button[data-camp]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      // v660: .select() so a refusal is VISIBLE. An RLS refusal is not an
+      // error -- it matches zero rows -- so without this the button redrew
+      // the table unchanged and said nothing, and somebody who believed they
+      // had paused a campaign watched it keep dialing. That is how this was
+      // missed: silence looked exactly like success.
+      const { data: changed, error } = await sb.from('dialer_campaigns')
+        .update({ status: b.dataset.to }).eq('id', b.dataset.camp).select('id');
+      b.disabled = false;
+      if (error || !changed || !changed.length) {
+        alert(error
+          ? `Could not change the campaign: ${error.message}`
+          : 'That campaign was not changed — your role may not be allowed to change campaigns. Nothing was paused or resumed.');
+        return;
+      }
+      loadCampaigns();
+    };
+  });
+  $('campRows').querySelectorAll('button[data-edit]').forEach((b) => {
+    b.onclick = () => toggleCampaignEditor(b.dataset.edit);
+  });
+  loadDispoCatPanel();   // v592
+}
+
+// ------------------------------------------------- campaign limits editor --
+// These columns existed since v524 but were fixed at creation: nothing in the
+// product could change a calling window or an attempt cap once a campaign was
+// made. The constraints below mirror the CHECKs in the database exactly, so a
+// bad number is refused here with a sentence instead of a Postgres error.
+const CAMP_LIMITS = [
+  { key: 'max_attempts',              label: 'Max attempts per contact', min: 1,  max: 30 },
+  { key: 'min_hours_between_attempts', label: 'Hours between tries on one number', min: 1, max: 720 },
+  // v562. Three trials on a line before the next one opens, then the whole
+  // contact rests and comes back. The two numbers interact and the pairing
+  // is the thing worth getting right: attempts_per_number x
+  // min_hours_between_attempts is how long a single number occupies the
+  // contact. 3 x 4h works a number out in a day; 3 x 24h takes three days
+  // and a ten-number contact then takes a month to reach the end of.
+  { key: 'attempts_per_number', label: 'Tries per number before the next', min: 1, max: 10 },
+  { key: 'recycle_after_days',  label: 'Recycle after (days)', min: 1, max: 365 },
+  { key: 'max_recycles',        label: 'Max recycles', min: 0, max: 10 },
+  // ring_seconds deliberately NOT editable: ring duration is negotiated by
+  // the WebRTC SDK and the carrier on the leg the browser places, and
+  // nothing reads this column. Exposing it would promise a control that
+  // does not exist. The column stays for if server-side origination lands.
+];
+// calling_days holds ISO weekdays -- Monday is 1 and SUNDAY IS 7, not 0.
+// dialer-call-control's gate 3 compares against Intl's weekday mapped the
+// same way, so a JS getDay()-style 0 for Sunday would silently mean "never
+// Sunday" while the box looked ticked. Values are explicit here for that
+// reason, and the week starts on Monday to match the default {1,2,3,4,5}.
+const CALLING_DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'],
+                      [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
+
+// v564 fallback zones. US only, and deliberately narrower than QUEUE_ZONES
+// below: that list is where an OFFICE sits, which can be Cairo or Manila.
+// This is where a SELLER might be, and every number in these lists is a NANP
+// number, so an office zone would be a category error here. Ordered west to
+// east because west is the safe end -- see the note under the picker.
+const FALLBACK_ZONES = [
+  ['America/Los_Angeles', 'US Pacific — safest for a nationwide list'],
+  ['America/Denver', 'US Mountain'],
+  ['America/Phoenix', 'US Arizona (no DST)'],
+  ['America/Chicago', 'US Central'],
+  ['America/New_York', 'US Eastern'],
+  ['America/Anchorage', 'Alaska'],
+  ['Pacific/Honolulu', 'Hawaii'],
+];
+
+async function toggleCampaignEditor(id) {
+  const existing = document.querySelector(`tr[data-editor="${id}"]`);
+  if (existing) { existing.remove(); return; }
+  document.querySelectorAll('tr[data-editor]').forEach((r) => r.remove());
+
+  const row = document.querySelector(`tr[data-row="${id}"]`);
+  if (!row) return;
+
+  const { data: c } = await sb.from('dialer_campaigns')
+    .select('id, name, dial_mode, status, calling_window_start, calling_window_end, '
+          + 'calling_days, max_attempts, min_hours_between_attempts, ring_seconds, '
+          + 'attempts_per_number, recycle_enabled, recycle_after_days, max_recycles, '
+          + 'fallback_timezone, '
+          + 'amd_enabled, recording_enabled, script, sms_fallback_enabled, sms_fallback_template')
+    .eq('id', id).maybeSingle();
+  if (!c) return;
+
+  const tr = document.createElement('tr');
+  tr.dataset.editor = id;
+  const td = document.createElement('td');
+  td.colSpan = 7;
+  td.style.cssText = 'background:var(--inset);padding:18px';
+  td.innerHTML = `
+    <div class="row">
+      <div class="field"><label>Dial mode</label>
+        <select data-f="dial_mode">
+          <option value="preview"${c.dial_mode === 'preview' ? ' selected' : ''}>Preview</option>
+          <option value="power"${c.dial_mode === 'power' ? ' selected' : ''}>Power</option>
+        </select></div>
+      <div class="field"><label>Window opens</label>
+        <input type="time" data-f="calling_window_start" value="${esc((c.calling_window_start || '').slice(0, 5))}"></div>
+      <div class="field"><label>Window closes</label>
+        <input type="time" data-f="calling_window_end" value="${esc((c.calling_window_end || '').slice(0, 5))}"></div>
+      ${CAMP_LIMITS.map((f) => `
+      <div class="field"><label>${esc(f.label)}</label>
+        <input type="number" data-f="${f.key}" min="${f.min}" max="${f.max}"
+               value="${c[f.key] ?? ''}"></div>`).join('')}
+    </div>
+    <div class="row" style="margin-top:10px;align-items:center">
+      <span class="fb-label">Calling days</span>
+      ${CALLING_DAYS.map(([v, d]) => `<label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" data-day="${v}"${(c.calling_days || []).includes(v) ? ' checked' : ''}>${d}</label>`).join('')}
+      <label style="display:flex;align-items:center;gap:5px;margin-left:14px;opacity:.55" title="Not available: the agent's browser places the call, so there is no server-side dial to attach AMD to. Would need server-side origination, which is deliberately out of scope at one line per agent.">
+        <input type="checkbox" data-f="amd_enabled" disabled${c.amd_enabled ? ' checked' : ''}>Answering-machine detection <span style="font-size:11px">(n/a)</span></label>
+      <label style="display:flex;align-items:center;gap:5px;opacity:.55" title="Recording is enabled per connection in the Telnyx portal (Outbound &rarr; Record All Outbound Calls), not per campaign. This checkbox does not control it.">
+        <input type="checkbox" data-f="recording_enabled" disabled${c.recording_enabled ? ' checked' : ''}>Record calls <span style="font-size:11px">(set in Telnyx)</span></label>
+    </div>
+    <p class="hint" style="margin:12px 0 0">
+      The window is in each contact's own local time, not yours.
+    </p>
+
+    <!-- v562. How a contact's numbers are worked, and what happens when they
+         run out. The two numbers above interact and the pairing is the thing
+         worth getting right, so it is spelled out rather than left to be
+         inferred from two fields sitting side by side. -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <div class="fb-label" style="margin-bottom:6px">Working a contact's numbers</div>
+      <p class="hint" style="margin:0 0 10px">
+        A number is tried <strong>${Number(c.attempts_per_number ?? 3)}</strong> times,
+        <strong>${Number(c.min_hours_between_attempts ?? 24)}h</strong> apart, before the
+        next one opens &mdash; so one number occupies a contact for about
+        <strong>${(((c.attempts_per_number ?? 3) - 1) * (c.min_hours_between_attempts ?? 24) / 24).toFixed(1)} days</strong>.
+        Only silence counts: no answer, busy, voicemail, a dead call. Being told
+        no, a wrong number, a disconnected line or reaching the wrong person
+        retires that number immediately and it never comes back.
+        <br><br>
+        Max attempts per contact is <strong>${Number(c.max_attempts ?? 6)}</strong>, which
+        caps the whole contact
+        ${(c.max_attempts ?? 6) < (c.attempts_per_number ?? 3) * 2
+          ? '&mdash; <strong>lower than two numbers’ worth of tries</strong>, so the '
+            + 'contact stops before its alternates are reached. Raise it to at least '
+            + ((c.attempts_per_number ?? 3) * 3) + ' to work three numbers.'
+          : 'across all of its numbers.'}
+      </p>
+      <!-- v564. The last link of the calling-hours chain: this line's zone,
+           then the contact's, then this. Only reached by a number whose area
+           code the table cannot place, and left unset it refuses the dial,
+           which is the conservative default it has always been. -->
+      <div class="row" style="margin:0 0 12px">
+        <div class="field" style="min-width:260px">
+          <label>Fallback time zone <span class="muted">(numbers with no zone)</span></label>
+          <select data-f="fallback_timezone">
+            <option value="">Do not dial them (default)</option>
+            ${FALLBACK_ZONES.map(([v, d]) =>
+              `<option value="${esc(v)}"${c.fallback_timezone === v ? ' selected' : ''}>${esc(d)}</option>`).join('')}
+            ${c.fallback_timezone && !FALLBACK_ZONES.some(([v]) => v === c.fallback_timezone)
+              ? `<option value="${esc(c.fallback_timezone)}" selected>${esc(c.fallback_timezone)}</option>` : ''}
+          </select>
+        </div>
+      </div>
+      <p class="hint" style="margin:0 0 12px">
+        Used only when the area code is not one this build knows &mdash; the
+        <strong>No time zone</strong> count in Lists. <strong>Pick the westernmost zone
+        you call.</strong> Gating an unknown number on a zone west of its real one opens
+        the window late (Pacific 9am is Eastern noon &mdash; harmless); gating it on a
+        zone east of its real one opens it early (Eastern 9am is Pacific 6am &mdash; a
+        complaint). It is never written onto the contact, so a real zone resolved later
+        still wins.
+      </p>
+
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600">
+        <input type="checkbox" data-f="recycle_enabled"${c.recycle_enabled !== false ? ' checked' : ''}>
+        Recycle a contact once every number is spent</label>
+      <p class="hint" style="margin:8px 0 0">
+        It rests for the recycle interval above, then reopens at Ph#1 with the
+        counters cleared, up to the recycle cap. Numbers retired as DNC, wrong
+        number or disconnected are never reopened by a recycle. After the last
+        recycle the contact is retired as <span class="mono">all_numbers_exhausted</span>.
+      </p>
+    </div>
+
+    <!-- v595. The script agents read beside the contact. Merge fields fill
+         from the contact on screen; one with no value shows as a highlighted
+         blank, so the agent can see what is missing and ask. -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <div class="fb-label" style="margin-bottom:6px">Call script</div>
+      <p class="hint" style="margin:0 0 8px">
+        Shown to agents beside the contact. Merge fields:
+        <span class="mono">{{first_name}}</span> <span class="mono">{{last_name}}</span>
+        <span class="mono">{{full_name}}</span> <span class="mono">{{address}}</span>
+        <span class="mono">{{city}}</span> <span class="mono">{{state}}</span>
+        <span class="mono">{{zip}}</span> <span class="mono">{{phone}}</span>
+        <span class="mono">{{agent_first_name}}</span> <span class="mono">{{agent}}</span>
+        <span class="mono">{{campaign}}</span>, and any field mapped at import by its key.
+      </p>
+      <textarea data-f="script" rows="7" style="width:100%"
+        placeholder="Hi {{first_name}}, this is {{agent_first_name}} with PrimeHome Buyers. I'm calling about {{address}} in {{city}}...">${esc(c.script || '')}</textarea>
+    </div>
+
+    <!-- SMS fallback. Manual dials only, by decision: an automatic text after
+         queued cold traffic is a different consent posture from following up
+         with one specific person an agent just chose to call. The wording is
+         editable here rather than constant in code because it is the part
+         that gets tuned, and it lands from a number the recipient does not
+         recognise -- so it has to say who is texting and why. -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600">
+        <input type="checkbox" data-f="sms_fallback_enabled"${c.sms_fallback_enabled ? ' checked' : ''}>
+        Text after an unanswered <em>manual</em> dial</label>
+      <p class="hint" style="margin:8px 0">
+        Sent from +1 312-638-0895. Merge fields: <span class="mono">{{first_name}}</span>,
+        <span class="mono">{{agent}}</span>. Never sent to a number on the internal
+        do-not-call list. One segment is 160 characters &mdash; a single emoji drops that to 70.
+      </p>
+      <textarea data-f="sms_fallback_template" rows="3" style="width:100%"
+        placeholder="Hi {{first_name}}, this is {{agent}} at ...">${esc(c.sms_fallback_template || '')}</textarea>
+      <div class="hint" id="smsLen_${c.id}" style="margin-top:4px"></div>
+    </div>
+
+    <!-- v592. What agents on THIS queue are offered at wrap-up, and what is
+         sent automatically on some outcomes. A queue with no list of its own
+         offers the default list, exactly as before. -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <div class="fb-label" style="margin-bottom:8px">Wrap-up outcomes</div>
+      <div class="row" style="margin:0 0 8px;gap:18px;align-items:center">
+        <label style="display:flex;align-items:center;gap:6px">
+          <input type="radio" name="dmode_${esc(c.id)}" value="default" data-dmode> The default list</label>
+        <label style="display:flex;align-items:center;gap:6px">
+          <input type="radio" name="dmode_${esc(c.id)}" value="custom" data-dmode> This queue's own list</label>
+      </div>
+      <p class="hint" style="margin:0 0 10px" data-dhint></p>
+      <div class="scroll"><table><thead><tr>
+        <th>Offer</th><th>Outcome</th><th>What it does</th><th class="num">Order</th>
+      </tr></thead><tbody data-dset><tr><td colspan="4">Loading…</td></tr></tbody></table></div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <div class="fb-label" style="margin-bottom:6px">Automatic messages</div>
+      <p class="hint" style="margin:0 0 10px">
+        Sent the moment an agent saves the outcome, with no click from them. Email goes from the
+        agent's own connected Gmail. A text goes from +1 312-638-0895, and only to someone who
+        agreed to receive texts and is not on the do-not-call list. Merge fields:
+        <span class="mono">{{first_name}}</span> <span class="mono">{{last_name}}</span>
+        <span class="mono">{{full_name}}</span> <span class="mono">{{agent}}</span>
+        <span class="mono">{{agent_first_name}}</span> <span class="mono">{{address}}</span>
+        <span class="mono">{{city}}</span> <span class="mono">{{state}}</span>
+        <span class="mono">{{phone}}</span>.
+      </p>
+      <div data-actions></div>
+      <button class="sm" data-add-action style="margin-top:4px">Add a message</button>
+    </div>
+
+    <!-- v667/v669. The lead form this queue files leads under, and what each
+         outcome DOES here: retry timing, messages, callbacks, hand-offs. Both
+         save on their own buttons -- they are live the moment they are saved,
+         and should not wait on an unrelated edit to the queue above. -->
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <div class="fb-label" style="margin-bottom:6px">Lead form</div>
+      <p class="hint" style="margin:0 0 8px">
+        The submission form an agent fills in from the call screen on this queue. Leads land in
+        Queue Review under this form. No form = no Start lead button.
+      </p>
+      <div class="row" style="margin-bottom:0">
+        <select data-leadform style="min-width:260px"></select>
+        <button class="sm" data-leadform-save>Save lead form</button>
+        <span data-leadform-msg class="muted"></span>
+      </div>
+    </div>
+
+    <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+      <div class="fb-label" style="margin-bottom:6px">Outcome rules</div>
+      <p class="hint" style="margin:0 0 10px">
+        What each outcome does on this queue. An outcome with no rule keeps the queue's normal
+        timing above. Leave a box blank for "no limit"; a blank retry means no retry. Working days
+        are this queue's calling days. Messages are written in Settings &rarr; Message templates.
+      </p>
+      <div data-rules><p class="hint">Loading…</p></div>
+      <div class="row" style="margin-top:6px">
+        <button class="sm" data-add-rule>Add a rule</button>
+        <button class="sm primary" data-save-rules>Save rules</button>
+        <span data-rules-msg class="muted"></span>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="fb-label" style="margin-bottom:8px">Assigned agents &amp; their caps on this queue</div>
+      <div class="scroll"><table><thead><tr>
+        <th>Agent</th><th>Assigned</th>
+        <th class="num">Max calls / day</th><th class="num">Max contacts</th>
+      </tr></thead><tbody data-assign></tbody></table></div>
+      <p class="hint" style="margin:10px 0 0">Leave a cap blank for no limit.</p>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <button class="primary" data-save>Save queue</button>
+      <button data-cancel>Cancel</button>
+      <span data-msg></span>
+    </div>`;
+  tr.appendChild(td);
+  row.after(tr);
+
+  // Only people who can actually use the dialer can be assigned to a queue.
+  const { data: roles } = await sb.from('roles').select('name, can_use_dialer');
+  const dialerRoles = new Set((roles || []).filter((r) => r.can_use_dialer).map((r) => r.name));
+  const { data: people } = await sb.from('profiles').select('id, full_name, role').order('full_name');
+  const eligible = (people || []).filter((p) => dialerRoles.has(p.role));
+
+  const { data: rows } = await sb.from('dialer_campaign_agents')
+    .select('agent_id, is_active, max_calls_per_day, max_contacts').eq('campaign_id', id);
+  const byAgent = {};
+  (rows || []).forEach((r) => { byAgent[r.agent_id] = r; });
+
+  td.querySelector('[data-assign]').innerHTML = eligible.length
+    ? eligible.map((p) => {
+        const a = byAgent[p.id];
+        return `<tr>
+          <td>${esc(p.full_name || p.id)} <span class="muted">${esc(p.role)}</span></td>
+          <td><input type="checkbox" data-a="${esc(p.id)}"${a && a.is_active ? ' checked' : ''}></td>
+          <td class="num"><input type="number" min="1" style="width:90px"
+              data-cap="${esc(p.id)}" value="${a?.max_calls_per_day ?? ''}"></td>
+          <td class="num"><input type="number" min="1" style="width:90px"
+              data-cont="${esc(p.id)}" value="${a?.max_contacts ?? ''}"></td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="4">No profiles hold a role with dialer access.</td></tr>';
+
+  // v592. The catalogue first: the message editor's outcome lists read it.
+  await renderDispoEditor(td, id);
+  await renderActionsEditor(td, id);
+  await renderLeadFormPicker(td, id);
+  await renderRulesEditor(td, id);
+
+  td.querySelector('[data-cancel]').onclick = () => tr.remove();
+  td.querySelector('[data-save]').onclick = () => saveCampaign(id, td, tr);
+}
+
+async function saveCampaign(id, td, tr) {
+  const msg = td.querySelector('[data-msg]');
+  const val = (k) => td.querySelector(`[data-f="${k}"]`);
+
+  const patch = {
+    dial_mode: val('dial_mode').value,
+    calling_window_start: val('calling_window_start').value,
+    calling_window_end: val('calling_window_end').value,
+    sms_fallback_enabled: val('sms_fallback_enabled').checked,
+    recycle_enabled: val('recycle_enabled').checked,
+    // Empty means "refuse the dial", which is null in the column, not ''.
+    // The check constraint rejects '' outright, so this must not send it.
+    fallback_timezone: val('fallback_timezone').value || null,
+    sms_fallback_template: val('sms_fallback_template').value.trim() || null,
+    script: val('script').value.trim() || null,   // v595
+    // amd_enabled / recording_enabled are intentionally NOT sent: their
+    // controls are disabled above because nothing reads either column,
+    // and writing whatever a disabled checkbox happens to show would
+    // quietly rewrite the stored value on every save.
+    calling_days: [...td.querySelectorAll('[data-day]')]
+      .filter((c) => c.checked).map((c) => Number(c.dataset.day)),
+  };
+
+  // Checked here rather than letting Postgres reject it, so the admin gets
+  // the field name and the allowed range instead of a constraint name.
+  for (const f of CAMP_LIMITS) {
+    const n = Number(val(f.key).value);
+    if (!Number.isInteger(n) || n < f.min || n > f.max) {
+      say(msg, `${f.label} must be a whole number between ${f.min} and ${f.max}.`, 'err');
+      return;
+    }
+    patch[f.key] = n;
+  }
+  if (!patch.calling_window_start || !patch.calling_window_end) {
+    say(msg, 'Both ends of the calling window are required.', 'err'); return;
+  }
+  if (!patch.calling_days.length) {
+    say(msg, 'Pick at least one calling day, or the queue can never dial.', 'err'); return;
+  }
+  // v592: checked before anything is written, like the fields above.
+  const v592Err = validateDispoSet(td) || validateActions(td);
+  if (v592Err) { say(msg, v592Err, 'err'); return; }
+
+  td.querySelector('[data-save]').disabled = true;
+  say(msg, 'Saving…', 'ok');
+
+  const { error } = await sb.from('dialer_campaigns').update(patch).eq('id', id);
+  if (error) { say(msg, error.message, 'err'); td.querySelector('[data-save]').disabled = false; return; }
+
+  // Assignment rows: upsert the ones that are ticked, and mark the rest
+  // inactive rather than deleting them -- assigned_by/assigned_at is a record
+  // of who put an agent on a queue, and deleting the row destroys it.
+  const ups = [];
+  const off = [];
+  td.querySelectorAll('[data-a]').forEach((cb) => {
+    const aid = cb.dataset.a;
+    const cap = td.querySelector(`[data-cap="${aid}"]`).value;
+    const cont = td.querySelector(`[data-cont="${aid}"]`).value;
+    if (cb.checked) {
+      ups.push({
+        campaign_id: id, agent_id: aid, is_active: true,
+        max_calls_per_day: cap === '' ? null : Number(cap),
+        max_contacts: cont === '' ? null : Number(cont),
+        assigned_by: meId,
+      });
+    } else off.push(aid);
+  });
+
+  if (ups.length) {
+    const { error: e2 } = await sb.from('dialer_campaign_agents')
+      .upsert(ups, { onConflict: 'campaign_id,agent_id' });
+    if (e2) { say(msg, e2.message, 'err'); td.querySelector('[data-save]').disabled = false; return; }
+  }
+  if (off.length) {
+    // v660: checked. The upsert above is; this was not, so an agent you
+    // UNTICKED could stay assigned while the screen said "Saved." -- and an
+    // agent still on a campaign keeps being handed its contacts.
+    const { error: offErr } = await sb.from('dialer_campaign_agents').update({ is_active: false })
+      .eq('campaign_id', id).in('agent_id', off);
+    if (offErr) { say(msg, `Could not remove the unticked agents: ${offErr.message}`, 'err');
+      td.querySelector('[data-save]').disabled = false; return; }
+  }
+
+  // v592: the outcome list and the automatic messages.
+  const e3 = (await saveDispoSet(td, id)) || (await saveActions(td, id));
+  if (e3) { say(msg, e3, 'err'); td.querySelector('[data-save]').disabled = false; return; }
+
+  say(msg, 'Saved.', 'ok');
+  tr.remove();
+  loadCampaigns();
+}
+
+// ------------------------------------------------------ v595: pipeline --
+let pipeNames = {};
+let pipeReps = [];      // people who can use the dialer, for "hand to"
+let pipeOppsShown = [];
+
+function pipeAgo(t) {
+  const m = Math.round((Date.now() - new Date(t)) / 60000);
+  return m < 60 ? `${Math.max(m, 0)}m ago` : m < 1440 ? `${Math.round(m / 60)}h ago` : `${Math.round(m / 1440)}d ago`;
+}
+function pipeDue(t) {
+  const ms = new Date(t) - Date.now();
+  const m = Math.round(Math.abs(ms) / 60000);
+  const rel = m < 60 ? `${m}m` : m < 1440 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`;
+  return ms < 0 ? `<span class="gap">${rel} overdue</span>` : `in ${rel}`;
+}
+function pipeRepSelect(kind, id, owner) {
+  if (!canManage) return esc(pipeNames[owner] || '—');
+  return `<select data-${kind}="${esc(id)}" data-owner="${esc(owner)}" style="padding:4px 8px;font-size:12px">`
+    + pipeReps.map((p) => `<option value="${esc(p.id)}"${p.id === owner ? ' selected' : ''}>${esc(p.full_name || p.id)}</option>`).join('')
+    + (pipeReps.some((p) => p.id === owner) ? '' : `<option value="${esc(owner)}" selected>${esc(pipeNames[owner] || 'unknown')}</option>`)
+    + '</select>';
+}
+
+async function loadPipeline() {
+  const days = Number($('pipeDays').value) || 30;
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  $('pipeMsg').textContent = 'Loading…';
+  const [opps, closed, fus, people, roles] = await Promise.all([
+    sb.from('dialer_opportunities')
+      .select('id, owner_id, phone_e164, contact_name, address, city, state, last_activity_at')
+      .eq('status', 'open').order('last_activity_at', { ascending: false }).limit(1000),
+    sb.from('dialer_opportunities').select('owner_id, status')
+      .in('status', ['converted', 'lost']).gte('closed_at', since).limit(5000),
+    sb.from('dialer_follow_ups').select('id, owner_id, phone_e164, contact_name, due_at, note')
+      .eq('status', 'open').order('due_at', { ascending: true }).limit(2000),
+    sb.from('profiles').select('id, full_name, role'),
+    sb.from('roles').select('name, can_use_dialer'),
+  ]);
+  const failed = [opps, closed, fus].find((r) => r.error);
+  if (failed) { $('pipeMsg').textContent = failed.error.message; return; }
+
+  pipeNames = {};
+  (people.data || []).forEach((p) => { pipeNames[p.id] = p.full_name || p.id.slice(0, 8); });
+  const dialerRoles = new Set((roles.data || []).filter((r) => r.can_use_dialer).map((r) => r.name));
+  pipeReps = (people.data || [])
+    .filter((p) => dialerRoles.has(p.role) || p.role === 'owner' || p.role === 'admin')
+    .sort((a, b) => String(a.full_name || '').localeCompare(String(b.full_name || '')));
+
+  // ---- by rep ----
+  const now = Date.now();
+  const byRep = {};
+  const rep = (id) => (byRep[id] ||= { open: 0, converted: 0, lost: 0, fu: 0, overdue: 0 });
+  (opps.data || []).forEach((o) => { rep(o.owner_id).open++; });
+  (closed.data || []).forEach((o) => { rep(o.owner_id)[o.status]++; });
+  (fus.data || []).forEach((f) => {
+    const r = rep(f.owner_id);
+    r.fu++;
+    if (new Date(f.due_at).getTime() < now) r.overdue++;
+  });
+  const ids = Object.keys(byRep).sort((a, b) => String(pipeNames[a] || '').localeCompare(String(pipeNames[b] || '')));
+  $('pipeReps').innerHTML = ids.length ? ids.map((id) => {
+    const r = byRep[id];
+    const decided = r.converted + r.lost;
+    return `<tr><td>${esc(pipeNames[id] || id)}</td>
+      <td class="num">${r.open}</td><td class="num">${r.converted}</td><td class="num">${r.lost}</td>
+      <td class="num">${decided ? Math.round((100 * r.converted) / decided) + '%' : '—'}</td>
+      <td class="num">${r.fu}</td>
+      <td class="num">${r.overdue ? `<span class="gap">${r.overdue}</span>` : 0}</td></tr>`;
+  }).join('') : '<tr><td colspan="7">No follow-ups or opportunities yet.</td></tr>';
+
+  // ---- follow-ups due within 24h, overdue first (already in due order) ----
+  const horizon = now + 86400000;
+  const due = (fus.data || []).filter((f) => new Date(f.due_at).getTime() <= horizon);
+  $('pipeFollowUps').innerHTML = due.length ? due.map((f) => `<tr>
+      <td>${pipeDue(f.due_at)}<div class="hint" style="margin:2px 0 0">${esc(new Date(f.due_at).toLocaleString())}</div></td>
+      <td>${esc(f.contact_name || '—')}<div class="mono" style="font-size:11px">${esc(f.phone_e164)}</div></td>
+      <td>${pipeRepSelect('fu', f.id, f.owner_id)}</td>
+      <td style="max-width:320px">${esc(f.note || '')}</td></tr>`).join('')
+    : '<tr><td colspan="4">Nothing due in the next 24 hours.</td></tr>';
+
+  // ---- open opportunities, with note counts ----
+  pipeOppsShown = (opps.data || []).slice(0, 300);
+  const counts = {};
+  if (pipeOppsShown.length) {
+    const { data: notes } = await sb.from('dialer_opportunity_notes')
+      .select('opportunity_id').in('opportunity_id', pipeOppsShown.map((o) => o.id)).limit(10000);
+    (notes || []).forEach((n) => { counts[n.opportunity_id] = (counts[n.opportunity_id] || 0) + 1; });
+  }
+  $('pipeOpps').innerHTML = pipeOppsShown.length ? pipeOppsShown.map((o) => `<tr>
+      <td>${esc(o.contact_name || '—')}<div class="mono" style="font-size:11px">${esc(o.phone_e164)}</div></td>
+      <td>${esc([o.address, o.city, o.state].filter(Boolean).join(', ') || '—')}</td>
+      <td>${pipeRepSelect('opp', o.id, o.owner_id)}</td>
+      <td>${esc(pipeAgo(o.last_activity_at))}</td>
+      <td class="num">${counts[o.id] || 0}</td>
+      <td><button class="sm" data-oppnotes="${esc(o.id)}">Notes</button></td></tr>`).join('')
+    : '<tr><td colspan="6">No open opportunities.</td></tr>';
+  $('pipeOppNotes').classList.add('hide');
+
+  $('pipeMsg').textContent = `${(opps.data || []).length} open opportunities · ${(fus.data || []).length} open follow-ups`
+    + ((opps.data || []).length > pipeOppsShown.length ? ` (showing the ${pipeOppsShown.length} most recent)` : '');
+
+  // ---- hand to another rep ----
+  document.querySelectorAll('#pipeFollowUps select[data-fu]').forEach((sel) => {
+    sel.onchange = async () => {
+      const to = sel.value;
+      if (!confirm(`Hand this follow-up from ${pipeNames[sel.dataset.owner] || 'its rep'} to ${pipeNames[to] || 'this rep'}?`)) {
+        sel.value = sel.dataset.owner; return;
+      }
+      sel.disabled = true;
+      // reminded_at cleared so the new owner is reminded -- within a minute
+      // if it is already due. The old owner's reminder has already fired.
+      const { error } = await sb.from('dialer_follow_ups')
+        .update({ owner_id: to, reminded_at: null, updated_at: new Date().toISOString() })
+        .eq('id', sel.dataset.fu);
+      if (error) { $('pipeMsg').textContent = error.message; sel.value = sel.dataset.owner; sel.disabled = false; return; }
+      loadPipeline();
+    };
+  });
+  document.querySelectorAll('#pipeOpps select[data-opp]').forEach((sel) => {
+    sel.onchange = async () => {
+      const to = sel.value;
+      if (!confirm(`Hand this opportunity from ${pipeNames[sel.dataset.owner] || 'its rep'} to ${pipeNames[to] || 'this rep'}? `
+                 + 'Its open follow-ups go with it.')) {
+        sel.value = sel.dataset.owner; return;
+      }
+      sel.disabled = true;
+      const nowIso = new Date().toISOString();
+      const { error } = await sb.from('dialer_opportunities')
+        .update({ owner_id: to, updated_at: nowIso }).eq('id', sel.dataset.opp);
+      if (error) { $('pipeMsg').textContent = error.message; sel.value = sel.dataset.owner; sel.disabled = false; return; }
+      await sb.from('dialer_follow_ups')
+        .update({ owner_id: to, reminded_at: null, updated_at: nowIso })
+        .eq('opportunity_id', sel.dataset.opp).eq('status', 'open');
+      await sb.from('dialer_opportunity_notes').insert({
+        opportunity_id: sel.dataset.opp, author_id: meId,
+        body: `Handed from ${pipeNames[sel.dataset.owner] || 'another rep'} to ${pipeNames[to] || 'another rep'}.`,
+      });
+      loadPipeline();
+    };
+  });
+  document.querySelectorAll('#pipeOpps button[data-oppnotes]').forEach((b) => {
+    b.onclick = () => showPipeNotes(b.dataset.oppnotes);
+  });
+}
+
+async function showPipeNotes(id) {
+  const o = pipeOppsShown.find((x) => x.id === id);
+  const box = $('pipeOppNotes');
+  box.classList.remove('hide');
+  box.innerHTML = '<div class="hint">Loading…</div>';
+  const { data, error } = await sb.from('dialer_opportunity_notes')
+    .select('body, created_at, author_id').eq('opportunity_id', id).order('created_at', { ascending: false });
+  if (error) { box.innerHTML = `<div class="hint">${esc(error.message)}</div>`; return; }
+  box.innerHTML = `<div class="fb-label" style="margin-bottom:8px">Notes — ${esc(o?.contact_name || o?.phone_e164 || '')}</div>`
+    + ((data || []).map((n) => `<div style="border:1px solid var(--border);border-radius:9px;padding:9px 11px;margin-bottom:8px;
+          white-space:pre-wrap;font-size:13px"><div class="hint" style="margin:0 0 3px">
+          ${esc(new Date(n.created_at).toLocaleString())} · ${esc(pipeNames[n.author_id] || '')}</div>${esc(n.body)}</div>`).join('')
+       || '<div class="hint">No notes yet.</div>');
+  box.scrollIntoView({ block: 'nearest' });
+}
+
+$('pipeDays').onchange = () => loadPipeline();
+$('pipeRefresh').onclick = () => loadPipeline();
+
+// ------------------------------------------------ v592: wrap-up outcomes --
+// What an outcome DOES is a set of consequence columns that dialer-call-control
+// acts on. A new outcome is made from one of these presets rather than from
+// free-form flags: ticking adds_to_dnc by accident would suppress a seller for
+// good.
+const DISPO_PRESETS = [
+  { key: 'retry', label: 'No contact -- try again later', category: 'no_contact' },
+  { key: 'retire', label: 'Spoke to them -- stop calling', category: 'contacted', retires_contact: true },
+  { key: 'callback', label: 'Callback -- back in the queue at a set time', category: 'callback',
+    schedules_callback: true },
+  { key: 'follow_up', label: "Follow up -- reminds the agent at a set time", category: 'callback',
+    retires_contact: true, creates_follow_up: true },
+  { key: 'opportunity', label: "Opportunity -- goes to the agent's Opportunities", category: 'contacted',
+    retires_contact: true, creates_opportunity: true },
+  { key: 'lead', label: 'Lead -- creates a lead straight away', category: 'converted',
+    retires_contact: true, creates_lead: true },
+  { key: 'dnc', label: 'Do not call -- suppressed for good', category: 'dnc',
+    retires_contact: true, adds_to_dnc: true },
+  { key: 'invalid', label: 'Bad number -- that line is retired', category: 'invalid',
+    retires_contact: true, marks_invalid: true },
+];
+
+function dispoEffect(d) {
+  if (d.adds_to_dnc) return 'Do not call';
+  if (d.marks_invalid) return 'Bad number';
+  if (d.creates_lead) return 'Creates a lead';
+  if (d.creates_opportunity) return 'Opportunity';
+  if (d.creates_follow_up) return 'Follow-up reminder';
+  if (d.schedules_callback) return 'Callback at a set time';
+  if (d.retires_contact) return 'Stops calling';
+  return 'Tries again later';
+}
+
+let dispoCatalog = [];
+async function loadDispoCatalog() {
+  const { data, error } = await sb.from('dialer_dispositions')
+    .select('id, code, label, category, retires_contact, schedules_callback, creates_lead, adds_to_dnc, '
+          + 'marks_invalid, creates_follow_up, creates_opportunity, in_default_set, is_active, sort_order')
+    .order('sort_order');
+  if (error) throw new Error(error.message);
+  dispoCatalog = data || [];
+  return dispoCatalog;
+}
+
+// ---- a queue's own list ----
+async function renderDispoEditor(td, id) {
+  let cat;
+  try { cat = await loadDispoCatalog(); }
+  catch (e) { td.querySelector('[data-dset]').innerHTML = `<tr><td colspan="4">${esc(e.message)}</td></tr>`; return; }
+  const { data: rows } = await sb.from('dialer_campaign_dispositions')
+    .select('disposition_id, sort_order').eq('campaign_id', id);
+  const own = new Map((rows || []).map((r) => [r.disposition_id, r.sort_order]));
+  const custom = own.size > 0;
+  // The queue's own outcomes first, in its order; then the rest.
+  const active = cat.filter((d) => d.is_active).sort((a, b) =>
+    (Number(own.has(b.id)) - Number(own.has(a.id)))
+    || ((own.get(a.id) ?? a.sort_order) - (own.get(b.id) ?? b.sort_order)));
+  td.querySelector('[data-dset]').innerHTML = active.map((d, i) => `<tr>
+      <td><input type="checkbox" data-d="${esc(d.id)}"${(custom ? own.has(d.id) : d.in_default_set) ? ' checked' : ''}></td>
+      <td>${esc(d.label)}${d.in_default_set ? '' : ' <span class="muted">(not in the default list)</span>'}</td>
+      <td class="muted">${esc(dispoEffect(d))}</td>
+      <td class="num"><input type="number" min="1" max="99" style="width:64px" data-dord="${esc(d.id)}"
+          value="${own.has(d.id) ? own.get(d.id) : i + 1}"></td>
+    </tr>`).join('') || '<tr><td colspan="4">No outcomes are switched on.</td></tr>';
+  td.querySelectorAll('[data-dmode]').forEach((r) => {
+    r.checked = r.value === (custom ? 'custom' : 'default');
+    r.onchange = () => syncDispoMode(td);
+  });
+  syncDispoMode(td);
+}
+
+function syncDispoMode(td) {
+  const custom = td.querySelector('[data-dmode][value="custom"]').checked;
+  td.querySelectorAll('[data-d],[data-dord]').forEach((el) => { el.disabled = !custom; });
+  td.querySelector('[data-dhint]').textContent = custom
+    ? 'Tick what agents on this queue are offered and set the order -- the first nine get keys 1 to 9. '
+      + 'Agents pick up a change the next time they open the dialer.'
+    : 'This queue offers every outcome in the default list (ticked below). Choose its own list to change that.';
+}
+
+function dispoSetChoice(td) {
+  const custom = Boolean(td.querySelector('[data-dmode][value="custom"]')?.checked);
+  if (!custom) return { custom, rows: [] };
+  const rows = [...td.querySelectorAll('[data-d]')].filter((cb) => cb.checked).map((cb) => ({
+    disposition_id: cb.dataset.d,
+    sort_order: Math.min(Math.max(Number(td.querySelector(`[data-dord="${cb.dataset.d}"]`).value) || 99, 1), 99),
+  }));
+  return { custom, rows };
+}
+
+function validateDispoSet(td) {
+  const c = dispoSetChoice(td);
+  if (c.custom && !c.rows.length) {
+    return 'Tick at least one outcome, or use the default list -- an agent cannot wrap up a call with none.';
+  }
+  return null;
+}
+
+async function saveDispoSet(td, id) {
+  const c = dispoSetChoice(td);
+  if (!c.custom) {
+    const { error } = await sb.from('dialer_campaign_dispositions').delete().eq('campaign_id', id);
+    return error ? error.message : null;
+  }
+  // Upsert the chosen rows first, then remove the rest, so the queue is never
+  // briefly without a list -- which would mean the default one.
+  const { error } = await sb.from('dialer_campaign_dispositions')
+    .upsert(c.rows.map((r) => ({ campaign_id: id, ...r })), { onConflict: 'campaign_id,disposition_id' });
+  if (error) return error.message;
+  const keep = c.rows.map((r) => r.disposition_id);
+  const { error: e2 } = await sb.from('dialer_campaign_dispositions').delete()
+    .eq('campaign_id', id).not('disposition_id', 'in', `(${keep.join(',')})`);
+  return e2 ? e2.message : null;
+}
+
+// ---- automatic messages ----
+async function renderActionsEditor(td, id) {
+  const box = td.querySelector('[data-actions]');
+  const { data, error } = await sb.from('dialer_disposition_actions')
+    .select('id, disposition_code, channel, subject, body, is_active')
+    .eq('campaign_id', id).order('disposition_code');
+  if (error) { box.innerHTML = `<p class="hint">${esc(error.message)}</p>`; return; }
+  box.innerHTML = (data || []).length ? '' : '<p class="hint" data-noact>No automatic messages on this queue.</p>';
+  (data || []).forEach((a) => box.appendChild(actionRow(a)));
+  td.querySelector('[data-add-action]').onclick = () => {
+    box.querySelector('[data-noact]')?.remove();
+    box.appendChild(actionRow({ channel: 'email', is_active: true }));
+  };
+}
+
+function actionRow(a) {
+  const el = document.createElement('div');
+  el.dataset.action = a.id || '';
+  el.style.cssText = 'border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--card)';
+  const opts = dispoCatalog.filter((d) => d.is_active || d.code === a.disposition_code)
+    .map((d) => `<option value="${esc(d.code)}"${d.code === a.disposition_code ? ' selected' : ''}>${esc(d.label)}</option>`)
+    .join('');
+  el.innerHTML = `
+    <div class="row" style="margin-bottom:8px">
+      <div class="field"><label>When the outcome is</label><select data-a-code>${opts}</select></div>
+      <div class="field"><label>Send</label><select data-a-ch>
+        <option value="email"${a.channel === 'email' ? ' selected' : ''}>Email</option>
+        <option value="sms"${a.channel === 'sms' ? ' selected' : ''}>Text</option></select></div>
+      <label style="display:flex;align-items:center;gap:6px;margin-bottom:9px">
+        <input type="checkbox" data-a-on${a.is_active !== false ? ' checked' : ''}> On</label>
+      <button class="sm" data-a-del style="margin-bottom:6px">Remove</button>
+    </div>
+    <input data-a-subj placeholder="Subject" style="width:100%;margin-bottom:8px" value="${esc(a.subject || '')}">
+    <textarea data-a-body rows="4" style="width:100%" placeholder="Hi {{first_name}}, this is {{agent_first_name}} ...">${esc(a.body || '')}</textarea>
+    <div class="hint" data-a-len style="margin-top:4px"></div>`;
+  const sync = () => {
+    const sms = el.querySelector('[data-a-ch]').value === 'sms';
+    el.querySelector('[data-a-subj]').style.display = sms ? 'none' : '';
+    const n = el.querySelector('[data-a-body]').value.length;
+    el.querySelector('[data-a-len]').textContent = sms
+      ? `${n} characters. One text is 160 -- merge fields change the length, and a single emoji drops it to 70.`
+      : '';
+  };
+  el.querySelector('[data-a-ch]').onchange = sync;
+  el.querySelector('[data-a-body]').oninput = sync;
+  el.querySelector('[data-a-del]').onclick = () => { el.dataset.removed = '1'; el.style.display = 'none'; };
+  sync();
+  return el;
+}
+
+function actionChoice(td) {
+  return [...td.querySelectorAll('[data-actions] [data-action]')].map((el) => ({
+    id: el.dataset.action || null,
+    removed: el.dataset.removed === '1',
+    disposition_code: el.querySelector('[data-a-code]').value,
+    channel: el.querySelector('[data-a-ch]').value,
+    subject: el.querySelector('[data-a-subj]').value.trim() || null,
+    body: el.querySelector('[data-a-body]').value.trim(),
+    is_active: el.querySelector('[data-a-on]').checked,
+  }));
+}
+
+function validateActions(td) {
+  const seen = new Set();
+  for (const a of actionChoice(td).filter((x) => !x.removed)) {
+    if (!a.disposition_code) return 'Pick the outcome each automatic message is for.';
+    if (!a.body) return 'An automatic message needs a message.';
+    if (a.channel === 'email' && !a.subject) return 'An automatic email needs a subject.';
+    const k = a.disposition_code + '|' + a.channel;
+    if (seen.has(k)) return 'Two automatic messages for the same outcome and channel -- keep one.';
+    seen.add(k);
+  }
+  return null;
+}
+
+async function saveActions(td, id) {
+  const all = actionChoice(td);
+  // Removals first: (queue, outcome, channel) is unique, and a removed row
+  // must not block a new one for the same pair.
+  const del = all.filter((a) => a.id && a.removed).map((a) => a.id);
+  if (del.length) {
+    const { error } = await sb.from('dialer_disposition_actions').delete().in('id', del);
+    if (error) return error.message;
+  }
+  for (const a of all.filter((x) => !x.removed)) {
+    const row = {
+      campaign_id: id, disposition_code: a.disposition_code, channel: a.channel,
+      subject: a.channel === 'email' ? a.subject : null, body: a.body, is_active: a.is_active,
+      updated_by: meId, updated_at: new Date().toISOString(),
+    };
+    const { error } = a.id
+      ? await sb.from('dialer_disposition_actions').update(row).eq('id', a.id)
+      : await sb.from('dialer_disposition_actions').insert(row);
+    if (error) {
+      return /duplicate|unique/i.test(error.message)
+        ? 'Two automatic messages for the same outcome and channel -- keep one.' : error.message;
+    }
+  }
+  return null;
+}
+
+// ---------------------------------------------------- v667: lead form --
+async function renderLeadFormPicker(td, id) {
+  const sel = td.querySelector('[data-leadform]');
+  const msg = td.querySelector('[data-leadform-msg]');
+  const [{ data: forms, error: fe }, { data: camp, error: ce }] = await Promise.all([
+    sb.from('lead_submission_forms').select('id, name, is_active').order('name'),
+    sb.from('dialer_campaigns').select('submission_form_id').eq('id', id).maybeSingle(),
+  ]);
+  if (fe || ce) { msg.textContent = (fe || ce).message; return; }
+  const current = camp?.submission_form_id || '';
+  sel.innerHTML = '<option value="">No lead form</option>' + (forms || [])
+    .filter((f) => f.is_active || f.id === current)
+    .map((f) => `<option value="${esc(f.id)}"${f.id === current ? ' selected' : ''}>${esc(f.name)}</option>`).join('');
+  const btn = td.querySelector('[data-leadform-save]');
+  btn.disabled = !canManage;
+  btn.onclick = async () => {
+    btn.disabled = true;
+    // .select() so a policy refusal shows as a refusal, not as a silent success.
+    const { data, error } = await sb.from('dialer_campaigns')
+      .update({ submission_form_id: sel.value || null }).eq('id', id).select('id');
+    btn.disabled = false;
+    msg.textContent = error ? 'Could not save: ' + error.message
+      : !data?.length ? 'Not saved — your role cannot change this queue.' : 'Saved.';
+  };
+}
+
+// ------------------------------------------------- v669: outcome rules --
+let ruleTemplates = [];
+async function loadRuleTemplates() {
+  const { data, error } = await sb.from('dialer_message_templates')
+    .select('id, name, channel, sender, is_active').order('name');
+  if (error) throw new Error(error.message);
+  ruleTemplates = data || [];
+  return ruleTemplates;
+}
+
+const RULE_ACTIONS = [
+  ['', 'nothing else'],
+  ['owned_follow_up', 'make it a callback owned by whoever set it (shows in their Follow-ups)'],
+  ['park_number', 'park this number and try the contact\'s next one now'],
+  ['handoff_to_sales', 'hand it to Sales as an opportunity'],
+  ['move_to_spanish', 'move the contact to the Spanish queue (Settings)'],
+];
+const RULE_STAGES = [['', 'leave the stage'], ['appointment', 'Appointment'], ['offer', 'Offer'],
+  ['negotiation', 'Negotiation'], ['contacted', 'Contacted'], ['new', 'New']];
+
+function tplLabel(t) {
+  return `${t.name} — ${t.channel === 'sms' ? 'text' : (t.sender === 'shared' ? 'email, shared sender' : 'email, rep\'s Gmail')}${t.is_active ? '' : ' (off)'}`;
+}
+
+function ruleCard(r) {
+  const el = document.createElement('div');
+  el.className = 'rule-card';
+  el.dataset.rule = r.id || '';
+  const codes = new Set(r.disposition_codes || []);
+  const action = r.owned_follow_up ? 'owned_follow_up' : r.park_number ? 'park_number'
+    : r.handoff_to_sales ? 'handoff_to_sales' : r.move_to_spanish ? 'move_to_spanish' : '';
+  const opt = (pairs, cur) => pairs.map(([v, l]) => `<option value="${esc(v)}"${String(cur ?? '') === v ? ' selected' : ''}>${esc(l)}</option>`).join('');
+  const tpls = (cur, only) => '<option value="">no message</option>' + ruleTemplates
+    .filter((t) => (!only || t.channel === only) && (t.is_active || t.id === cur))
+    .map((t) => `<option value="${esc(t.id)}"${t.id === cur ? ' selected' : ''}>${esc(tplLabel(t))}</option>`).join('');
+  const num = (k) => (r[k] ?? '') === null ? '' : esc(r[k] ?? '');
+  el.innerHTML = `
+    <div class="rule-top">
+      <input data-r="name" value="${esc(r.name || '')}" placeholder="Rule name, e.g. Voicemail / No answer" style="flex:1">
+      <label style="display:flex;align-items:center;gap:6px;font-size:12.5px">
+        <input type="checkbox" data-r="is_active"${r.is_active !== false ? ' checked' : ''}> On</label>
+      <button class="sm" data-del>Remove</button>
+    </div>
+    <details class="rule-codes"${codes.size ? '' : ' open'}>
+      <summary>When the outcome is: <b data-codes-label></b></summary>
+      <div class="rule-codegrid">${dispoCatalog.filter((d) => d.is_active || codes.has(d.code)).map((d) =>
+        `<label><input type="checkbox" data-code value="${esc(d.code)}"${codes.has(d.code) ? ' checked' : ''}> ${esc(d.label)}</label>`).join('')}</div>
+    </details>
+    <div class="rule-line">
+      Retry every <input type="number" min="0.25" step="0.25" data-r="retry_every_hours" value="${num('retry_every_hours')}"> hours,
+      up to <input type="number" min="1" data-r="retry_max_calls" value="${num('retry_max_calls')}"> calls,
+      within <input type="number" min="1" data-r="retry_window_days" value="${num('retry_window_days')}"> working days.
+      When that runs out, call again after <input type="number" min="1" data-r="after_retries_days" value="${num('after_retries_days')}"> days.
+    </div>
+    <div class="rule-line">
+      Also <select data-r="action">${opt(RULE_ACTIONS, action)}</select>
+      and <select data-r="opportunity_stage">${opt(RULE_STAGES, r.opportunity_stage || '')}</select>
+    </div>
+    <div class="rule-line">
+      Send <select data-r="message_template_id">${tpls(r.message_template_id)}</select>
+      <select data-r="message_trigger">${opt([['immediate', 'every time'], ['nth', 'on this contact\'s call number'],
+        ['retry_failed', 'when the retry after it also reaches nobody']], r.message_trigger || 'immediate')}</select>
+      <input type="number" min="1" data-r="message_trigger_n" value="${esc(r.message_trigger_n ?? 1)}">
+    </div>
+    <div class="rule-line" data-fallback-line>
+      If the text is not allowed (no consent, or a landline), email instead:
+      <select data-r="fallback_template_id">${tpls(r.fallback_template_id, 'email')}</select>
+    </div>`;
+  const sync = () => {
+    const picked = [...el.querySelectorAll('[data-code]:checked')].map((c) => c.parentElement.textContent.trim());
+    el.querySelector('[data-codes-label]').textContent = picked.length ? picked.join(', ') : 'nothing picked yet';
+    const trig = el.querySelector('[data-r="message_trigger"]').value;
+    el.querySelector('[data-r="message_trigger_n"]').style.display = trig === 'nth' ? '' : 'none';
+    const t = ruleTemplates.find((x) => x.id === el.querySelector('[data-r="message_template_id"]').value);
+    el.querySelector('[data-fallback-line]').style.display = t && t.channel === 'sms' ? '' : 'none';
+    el.classList.toggle('off', !el.querySelector('[data-r="is_active"]').checked);
+  };
+  el.addEventListener('change', sync);
+  el.querySelector('[data-del]').onclick = () => { el.dataset.removed = '1'; el.style.display = 'none'; };
+  sync();
+  return el;
+}
+
+async function renderRulesEditor(td, id) {
+  const box = td.querySelector('[data-rules]');
+  const msg = td.querySelector('[data-rules-msg]');
+  try { await loadRuleTemplates(); } catch (e) { box.innerHTML = `<p class="hint">${esc(e.message)}</p>`; return; }
+  const { data, error } = await sb.from('dialer_outcome_rules').select('*')
+    .eq('campaign_id', id).order('sort_order');
+  if (error) { box.innerHTML = `<p class="hint">${esc(error.message)}</p>`; return; }
+  box.innerHTML = (data || []).length ? '' : '<p class="hint" data-norule>No rules yet — every outcome uses the queue\'s normal timing.</p>';
+  (data || []).forEach((r) => box.appendChild(ruleCard(r)));
+  const add = td.querySelector('[data-add-rule]');
+  const save = td.querySelector('[data-save-rules]');
+  add.disabled = save.disabled = !canManage;
+  add.onclick = () => { box.querySelector('[data-norule]')?.remove(); box.appendChild(ruleCard({ is_active: true, message_trigger: 'immediate', message_trigger_n: 1 })); };
+  save.onclick = async () => {
+    save.disabled = true;
+    msg.textContent = 'Saving…';
+    const err = await saveRules(td, id);
+    save.disabled = false;
+    msg.textContent = err ? err : 'Saved. The next outcome on this queue follows these rules.';
+    if (!err) await renderRulesEditor(td, id);
+  };
+}
+
+function ruleChoice(td) {
+  const n = (el, k) => { const v = el.querySelector(`[data-r="${k}"]`).value.trim(); return v === '' ? null : Number(v); };
+  return [...td.querySelectorAll('[data-rules] [data-rule]')].map((el, i) => {
+    const action = el.querySelector('[data-r="action"]').value;
+    const trig = el.querySelector('[data-r="message_trigger"]').value;
+    const tplId = el.querySelector('[data-r="message_template_id"]').value || null;
+    const tpl = ruleTemplates.find((t) => t.id === tplId);
+    return {
+      id: el.dataset.rule || null,
+      removed: el.dataset.removed === '1',
+      row: {
+        name: el.querySelector('[data-r="name"]').value.trim(),
+        disposition_codes: [...el.querySelectorAll('[data-code]:checked')].map((c) => c.value),
+        retry_every_hours: n(el, 'retry_every_hours'),
+        retry_max_calls: n(el, 'retry_max_calls'),
+        retry_window_days: n(el, 'retry_window_days'),
+        after_retries_days: n(el, 'after_retries_days'),
+        owned_follow_up: action === 'owned_follow_up',
+        park_number: action === 'park_number',
+        handoff_to_sales: action === 'handoff_to_sales',
+        move_to_spanish: action === 'move_to_spanish',
+        opportunity_stage: el.querySelector('[data-r="opportunity_stage"]').value || null,
+        message_template_id: tplId,
+        message_trigger: trig,
+        message_trigger_n: trig === 'nth' ? (n(el, 'message_trigger_n') || 1) : 1,
+        fallback_template_id: tpl && tpl.channel === 'sms' ? (el.querySelector('[data-r="fallback_template_id"]').value || null) : null,
+        is_active: el.querySelector('[data-r="is_active"]').checked,
+        sort_order: i + 1,
+      },
+    };
+  });
+}
+
+async function saveRules(td, id) {
+  const all = ruleChoice(td);
+  const live = all.filter((x) => !x.removed);
+  const seen = new Map();
+  for (const { row } of live) {
+    if (!row.name) return 'Every rule needs a name.';
+    if (!row.disposition_codes.length) return `"${row.name}" has no outcomes ticked.`;
+    for (const k of ['retry_every_hours', 'retry_max_calls', 'retry_window_days', 'after_retries_days']) {
+      if (row[k] !== null && !(row[k] > 0)) return `"${row.name}": numbers must be above zero, or blank.`;
+    }
+    if (row.is_active) {
+      for (const c of row.disposition_codes) {
+        if (seen.has(c)) {
+          const label = dispoCatalog.find((d) => d.code === c)?.label || c;
+          return `"${label}" is in two rules ("${seen.get(c)}" and "${row.name}"). One outcome, one rule.`;
+        }
+        seen.set(c, row.name);
+      }
+    }
+  }
+  const stamp = { updated_by: meId };
+  // 1. removals. 2. everything switched OFF (so moving an outcome from one
+  // rule to another cannot trip the one-rule-per-outcome check halfway).
+  // 3. switched back on as chosen. The window between 2 and 3 is one round
+  // trip; an outcome saved in it simply gets the queue's normal timing.
+  const del = all.filter((x) => x.id && x.removed).map((x) => x.id);
+  if (del.length) {
+    const { error } = await sb.from('dialer_outcome_rules').delete().in('id', del);
+    if (error) return 'Could not remove a rule: ' + error.message;
+  }
+  const ids = [];
+  for (const x of live) {
+    const row = { ...x.row, ...stamp, campaign_id: id, is_active: false };
+    const res = x.id
+      ? await sb.from('dialer_outcome_rules').update(row).eq('id', x.id).select('id')
+      : await sb.from('dialer_outcome_rules').insert(row).select('id');
+    if (res.error) return `Could not save "${x.row.name}": ${res.error.message}`;
+    if (!res.data?.length) return 'Not saved — your role cannot change outcome rules.';
+    ids.push([res.data[0].id, x.row.is_active]);
+  }
+  for (const [rid, on] of ids.filter(([, on]) => on)) {
+    const { error } = await sb.from('dialer_outcome_rules').update({ is_active: on }).eq('id', rid);
+    if (error) return 'Could not switch a rule on: ' + error.message;
+  }
+  return null;
+}
+
+// ---- the catalogue ----
+async function loadDispoCatPanel() {
+  const panel = $('dispoCatPanel');
+  panel.classList.toggle('hide', !isDialerAdmin);
+  if (!isDialerAdmin) return;
+  let cat;
+  try { cat = await loadDispoCatalog(); }
+  catch (e) { $('dispoCatRows').innerHTML = `<tr><td colspan="6">${esc(e.message)}</td></tr>`; return; }
+  $('dispoCatRows').innerHTML = cat.map((d) => `<tr data-dc="${esc(d.id)}">
+      <td><input data-dl value="${esc(d.label)}" style="width:230px"></td>
+      <td class="muted">${esc(dispoEffect(d))}</td>
+      <td><input type="checkbox" data-ddef${d.in_default_set ? ' checked' : ''}></td>
+      <td><input type="checkbox" data-don${d.is_active ? ' checked' : ''}></td>
+      <td class="num"><input type="number" data-dso min="0" max="999" style="width:70px" value="${Number(d.sort_order) || 0}"></td>
+      <td><button class="sm" data-dsave>Save</button></td>
+    </tr>`).join('');
+  $('dispoCatRows').querySelectorAll('[data-dsave]').forEach((b) => {
+    b.onclick = () => saveCatRow(b.closest('tr'), b);
+  });
+  if (!$('newDispoPreset').options.length) {
+    $('newDispoPreset').innerHTML = DISPO_PRESETS.map((p) =>
+      `<option value="${p.key}">${esc(p.label)}</option>`).join('');
+  }
+}
+
+async function saveCatRow(row, btn) {
+  const label = row.querySelector('[data-dl]').value.trim();
+  if (!label) { say($('dispoCatMsg'), 'An outcome needs a name.', 'err'); return; }
+  btn.disabled = true;
+  const { error } = await sb.from('dialer_dispositions').update({
+    label,
+    in_default_set: row.querySelector('[data-ddef]').checked,
+    is_active: row.querySelector('[data-don]').checked,
+    sort_order: Math.min(Math.max(Number(row.querySelector('[data-dso]').value) || 0, 0), 999),
+  }).eq('id', row.dataset.dc);
+  btn.disabled = false;
+  say($('dispoCatMsg'), error ? error.message : `Saved "${label}".`, error ? 'err' : 'ok');
+  if (!error) loadDispoCatalog().catch(() => {});
+}
+
+$('newDispoAdd').onclick = async () => {
+  const label = $('newDispoLabel').value.trim();
+  const p = DISPO_PRESETS.find((x) => x.key === $('newDispoPreset').value);
+  if (!label || !p) { say($('dispoCatMsg'), 'Name the outcome and pick what it behaves like.', 'err'); return; }
+  const code = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'outcome';
+  if (dispoCatalog.some((d) => d.code === code || d.label.toLowerCase() === label.toLowerCase())) {
+    say($('dispoCatMsg'), 'There is already an outcome with that name.', 'err'); return;
+  }
+  const { key, label: presetLabel, ...consequences } = p;
+  const maxSort = Math.max(0, ...dispoCatalog.map((d) => Number(d.sort_order) || 0));
+  $('newDispoAdd').disabled = true;
+  const { error } = await sb.from('dialer_dispositions').insert({
+    code, label, group_name: 'Call results', is_active: true,
+    in_default_set: $('newDispoDefault').checked,
+    sort_order: Math.min(maxSort + 1, 999),
+    retires_contact: false, schedules_callback: false, creates_lead: false, adds_to_dnc: false,
+    marks_invalid: false, creates_follow_up: false, creates_opportunity: false,
+    ...consequences,
+  });
+  $('newDispoAdd').disabled = false;
+  if (error) { say($('dispoCatMsg'), error.message, 'err'); return; }
+  $('newDispoLabel').value = '';
+  $('newDispoDefault').checked = false;
+  say($('dispoCatMsg'), `Added "${label}". Offer it on a queue from that queue's Edit.`, 'ok');
+  loadDispoCatPanel();
+};
+
+// ------------------------------------------------------- inbound queues --
+// Numeric queue settings, with the same ranges the database CHECKs enforce, so
+// a bad value is refused here with a sentence instead of a constraint name.
+const QUEUE_LIMITS = [
+  { key: 'ring_timeout_seconds',  label: 'Ring each agent (s)', min: 5,  max: 120 },
+  { key: 'queue_timeout_seconds', label: 'Wait before voicemail (s)', min: 10, max: 900 },
+];
+
+async function loadQueues() {
+  const { data } = await sb.from('dialer_inbound_queues').select('*').order('name');
+  const queues = data || [];
+
+  // Counts in one pass rather than a query per queue.
+  const { data: members } = await sb.from('dialer_queue_agents')
+    .select('queue_id, is_active');
+  const { data: numbers } = await sb.from('dialer_dids')
+    .select('id, phone_e164, status, inbound_queue_id');
+  const agentCount = {}; const numCount = {};
+  (members || []).forEach((m) => { if (m.is_active) agentCount[m.queue_id] = (agentCount[m.queue_id] || 0) + 1; });
+  (numbers || []).forEach((n) => { if (n.inbound_queue_id) numCount[n.inbound_queue_id] = (numCount[n.inbound_queue_id] || 0) + 1; });
+
+  $('queueRows').innerHTML = queues.length
+    ? queues.map((q) => `<tr data-qrow="${esc(q.id)}">
+        <td>${esc(q.name)}</td>
+        <td class="mono">${esc((q.open_time || '').slice(0, 5))}–${esc((q.close_time || '').slice(0, 5))}
+            <span class="muted">${(q.open_days || []).map((d) => DAY_LABEL[d] || d).join(' ')}</span>
+            <span class="${q.timezone === 'UTC' ? 'tag t-resting' : 'muted'}"
+                  title="The zone these hours are read in">${esc(q.timezone || 'UTC')}</span></td>
+        <td>${q.strategy === 'rank' ? 'By rank' : 'Longest idle'}</td>
+        <td class="num">${q.ring_timeout_seconds}</td>
+        <td class="num">${q.queue_timeout_seconds}</td>
+        <td class="num">${agentCount[q.id] ? agentCount[q.id]
+            : '<span style="color:var(--away)">0</span>'}</td>
+        <td class="num">${numCount[q.id] ? numCount[q.id]
+            : '<span style="color:var(--away)">0</span>'}</td>
+        <td><span class="tag ${q.is_active ? 't-active' : 't-resting'}">${q.is_active ? 'active' : 'off'}</span></td>
+        <td>${canManage ? `<button class="sm" data-qedit="${esc(q.id)}">Edit</button>` : ''}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="9">No queues yet. Create one above.</td></tr>';
+
+  $('queueRows').querySelectorAll('button[data-qedit]').forEach((b) => {
+    b.onclick = () => toggleQueueEditor(b.dataset.qedit, numbers || []);
+  });
+
+  loadWaiting();
+}
+
+// calling_days / open_days are ISO: Monday is 1 and SUNDAY IS 7, never 0.
+// Same convention as dialer_campaigns, and the same trap -- a getDay()-style 0
+// silently means "never Sunday".
+const QUEUE_DAYS = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'],
+                    [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
+
+// The office's own zone. UTC is the column default only so v552 changed no
+// behaviour on the way in -- it is the right answer for nobody, which is why
+// this is a visible field rather than an assumption. Whatever is stored is
+// appended if it is not on this list, so an unusual zone set by hand survives
+// a save instead of being quietly rewritten to the first option.
+const QUEUE_ZONES = [
+  ['UTC', 'UTC — not a real office'],
+  ['America/New_York', 'US Eastern'],
+  ['America/Chicago', 'US Central'],
+  ['America/Denver', 'US Mountain'],
+  ['America/Phoenix', 'US Arizona (no DST)'],
+  ['America/Los_Angeles', 'US Pacific'],
+  ['Africa/Cairo', 'Cairo'],
+  ['Europe/London', 'London'],
+  ['Asia/Dubai', 'Dubai'],
+  ['Asia/Karachi', 'Karachi'],
+  ['Asia/Manila', 'Manila'],
+];
+const DAY_LABEL = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri', 6: 'Sat', 7: 'Sun' };
+
+async function toggleQueueEditor(id, allNumbers) {
+  const existing = document.querySelector(`tr[data-qeditor="${id}"]`);
+  if (existing) { existing.remove(); return; }
+  document.querySelectorAll('tr[data-qeditor]').forEach((r) => r.remove());
+
+  const row = document.querySelector(`tr[data-qrow="${id}"]`);
+  if (!row) return;
+  const { data: q } = await sb.from('dialer_inbound_queues')
+    .select('*').eq('id', id).maybeSingle();
+  if (!q) return;
+
+  const tr = document.createElement('tr');
+  tr.dataset.qeditor = id;
+  const td = document.createElement('td');
+  td.colSpan = 9;
+  td.style.cssText = 'background:var(--inset);padding:18px';
+  td.innerHTML = `
+    <div class="row">
+      <div class="field" style="min-width:220px"><label>Name</label>
+        <input data-q="name" value="${esc(q.name)}"></div>
+      <div class="field"><label>Strategy</label>
+        <select data-q="strategy">
+          <option value="longest_idle"${q.strategy === 'longest_idle' ? ' selected' : ''}>Longest idle</option>
+          <option value="rank"${q.strategy === 'rank' ? ' selected' : ''}>By rank</option>
+        </select></div>
+      <div class="field"><label>Opens</label>
+        <input type="time" data-q="open_time" value="${esc((q.open_time || '').slice(0, 5))}"></div>
+      <div class="field"><label>Closes</label>
+        <input type="time" data-q="close_time" value="${esc((q.close_time || '').slice(0, 5))}"></div>
+      <div class="field" style="min-width:190px"><label>Hours are in</label>
+        <select data-q="timezone">${QUEUE_ZONES.concat(
+            QUEUE_ZONES.some(([v]) => v === q.timezone) ? [] : [[q.timezone, q.timezone]])
+          .map(([v, l]) => `<option value="${esc(v)}"${q.timezone === v ? ' selected' : ''}>${esc(l)}</option>`)
+          .join('')}</select></div>
+      ${QUEUE_LIMITS.map((f) => `
+      <div class="field"><label>${esc(f.label)}</label>
+        <input type="number" data-q="${f.key}" min="${f.min}" max="${f.max}" value="${q[f.key]}"></div>`).join('')}
+    </div>
+
+    <div class="row" style="margin-top:10px;align-items:center">
+      <span class="fb-label">Open days</span>
+      ${QUEUE_DAYS.map(([v, d]) => `<label style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" data-qday="${v}"${(q.open_days || []).includes(v) ? ' checked' : ''}>${d}</label>`).join('')}
+      <label style="display:flex;align-items:center;gap:5px;margin-left:14px">
+        <input type="checkbox" data-q="is_active"${q.is_active ? ' checked' : ''}>Active</label>
+    </div>
+
+    <div class="row" style="margin-top:12px">
+      <div class="field" style="flex:1;min-width:280px"><label>Greeting</label>
+        <input data-q="greeting_text" value="${esc(q.greeting_text)}"></div>
+      <div class="field" style="flex:1;min-width:280px"><label>Voicemail prompt</label>
+        <input data-q="voicemail_prompt_text" value="${esc(q.voicemail_prompt_text)}"></div>
+    </div>
+    <div class="row">
+      <div class="field" style="flex:1;min-width:280px"><label>Closed message</label>
+        <input data-q="closed_message" value="${esc(q.closed_message)}"></div>
+      <div class="field" style="flex:1;min-width:280px"><label>Hold music URL (optional)</label>
+        <input data-q="hold_music_url" placeholder="https://…mp3" value="${esc(q.hold_music_url || '')}"></div>
+    </div>
+    <p class="hint" style="margin:10px 0 0">
+      Hours are this office's clock, not the caller's — inbound is the reverse
+      of outbound calling hours, because the caller chose when to ring.
+      With no hold music the caller hears a short spoken line on the same loop.
+    </p>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="fb-label" style="margin-bottom:8px">Agents who answer this queue</div>
+      <div class="scroll"><table><thead><tr>
+        <th>Agent</th><th>Answers</th><th class="num">Rank</th><th>Takes inbound now</th>
+      </tr></thead><tbody data-qassign></tbody></table></div>
+      <p class="hint" style="margin:10px 0 0">Rank is only used when the strategy is “By rank”; lower goes first.</p>
+    </div>
+
+    <div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--border)">
+      <div class="fb-label" style="margin-bottom:8px">Numbers that reach this queue</div>
+      <div id="qNums-${esc(id)}" class="row" style="gap:14px"></div>
+      <p class="hint" style="margin:10px 0 0">
+        Point the number at the Call Control application in Telnyx as well —
+        ticking it here only tells us which queue it belongs to.
+      </p>
+    </div>
+
+    <div class="row" style="margin-top:16px">
+      <button class="primary" data-qsave>Save queue</button>
+      <button data-qcancel>Cancel</button>
+      <span data-qmsg></span>
+    </div>`;
+  tr.appendChild(td);
+  row.after(tr);
+
+  // ---- agents ------------------------------------------------------------
+  const { data: roles } = await sb.from('roles').select('name, can_use_dialer');
+  const dialerRoles = new Set((roles || []).filter((r) => r.can_use_dialer).map((r) => r.name));
+  const { data: people } = await sb.from('profiles').select('id, full_name, role').order('full_name');
+  const eligible = (people || []).filter((p) => dialerRoles.has(p.role));
+
+  const { data: assigned } = await sb.from('dialer_queue_agents')
+    .select('agent_id, priority, is_active').eq('queue_id', id);
+  const byAgent = {}; (assigned || []).forEach((a) => { byAgent[a.agent_id] = a; });
+
+  // Who could actually take a call right now, so a queue with three names but
+  // nobody on shift is visible as such rather than looking staffed.
+  const { data: sessions } = await sb.from('dialer_agent_sessions')
+    .select('agent_id, agent_status, status, last_heartbeat_at, ended_at');
+  const { data: statuses } = await sb.from('dialer_agent_statuses')
+    .select('code, takes_inbound, label');
+  const inboundOk = new Set((statuses || []).filter((s) => s.takes_inbound).map((s) => s.code));
+  const liveNow = {};
+  (sessions || []).forEach((s) => {
+    if (s.ended_at) return;
+    if (new Date(s.last_heartbeat_at).getTime() < Date.now() - 120000) return;
+    liveNow[s.agent_id] = { ok: inboundOk.has(s.agent_status) && s.status !== 'on_call', st: s.agent_status };
+  });
+
+  // A SIP identity is created lazily, the first time an agent opens the
+  // console. dialer_available_agents requires one, so an agent without it is
+  // skipped silently no matter what their status says -- which is exactly the
+  // "looks staffed but nobody rings" failure this column exists to prevent.
+  const { data: creds } = await sb.from('dialer_agent_credentials')
+    .select('agent_id, sip_username, revoked_at');
+  const hasSip = new Set((creds || [])
+    .filter((c) => c.sip_username && !c.revoked_at).map((c) => c.agent_id));
+
+  td.querySelector('[data-qassign]').innerHTML = eligible.length
+    ? eligible.map((p) => {
+        const a = byAgent[p.id];
+        const live = liveNow[p.id];
+        return `<tr>
+          <td>${esc(p.full_name || p.id)} <span class="muted">${esc(p.role)}</span></td>
+          <td><input type="checkbox" data-qa="${esc(p.id)}"${a && a.is_active ? ' checked' : ''}></td>
+          <td class="num"><input type="number" min="1" style="width:80px"
+              data-qp="${esc(p.id)}" value="${a?.priority ?? 100}"></td>
+          <td>${!hasSip.has(p.id)
+            ? '<span class="tag t-resting">no softphone yet</span>'
+            : (live
+                ? (live.ok ? '<span class="tag t-active">yes</span>'
+                           : `<span class="tag t-resting">${esc(live.st)}</span>`)
+                : '<span class="muted">not signed in</span>')}</td>
+        </tr>`;
+      }).join('')
+    : '<tr><td colspan="4">No profiles hold a role with dialer access.</td></tr>';
+
+  // ---- numbers -----------------------------------------------------------
+  const usable = (allNumbers || []).filter((n) => n.status === 'active' || n.inbound_queue_id === id);
+  document.getElementById(`qNums-${id}`).innerHTML = usable.length
+    ? usable.map((n) => `<label style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" data-qnum="${esc(n.id)}"${n.inbound_queue_id === id ? ' checked' : ''}>
+        <span class="mono">${esc(n.phone_e164)}</span></label>`).join('')
+    : '<span class="muted">No active numbers in the pool.</span>';
+
+  td.querySelector('[data-qcancel]').onclick = () => tr.remove();
+  td.querySelector('[data-qsave]').onclick = () => saveQueue(id, td, tr);
+}
+
+async function saveQueue(id, td, tr) {
+  const msg = td.querySelector('[data-qmsg]');
+  const val = (k) => td.querySelector(`[data-q="${k}"]`);
+
+  const patch = {
+    name: val('name').value.trim(),
+    strategy: val('strategy').value,
+    open_time: val('open_time').value,
+    close_time: val('close_time').value,
+    timezone: val('timezone').value,
+    is_active: val('is_active').checked,
+    greeting_text: val('greeting_text').value.trim(),
+    voicemail_prompt_text: val('voicemail_prompt_text').value.trim(),
+    closed_message: val('closed_message').value.trim(),
+    hold_music_url: val('hold_music_url').value.trim() || null,
+    open_days: [...td.querySelectorAll('[data-qday]')]
+      .filter((c) => c.checked).map((c) => Number(c.dataset.qday)),
+    updated_at: new Date().toISOString(),
+  };
+
+  if (!patch.name) { say(msg, 'Give the queue a name.', 'err'); return; }
+  for (const f of QUEUE_LIMITS) {
+    const n = Number(val(f.key).value);
+    if (!Number.isInteger(n) || n < f.min || n > f.max) {
+      say(msg, `${f.label} must be a whole number between ${f.min} and ${f.max}.`, 'err'); return;
+    }
+    patch[f.key] = n;
+  }
+  if (!patch.open_days.length) {
+    say(msg, 'Pick at least one open day, or the queue is closed every day.', 'err'); return;
+  }
+  if (!patch.greeting_text || !patch.voicemail_prompt_text || !patch.closed_message) {
+    say(msg, 'The greeting, voicemail prompt and closed message are all spoken to callers — none can be blank.', 'err');
+    return;
+  }
+
+  td.querySelector('[data-qsave]').disabled = true;
+  say(msg, 'Saving…', 'ok');
+
+  const { error } = await sb.from('dialer_inbound_queues').update(patch).eq('id', id);
+  if (error) { say(msg, error.message, 'err'); td.querySelector('[data-qsave]').disabled = false; return; }
+
+  // Membership: upsert the ticked ones, deactivate the rest rather than
+  // deleting, so assigned_by/assigned_at survives as a record of who staffed
+  // the queue.
+  const ups = []; const off = [];
+  td.querySelectorAll('[data-qa]').forEach((cb) => {
+    const aid = cb.dataset.qa;
+    const pr = Number(td.querySelector(`[data-qp="${aid}"]`).value) || 100;
+    if (cb.checked) ups.push({ queue_id: id, agent_id: aid, priority: pr, is_active: true, assigned_by: meId });
+    else off.push(aid);
+  });
+  if (ups.length) {
+    const { error: e2 } = await sb.from('dialer_queue_agents')
+      .upsert(ups, { onConflict: 'queue_id,agent_id' });
+    if (e2) { say(msg, e2.message, 'err'); td.querySelector('[data-qsave]').disabled = false; return; }
+  }
+  if (off.length) {
+    // v660: checked, same reason as the campaign version -- an agent left on
+    // an inbound queue keeps being offered its callers.
+    const { error: offErr } = await sb.from('dialer_queue_agents').update({ is_active: false })
+      .eq('queue_id', id).in('agent_id', off);
+    if (offErr) { say(msg, `Could not remove the unticked agents: ${offErr.message}`, 'err');
+      td.querySelector('[data-qsave]').disabled = false; return; }
+  }
+
+  // Numbers: a DID belongs to at most one queue, so ticking here clears it
+  // from wherever it was.
+  const on = []; const clear = [];
+  td.querySelectorAll('[data-qnum]').forEach((cb) => {
+    (cb.checked ? on : clear).push(cb.dataset.qnum);
+  });
+  // v660: both writes are checked now. This said "Saved." unconditionally,
+  // so a refusal left the admin believing inbound calls were routed to this
+  // queue when they were not -- and a misrouted inbound number is a caller
+  // who reaches nobody.
+  let routeErr = null;
+  if (on.length) {
+    const { error } = await sb.from('dialer_dids').update({ inbound_queue_id: id }).in('id', on);
+    routeErr = routeErr || error;
+  }
+  if (clear.length) {
+    const { error } = await sb.from('dialer_dids').update({ inbound_queue_id: null })
+      .in('id', clear).eq('inbound_queue_id', id);
+    routeErr = routeErr || error;
+  }
+  if (routeErr) { say(msg, `Could not update the numbers on this queue: ${routeErr.message}`, 'err'); return; }
+
+  say(msg, 'Saved.', 'ok');
+  tr.remove();
+  loadQueues();
+}
+
+$('qCreate').onclick = async () => {
+  const name = $('qName').value.trim();
+  if (!name) { say($('qMsg'), 'Give the queue a name.', 'err'); return; }
+  const { error } = await sb.from('dialer_inbound_queues').insert({
+    name, open_time: $('qOpen').value, close_time: $('qClose').value,
+  });
+  if (error) { say($('qMsg'), error.message, 'err'); return; }
+  say($('qMsg'), 'Created. Open Edit to add agents and a number — it cannot take calls until it has both.', 'ok');
+  $('qName').value = '';
+  loadQueues();
+};
+
+// Who is waiting right now, and who could take them.
+async function loadWaiting() {
+  const { data: waiting } = await sb.from('dialer_attempts')
+    .select('id, queue_id, from_number, enqueued_at')
+    .eq('direction', 'inbound').is('answered_at', null).is('ended_at', null)
+    .not('enqueued_at', 'is', null).order('enqueued_at');
+  const rows = waiting || [];
+
+  if (!rows.length) {
+    $('waitingRows').innerHTML = '<tr><td colspan="4">Nobody waiting.</td></tr>';
+  } else {
+    const { data: queues } = await sb.from('dialer_inbound_queues').select('id, name');
+    const qName = {}; (queues || []).forEach((q) => { qName[q.id] = q.name; });
+    const { data: offers } = await sb.from('dialer_inbound_offers')
+      .select('attempt_id, agent_id, result')
+      .in('attempt_id', rows.map((r) => r.id));
+    const { data: people } = await sb.from('profiles').select('id, full_name');
+    const pName = {}; (people || []).forEach((p) => { pName[p.id] = p.full_name; });
+
+    $('waitingRows').innerHTML = rows.map((r) => {
+      const secs = Math.round((Date.now() - new Date(r.enqueued_at).getTime()) / 1000);
+      const tried = (offers || []).filter((o) => o.attempt_id === r.id)
+        .map((o) => `${esc(pName[o.agent_id] || o.agent_id)}${o.result ? ' (' + esc(o.result) + ')' : ''}`);
+      return `<tr>
+        <td>${esc(qName[r.queue_id] || '—')}</td>
+        <td class="mono">${esc(r.from_number)}</td>
+        <td>${Math.floor(secs / 60)}m ${secs % 60}s</td>
+        <td>${tried.length ? tried.join(', ') : '<span class="muted">nobody yet</span>'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  const { data: sessions } = await sb.from('dialer_agent_sessions')
+    .select('agent_id, agent_status, status, last_heartbeat_at, ended_at');
+  const { data: statuses } = await sb.from('dialer_agent_statuses').select('code, takes_inbound');
+  const ok = new Set((statuses || []).filter((s) => s.takes_inbound).map((s) => s.code));
+  const free = (sessions || []).filter((s) => !s.ended_at
+    && new Date(s.last_heartbeat_at).getTime() > Date.now() - 120000
+    && ok.has(s.agent_status) && s.status !== 'on_call').length;
+  $('availableNow').textContent = free === 1
+    ? '1 agent is free to take an inbound call.'
+    : `${free} agents are free to take an inbound call.`;
+}
+
+// ------------------------------------------------ booking availability ----
+// v610. Moved here from the rep's own console: when somebody can be booked is
+// a rostering decision. dialer_calendars' write policy already allows the
+// floor (is_admin or role_can_manage_dialer) to write anyone's row, so this
+// needs no new permission -- only a screen.
+const CAL_DAYS = [[1, 'Monday'], [2, 'Tuesday'], [3, 'Wednesday'], [4, 'Thursday'],
+                  [5, 'Friday'], [6, 'Saturday'], [7, 'Sunday']];
+let calReps = [];
+
+async function loadCalendarAdmin() {
+  // Anyone who can actually be booked: the roles that hold the contacts
+  // capability, which is the same gate the Appointments screen uses.
+  const { data: roles } = await sb.from('roles')
+    .select('name').or('can_manage_contacts.eq.true,can_manage_dialer.eq.true');
+  const names = (roles || []).map((r) => r.name);
+  const { data: people } = await sb.from('profiles')
+    .select('id, full_name, role').order('full_name');
+  calReps = (people || []).filter((p) =>
+    names.includes(p.role) || p.role === 'owner' || p.role === 'admin');
+
+  $('calRep').innerHTML = '<option value="">Pick a rep…</option>'
+    + calReps.map((p) => `<option value="${esc(p.id)}">${esc(p.full_name || p.id)} — ${esc(p.role)}</option>`).join('');
+  $('calRep').onchange = () => renderCalendarEditor($('calRep').value);
+}
+
+async function renderCalendarEditor(ownerId) {
+  const box = $('calEditor');
+  if (!ownerId) { box.innerHTML = '<p class="muted">Pick a rep.</p>'; return; }
+  box.innerHTML = '<p class="muted">Loading…</p>';
+  const { data: cal } = await sb.from('dialer_calendars')
+    .select('*').eq('owner_id', ownerId).maybeSingle();
+  const hours = cal?.hours || [];
+  const forDay = (d) => hours.find((h) => Number(h.dow) === d) || null;
+
+  box.innerHTML = `
+    ${cal ? '' : '<p class="muted">No availability set for this rep yet — nobody can be booked with them until there is.</p>'}
+    <div class="row">
+      <div class="field" style="min-width:200px"><label for="cTz">Timezone</label>
+        <input id="cTz" value="${esc(cal?.timezone || 'America/Chicago')}"></div>
+      <div class="field" style="min-width:130px"><label for="cSlot">Slot (min)</label>
+        <input id="cSlot" type="number" min="10" step="5" value="${cal?.slot_minutes ?? 30}"></div>
+      <div class="field" style="min-width:130px"><label for="cBuf">Buffer (min)</label>
+        <input id="cBuf" type="number" min="0" step="5" value="${cal?.buffer_minutes ?? 0}"></div>
+      <div class="field" style="min-width:150px"><label for="cLead">Notice (hours)</label>
+        <input id="cLead" type="number" min="0" step="1" value="${cal?.lead_time_hours ?? 2}"></div>
+      <div class="field" style="min-width:160px"><label for="cHorizon">Bookable ahead (days)</label>
+        <input id="cHorizon" type="number" min="1" step="1" value="${cal?.horizon_days ?? 21}"></div>
+    </div>
+    <div class="scroll" style="margin-top:10px">
+      <table>
+        <thead><tr><th>Day</th><th>Bookable</th><th>From</th><th>To</th></tr></thead>
+        <tbody>${CAL_DAYS.map(([d, label]) => {
+          const h = forDay(d);
+          return `<tr>
+            <td>${label}</td>
+            <td><input type="checkbox" data-cd="${d}"${h ? ' checked' : ''}${canManage ? '' : ' disabled'}></td>
+            <td><input type="time" data-cf="${d}" value="${esc(h?.from || '09:00')}"${canManage ? '' : ' disabled'}></td>
+            <td><input type="time" data-ct="${d}" value="${esc(h?.to || '17:00')}"${canManage ? '' : ' disabled'}></td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <label class="check"><input type="checkbox" id="cActive"${(cal?.active ?? true) ? ' checked' : ''}${canManage ? '' : ' disabled'}> Bookable at all</label>
+      <button id="cSave" class="primary"${canManage ? '' : ' disabled'}>Save availability</button>
+      <span id="cMsg"></span>
+    </div>`;
+  if (canManage) $('cSave').onclick = () => saveCalendarAdmin(ownerId);
+}
+
+async function saveCalendarAdmin(ownerId) {
+  const hours = [];
+  document.querySelectorAll('#calEditor [data-cd]').forEach((cb) => {
+    if (!cb.checked) return;
+    const d = cb.dataset.cd;
+    hours.push({
+      dow: Number(d),
+      from: document.querySelector(`#calEditor [data-cf="${d}"]`).value || '09:00',
+      to: document.querySelector(`#calEditor [data-ct="${d}"]`).value || '17:00',
+    });
+  });
+  // A day that ends before it starts generates no slots at all and looks like
+  // a broken calendar rather than a typo, so it is refused here.
+  if (hours.some((h) => h.to <= h.from)) {
+    say($('cMsg'), 'A day ends before it starts.', 'err'); return;
+  }
+  $('cSave').disabled = true;
+  const { error } = await sb.from('dialer_calendars').upsert({
+    owner_id: ownerId,
+    timezone: ($('cTz').value || 'America/Chicago').trim(),
+    slot_minutes: Number($('cSlot').value) || 30,
+    buffer_minutes: Number($('cBuf').value) || 0,
+    lead_time_hours: Number($('cLead').value) || 0,
+    horizon_days: Number($('cHorizon').value) || 21,
+    hours,
+    active: $('cActive').checked,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'owner_id' });
+  $('cSave').disabled = false;
+  say($('cMsg'), error ? 'Could not save: ' + error.message : 'Saved.', error ? 'err' : 'ok');
+}
+
+// ------------------------------------------------------- status catalogue --
+let statusCatalogue = [];
+async function loadStatusEditor() {
+  const { data } = await sb.from('dialer_agent_statuses')
+    .select('code, label, allows_dialing, counts_as, daily_limit_minutes, is_active, sort_order')
+    .order('sort_order');
+  statusCatalogue = data || [];
+
+  $('statusRows').innerHTML = statusCatalogue.map((s) => `<tr>
+    <td>${esc(s.label)} <span class="muted mono">${esc(s.code)}</span></td>
+    <td><input type="checkbox" data-s="${esc(s.code)}" data-k="allows_dialing"${s.allows_dialing ? ' checked' : ''}${canManage ? '' : ' disabled'}></td>
+    <td><select data-s="${esc(s.code)}" data-k="counts_as"${canManage ? '' : ' disabled'}>
+      ${['available', 'paused', 'busy'].map((v) =>
+        `<option value="${v}"${s.counts_as === v ? ' selected' : ''}>${v}</option>`).join('')}
+    </select></td>
+    <td class="num"><input type="number" min="1" style="width:90px" data-s="${esc(s.code)}"
+        data-k="daily_limit_minutes" value="${s.daily_limit_minutes ?? ''}"${canManage ? '' : ' disabled'}></td>
+    <td><input type="checkbox" data-s="${esc(s.code)}" data-k="is_active"${s.is_active ? ' checked' : ''}${canManage ? '' : ' disabled'}></td>
+  </tr>`).join('') || '<tr><td colspan="5">No statuses defined.</td></tr>';
+
+  $('statusSave').disabled = !canManage;
+  loadShift();
+}
+
+$('statusSave').onclick = async () => {
+  $('statusSave').disabled = true;
+  say($('statusMsg'), 'Saving…', 'ok');
+
+  const read = (code, k) => document.querySelector(`[data-s="${code}"][data-k="${k}"]`);
+  for (const s of statusCatalogue) {
+    const limRaw = read(s.code, 'daily_limit_minutes').value;
+    if (limRaw !== '' && (!Number.isInteger(Number(limRaw)) || Number(limRaw) < 1)) {
+      say($('statusMsg'), `${s.label}: a limit must be a whole number of minutes, or blank.`, 'err');
+      $('statusSave').disabled = false; return;
+    }
+    const { error } = await sb.from('dialer_agent_statuses').update({
+      allows_dialing: read(s.code, 'allows_dialing').checked,
+      counts_as: read(s.code, 'counts_as').value,
+      daily_limit_minutes: limRaw === '' ? null : Number(limRaw),
+      is_active: read(s.code, 'is_active').checked,
+    }).eq('code', s.code);
+    if (error) { say($('statusMsg'), error.message, 'err'); $('statusSave').disabled = false; return; }
+  }
+  say($('statusMsg'), 'Saved. Agents pick it up on their next reload.', 'ok');
+  $('statusSave').disabled = false;
+  loadStatusEditor();
+};
+
+// Who is on the floor right now. One RPC rather than three reads: it resolves
+// the name, the status label and the campaign server-side, and it decides
+// what counts as "on the floor" in one place instead of here.
+//
+// That last part is why this was rewritten. It used to select every session
+// with no ended_at, newest 50 first -- and sessions are ended by a sendBeacon
+// on tab close, which is best-effort and never fires on a crash or a closed
+// laptop. They accumulate: at the 2026-09-07 audit there were 133 open, ALL
+// with a dead heartbeat and 100 of them over a day old, from three agents. So
+// this table showed fifty dead tabs and called them live sessions.
+// dialer_live_floor() excludes anything with no heartbeat for 15 minutes, and
+// v566 closed the day-old backlog.
+//
+// A stale heartbeat inside that window still means a crashed tab rather than
+// a logout, so it is flagged rather than hidden.
+async function loadShift() {
+  const { data, error } = await sb.rpc('dialer_live_floor');
+  if (error) {
+    $('shiftRows').innerHTML =
+      `<tr><td colspan="4">Could not load the floor: ${esc(error.message)}</td></tr>`;
+    return;
+  }
+  const rows = data || [];
+  if (!rows.length) {
+    $('shiftRows').innerHTML = '<tr><td colspan="4">Nobody on the floor.</td></tr>'; return;
+  }
+
+  $('shiftRows').innerHTML = rows.map((r) => `<tr>
+      <td>${esc(r.agent_name || r.agent_id)}${r.is_stale
+          ? ' <span class="tag t-resting">no heartbeat</span>' : ''}</td>
+      <td>${esc(r.status_label || r.agent_status || '—')}</td>
+      <td>${esc(r.campaign_name || '—')}</td>
+      <td>${r.seconds_in_state === null ? '—' : Math.floor(r.seconds_in_state / 60) + 'm'}</td>
+    </tr>`).join('');
+}
+
+$('cCreate').onclick = async () => {
+  const name = $('cName').value.trim();
+  if (!name) { say($('cMsg'), 'Give the campaign a name.', 'err'); return; }
+  const { error } = await sb.from('dialer_campaigns').insert({
+    name, dial_mode: $('cMode').value, status: 'active',
+    calling_window_start: $('cStart').value, calling_window_end: $('cEnd').value,
+  });
+  if (error) { say($('cMsg'), error.message, 'err'); return; }
+  say($('cMsg'), 'Created.', 'ok');
+  $('cName').value = '';
+  loadCampaigns();
+};
+
+// ----------------------------------------------------------------- lists --
+async function loadLists() {
+  const { data } = await sb.from('dialer_lists')
+    .select('id, name, campaign_id, status, loaded_rows, readymode_scrubbed_at')
+    .order('created_at', { ascending: false }).limit(50);
+
+  // The column that matters is no longer "has this been paid for" but "can
+  // this be dialled" -- which is one question: does the number have a time
+  // zone. Import resolves that from the area code for nothing, so this
+  // count reads zero on an ordinary list and only lifts off zero for an
+  // area code the table does not carry.
+  const rows = [];
+  for (const l of (data || [])) {
+    const { count } = await sb.from('dialer_contacts')
+      .select('id', { count: 'exact', head: true })
+      .eq('list_id', l.id).is('timezone', null).in('status', ['new', 'queued']);
+    rows.push({ ...l, blocked: count ?? 0 });
+  }
+
+  $('listRows').innerHTML = rows.length
+    ? rows.map((l) => `<tr>
+        <td>${esc(l.name)}</td>
+        <td>${esc(campaigns.find((c) => c.id === l.campaign_id)?.name || '—')}</td>
+        <td><span class="tag ${l.status === 'ready' ? 't-active' : 't-resting'}">${esc(l.status)}</span></td>
+        <td class="num">${(l.loaded_rows ?? 0).toLocaleString()}</td>
+        <td class="num ${l.blocked ? 'gap' : ''}">${l.blocked.toLocaleString()}</td>
+        <td>${l.readymode_scrubbed_at ? esc(l.readymode_scrubbed_at.slice(0, 10)) : '—'}</td>
+        <td>${canManage ? (l.blocked
+            ? `<button class="sm" data-val="${esc(l.id)}" data-tz="1">Resolve ${l.blocked.toLocaleString()} time zones</button>`
+            : `<button class="sm" data-val="${esc(l.id)}">Carrier check</button>`) : ''}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="7">No lists yet.</td></tr>';
+
+  $('listRows').querySelectorAll('button[data-val]').forEach((b) => {
+    b.onclick = () => validateList(b.dataset.val, b, b.dataset.tz === '1');
+  });
+}
+
+// THE PAID PATH, WHICH IS NOW OPTIONAL.
+//
+// Import resolves time zone from the area code and drops undialable numbers
+// on the digits alone, both for nothing, so a list is dialable without this
+// ever running. What money still buys is the one thing free cannot see: a
+// number that is properly formed and correctly zoned but dead. Without a
+// carrier check you find that out on the first dial instead -- which the
+// webhook now retires automatically, at the cost of one wasted dial.
+//
+// So there are exactly two reasons to press a button here:
+//   - Resolve time zones: an area code this build's table does not carry.
+//     Small, bounded, and worth the cents because those rows cannot be
+//     dialled at all until something resolves them.
+//   - Carrier check: pre-screening the dead numbers out of a batch before
+//     agents reach it. Real money on a large list, and genuinely optional.
+//
+// Still bounded per press either way. An unbounded run over a 100k import
+// is $150 spent mostly on numbers that will not be dialled for a year.
+const VALIDATE_BATCH = 500;
+
+async function validateList(listId, btn, timezonesOnly) {
+  const est = (VALIDATE_BATCH * 0.0015).toFixed(2);
+  const prompt = timezonesOnly
+    ? `Look up the next ${VALIDATE_BATCH} numbers that have no time zone?\n\n`
+      + `Costs about $${est}, and it is the only way these particular rows become `
+      + `dialable — their area code is not in this build's table.`
+    : `Carrier-check the next ${VALIDATE_BATCH} numbers in this list?\n\n`
+      + `Costs about $${est}. This is optional: these contacts are already dialable. `
+      + `It buys pre-dial detection of numbers that are dead but well-formed, which `
+      + `otherwise costs one wasted dial each.`;
+  if (!confirm(prompt)) return;
+
+  btn.disabled = true;
+  say($('valMsg'), 'Looking up…', 'ok');
+
+  // Two passes of the function's own 300 cap covers one batch.
+  let total = 0, remaining = 0;
+  for (let pass = 0; pass < Math.ceil(VALIDATE_BATCH / 300); pass++) {
+    const r = await callFn('dialer-validate-numbers', {
+      list_id: listId, max_lookups: 300, only_missing_timezone: !!timezonesOnly,
+    });
+    if (!r?.ok) { say($('valMsg'), r?.error || 'Lookup failed', 'err'); btn.disabled = false; return; }
+    total += r.checked || 0;
+    remaining = r.remaining ?? 0;
+    if (!r.remaining || !r.checked) break;
+  }
+
+  btn.disabled = false;
+  say($('valMsg'),
+    `Checked ${total} (~$${(total * 0.0015).toFixed(2)}). `
+    + (remaining ? `${remaining.toLocaleString()} left in this list.`
+                 : 'Nothing left to check on this list.'),
+    'ok');
+  loadLists();
+}
+
+// ---- manual CSV import ---------------------------------------------------
+function parseCsv(text) {
+  const rows = []; let row = []; let field = ''; let q = false;
+  const s = String(text).replace(/^﻿/, '');
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (q) {
+      if (c === '"') { if (s[i + 1] === '"') { field += '"'; i++; } else q = false; }
+      else field += c;
+    } else if (c === '"') q = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((v) => v.trim() !== ''));
+}
+const nrm = (h) => String(h).toLowerCase().replace(/[^a-z0-9]/g, '');
+const PHONE_ALIASES = ['phone', 'phonenumber', 'phone1', 'primaryphone', 'mobile', 'cell',
+                       'cellphone', 'telephone', 'ownerphone', 'contactphone'];
+function pick(headers, aliases) {
+  const h = headers.map(nrm);
+  for (const a of aliases) { const i = h.indexOf(a); if (i >= 0) return i; }
+  return -1;
+}
+function toE164(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (d.length === 10) return '+1' + d;
+  if (d.length === 11 && d[0] === '1') return '+' + d;
+  return null;
+}
+
+// ---- free pre-dial resolution --------------------------------------------
+// NANP area code -> IANA time zone. Free, offline, and the reason an
+// imported list is dialable the moment it lands.
+//
+// WHY THIS IS AS GOOD AS THE PAID LOOKUP: US number portability is confined
+// to the same rate centre, so a ported number keeps its area code and its
+// state. Telnyx's portability.state and the NPA therefore agree except in
+// edge cases -- we were paying $0.0015 a number for an answer already
+// carried in the first three digits.
+//
+// AND BETTER THAN WHAT PRECEDED IT: validation mapped whole STATES, so
+// every Florida number resolved to Central and its 9am window opened at
+// the seller's 10am. Half the state's dialable morning, gone. Same for
+// El Paso (Mountain, not Central) and Boise (Mountain, not Pacific).
+//
+// SPLIT AREA CODES take the zone of the majority of the population, except
+// where the split is close enough to matter, where they take the WESTERN
+// zone -- the error direction that is safe. Assuming Central for a number
+// that is really Eastern opens the window at their 10am: late, harmless.
+// The reverse opens it at their 8am: a complaint. Conservative by choice:
+//   448/850 Florida panhandle -> Central (Pensacola)
+//   906     Michigan UP       -> Central
+//   812/930 southwest Indiana -> Central (Evansville)
+//   308     western Nebraska  -> Mountain
+//   208/986 Idaho             -> Mountain (Boise; the panhandle is Pacific)
+// 574 is the deliberate exception: South Bend is Eastern and carries the
+// area code, so the two Central counties lose rather than the other 95%.
+const NPA_TZ_GROUPS = {
+  'America/New_York': [
+    203, 475, 860, 959,                                        // CT
+    302, 202,                                                  // DE, DC
+    239, 305, 321, 352, 386, 407, 561, 656, 689, 727, 728,     // FL, eastern
+    754, 772, 786, 813, 863, 904, 941, 954,
+    229, 404, 470, 478, 678, 706, 762, 770, 912, 943,          // GA
+    260, 317, 463, 574, 765,                                   // IN, eastern
+    502, 606, 859,                                             // KY, eastern
+    207,                                                       // ME
+    227, 240, 301, 410, 443, 667,                              // MD
+    339, 351, 413, 508, 617, 774, 781, 857, 978,               // MA
+    231, 248, 269, 313, 517, 586, 616, 679, 734, 810, 947, 989,// MI
+    603,                                                       // NH
+    201, 551, 609, 640, 732, 848, 856, 862, 908, 973,          // NJ
+    212, 315, 332, 347, 363, 516, 518, 585, 607, 631, 646,     // NY
+    680, 716, 718, 838, 845, 914, 917, 929, 934,
+    252, 336, 472, 704, 743, 828, 910, 919, 980, 984,          // NC
+    216, 220, 234, 283, 326, 330, 380, 419, 436, 440, 513,     // OH
+    567, 614, 740, 937,
+    215, 223, 267, 272, 412, 445, 484, 570, 582, 610, 717,     // PA
+    724, 814, 835, 878,
+    401,                                                       // RI
+    803, 839, 843, 854, 864,                                   // SC
+    423, 865,                                                  // TN, eastern
+    802,                                                       // VT
+    276, 434, 540, 571, 703, 757, 804, 826, 948,               // VA
+    304, 681,                                                  // WV
+  ],
+  'America/Chicago': [
+    205, 251, 256, 334, 659, 938,                              // AL
+    327, 479, 501, 870,                                        // AR
+    448, 850,                                                  // FL panhandle
+    217, 224, 309, 312, 331, 447, 464, 618, 630, 708, 730,     // IL
+    773, 779, 815, 847, 861, 872,
+    219, 812, 930,                                             // IN, west/south
+    319, 515, 563, 641, 712,                                   // IA
+    316, 620, 785, 913,                                        // KS
+    270, 364,                                                  // KY, western
+    225, 318, 337, 504, 985,                                   // LA
+    906,                                                       // MI, upper
+    218, 320, 507, 612, 651, 763, 924, 952,                    // MN
+    228, 601, 662, 769,                                        // MS
+    314, 417, 557, 573, 636, 660, 816, 975,                    // MO
+    402, 531,                                                  // NE, eastern
+    701,                                                       // ND
+    405, 539, 572, 580, 918,                                   // OK
+    605,                                                       // SD
+    615, 629, 731, 901, 931,                                   // TN, central
+    210, 214, 254, 281, 325, 346, 361, 409, 430, 432, 469,     // TX
+    512, 682, 713, 726, 737, 806, 817, 830, 832, 903, 936,
+    940, 945, 956, 972, 979,
+    262, 274, 353, 414, 534, 608, 715, 920,                    // WI
+  ],
+  'America/Denver': [
+    303, 719, 720, 970, 983,                                   // CO
+    208, 986,                                                  // ID
+    406,                                                       // MT
+    308,                                                       // NE, western
+    505, 575,                                                  // NM
+    915,                                                       // TX, El Paso
+    385, 435, 801,                                             // UT
+    307,                                                       // WY
+  ],
+  'America/Phoenix': [480, 520, 602, 623, 928],                // AZ, no DST
+  'America/Los_Angeles': [
+    209, 213, 279, 310, 323, 341, 350, 408, 415, 424, 442,     // CA
+    510, 530, 559, 562, 619, 626, 628, 650, 657, 661, 669,
+    707, 714, 738, 747, 760, 764, 805, 818, 820, 831, 840,
+    858, 909, 916, 925, 949, 951,
+    702, 725, 775,                                             // NV
+    458, 503, 541, 971,                                        // OR
+    206, 253, 360, 425, 509, 564,                              // WA
+  ],
+  'America/Anchorage': [907],
+  'Pacific/Honolulu': [808],
+  'America/Puerto_Rico': [787, 939],
+  'America/St_Thomas': [340],
+};
+
+// Area codes that can never be a seller's line: toll-free, premium rate,
+// and personal-communications ranges. A file carrying these is carrying a
+// business switchboard or a typo, and either way a dial is wasted on it.
+const NPA_NOT_DIALABLE = new Set([
+  800, 833, 844, 855, 866, 877, 888,                           // toll-free
+  900, 976,                                                    // premium rate
+  500, 521, 522, 523, 524, 525, 526, 527, 528, 529,            // personal comms
+  533, 544, 566, 577, 588, 622, 710,
+]);
+const NPA_TZ = {};
+for (const [tz, list] of Object.entries(NPA_TZ_GROUPS)) for (const n of list) NPA_TZ[n] = tz;
+
+function npaOf(e164) {
+  const d = String(e164 || '').replace(/\D/g, '');
+  return d.length === 11 && d[0] === '1' ? Number(d.slice(1, 4)) : null;
+}
+
+// The calling-hours gate's only requirement, answered for nothing.
+function timezoneForNumber(e164) {
+  const npa = npaOf(e164);
+  return npa ? (NPA_TZ[npa] || null) : null;
+}
+
+// Structural screen. Catches what a paid lookup would also catch, on the
+// numbers where the answer is knowable from the digits alone: service
+// codes, toll-free switchboards, and the placeholder rows every skip-trace
+// file carries. Anything it cannot rule out is left alone -- a number that
+// is merely dead still looks perfectly well-formed, and that one is caught
+// on the first dial instead (see dialer-telnyx-webhook, unallocated_number).
+function numberProblem(e164) {
+  const d = String(e164 || '').replace(/\D/g, '');
+  if (d.length !== 11 || d[0] !== '1') return 'not a US number';
+  const npa = d.slice(1, 4), nxx = d.slice(4, 7), line = d.slice(7);
+  if (npa[0] < '2') return 'impossible area code';
+  if (npa[1] === '1' && npa[2] === '1') return 'service code, not a phone number';
+  if (NPA_NOT_DIALABLE.has(Number(npa))) return 'toll-free or premium-rate';
+  if (nxx[0] < '2') return 'impossible exchange';
+  if (nxx[1] === '1' && nxx[2] === '1') return 'service code, not a phone number';
+  if (nxx === '555' && line >= '0100' && line <= '0199') return 'reserved fictional number';
+  if (/^(\d)\1{9}$/.test(d.slice(1))) return 'placeholder digits';
+  return null;
+}
+
+// Mobiles answer at materially higher rates than landlines, VOIP worst, and
+// every skip-trace export (DealMachine, PropStream, BatchLeads) already says
+// which is which. Writes the same phone_rank the paid lookup wrote, off a
+// column the file gave us.
+//
+// A FILE WITHOUT A PHONE-TYPE COLUMN LOSES NOTHING, because line type does
+// not currently order anything: dialer_next_number picks a contact's next
+// number with `order by rank`, and that rank is the file's own Ph# position,
+// not a quality score. Skip-trace vendors list numbers best-first, so file
+// order is already the ranking. Unknown scores 3, which is where every
+// contact sat before this existed.
+function rankForPhoneType(raw) {
+  const v = String(raw || '').toLowerCase();
+  if (v.includes('mobile') || v.includes('wireless') || v.includes('cell')) return 0;
+  if (v.includes('landline') || v.includes('fixed line') || v.includes('wireline')) return 1;
+  if (v.includes('voip')) return 2;
+  return 3;
+}
+
+// ---- column mapping -------------------------------------------------------
+// Mapping happens here, at import, because this is the only moment anyone is
+// looking at the file and can say which column is which. Before this, imports
+// guessed a phone column by alias and dumped everything else into source_row
+// under whatever the file called it -- fine as provenance, useless to a
+// screen, because one file's "Owner" is the next one's "owner_name".
+let fieldDefs = [];        // dialer_field_defs, ordered
+let csvHeaders = [];       // headers of the loaded file
+let csvFirstRow = [];      // its first data row, shown as a sample
+let mapping = {};          // field key -> header index, or -1 for unmapped
+
+// Extra spellings worth recognising beyond an exact normalised match. Keeps
+// the common exports (DealMachine, ReadyMode, skip-trace vendors) hands-off.
+const FIELD_ALIASES = {
+  first_name: ['firstname', 'first', 'ownerfirstname', 'owner1firstname', 'fname'],
+  last_name:  ['lastname', 'last', 'ownerlastname', 'owner1lastname', 'lname', 'surname'],
+  phone:      PHONE_ALIASES,
+  address:    ['address', 'propertyaddress', 'streetaddress', 'address1', 'mailingaddress', 'siteaddress'],
+  city:       ['city', 'propertycity', 'mailingcity'],
+  state:      ['state', 'propertystate', 'mailingstate', 'st'],
+  zip:        ['zip', 'zipcode', 'postalcode', 'propertyzip', 'mailingzip'],
+  email:      ['email', 'emailaddress', 'email1', 'owneremail'],
+  county:     ['county', 'propertycounty'],
+  // Mobile-or-landline, which DealMachine, PropStream and BatchLeads all
+  // export. Mapped for the queue ranking that used to come off a paid lookup.
+  phone_type: ['phonetype', 'phone1type', 'phonenumbertype', 'linetype',
+               'numbertype', 'phonestatus', 'type'],
+};
+for (let i = 2; i <= 10; i++) {
+  FIELD_ALIASES['phone_' + i] = ['phone' + i, 'ph' + i, 'phone' + i + 'number', 'mobile' + i];
+}
+
+async function loadFieldDefs() {
+  const { data } = await sb.from('dialer_field_defs')
+    .select('key, label, group_name, is_required, column_name, sort_order')
+    .eq('is_active', true).order('sort_order');
+  fieldDefs = data || [];
+}
+
+function guessMapping() {
+  const norm = csvHeaders.map(nrm);
+  mapping = {};
+  fieldDefs.forEach((f) => {
+    let idx = norm.indexOf(nrm(f.key));
+    if (idx < 0) idx = norm.indexOf(nrm(f.label));
+    if (idx < 0) {
+      for (const a of (FIELD_ALIASES[f.key] || [])) {
+        idx = norm.indexOf(nrm(a));
+        if (idx >= 0) break;
+      }
+    }
+    mapping[f.key] = idx;
+  });
+}
+
+function renderMapping() {
+  if (!csvHeaders.length || !fieldDefs.length) { show($('impMapWrap'), false); return; }
+  show($('impMapWrap'), true);
+
+  const opts = (sel) => '<option value="-1">-- not in this file --</option>'
+    + csvHeaders.map((h, i) =>
+        '<option value="' + i + '"' + (i === sel ? ' selected' : '') + '>'
+        + esc(h || ('(column ' + (i + 1) + ')')) + '</option>').join('');
+
+  const groups = [...new Set(fieldDefs.map((f) => f.group_name))];
+  $('impMapRows').innerHTML = groups.map((g) => {
+    const rows = fieldDefs.filter((f) => f.group_name === g).map((f) => {
+      const sel = mapping[f.key] ?? -1;
+      const sample = sel >= 0 ? (csvFirstRow[sel] ?? '') : '';
+      const star = f.is_required
+        ? ' <span style="color:var(--focus);font-weight:700">*</span>' : '';
+      return '<tr>'
+        + '<td>' + esc(f.label) + star + '</td>'
+        + '<td><select data-map="' + esc(f.key) + '" style="width:100%">' + opts(sel) + '</select></td>'
+        + '<td style="color:var(--text-2)">' + esc(String(sample).slice(0, 60)) + '</td>'
+        + '</tr>';
+    }).join('');
+    return '<tr><td colspan="3" style="background:var(--inset);font-family:var(--mono);'
+      + 'font-size:10px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim)">'
+      + esc(g) + '</td></tr>' + rows;
+  }).join('');
+
+  $('impMapRows').querySelectorAll('select[data-map]').forEach((selEl) => {
+    selEl.onchange = () => {
+      mapping[selEl.dataset.map] = Number(selEl.value);
+      renderMapping();
+    };
+  });
+  syncMapSummary();
+}
+
+function missingRequired() {
+  return fieldDefs.filter((f) => f.is_required && (mapping[f.key] ?? -1) < 0);
+}
+
+function syncMapSummary() {
+  const mapped = fieldDefs.filter((f) => (mapping[f.key] ?? -1) >= 0).length;
+  const missing = missingRequired();
+  $('impMapSummary').textContent = missing.length
+    ? mapped + ' of ' + fieldDefs.length + ' mapped - still needed: '
+      + missing.map((f) => f.label).join(', ')
+    : mapped + ' of ' + fieldDefs.length + ' mapped - all required fields set';
+  $('impMapSummary').style.color = missing.length ? 'var(--away)' : 'var(--good)';
+}
+
+async function loadCsvIntoMapper(text) {
+  $('impCsv').value = text;
+  const rows = parseCsv(text);
+  if (rows.length < 2) { show($('impMapWrap'), false); return; }
+  csvHeaders = rows[0];
+  csvFirstRow = rows[1] || [];
+  if (!fieldDefs.length) await loadFieldDefs();
+  guessMapping();
+  renderMapping();
+}
+
+$('impFile').onchange = async (e) => {
+  const f = e.target.files?.[0];
+  if (f) await loadCsvIntoMapper(await f.text());
+};
+// Pasting straight into the box should behave the same as uploading.
+$('impCsv').onchange = () => loadCsvIntoMapper($('impCsv').value);
+$('impCsv').onblur = () => { if (!csvHeaders.length) loadCsvIntoMapper($('impCsv').value); };
+$('impMapReset').onclick = () => { guessMapping(); renderMapping(); };
+$('impMapClear').onclick = () => {
+  fieldDefs.forEach((f) => { mapping[f.key] = -1; });
+  renderMapping();
+};
+
+$('impBtn').onclick = async () => {
+  const campaignId = $('impCampaign').value;
+  const name = $('impName').value.trim();
+  const csv = $('impCsv').value.trim();
+  if (!campaignId) { say($('impMsg'), 'Pick a campaign.', 'err'); return; }
+  if (!name) { say($('impMsg'), 'Give the list a name.', 'err'); return; }
+  if (!csv) { say($('impMsg'), 'Paste or upload a CSV.', 'err'); return; }
+  if (!$('impScrubbed').checked || !$('impScrubDate').value) {
+    say($('impMsg'), 'Confirm the DNC scrub and its date - an unscrubbed list cannot be dialled.', 'err');
+    return;
+  }
+
+  const rows = parseCsv(csv);
+  if (rows.length < 2) { say($('impMsg'), 'CSV has no data rows.', 'err'); return; }
+  // Re-read the file in case it was edited after the mapper was built.
+  csvHeaders = rows[0]; csvFirstRow = rows[1] || [];
+  if (!fieldDefs.length) { await loadFieldDefs(); guessMapping(); renderMapping(); }
+
+  const missing = missingRequired();
+  if (missing.length) {
+    say($('impMsg'), 'Map these first: ' + missing.map((f) => f.label).join(', ') + '.', 'err');
+    show($('impMapWrap'), true);
+    return;
+  }
+
+  const at = (row, key) => {
+    const i = mapping[key] ?? -1;
+    if (i < 0) return '';
+    return String(row[i] ?? '').trim();
+  };
+
+  $('impBtn').disabled = true;
+  say($('impMsg'), 'Importing...', 'ok');
+
+  const scrubbedAt = new Date($('impScrubDate').value + 'T12:00:00Z').toISOString();
+  const { data: list, error: lErr } = await sb.from('dialer_lists').insert({
+    campaign_id: campaignId, name, source_type: 'csv_upload', status: 'loading',
+    readymode_scrubbed_at: scrubbedAt,
+    readymode_scrub_note: 'Manual import - scrub attested by admin in dialer admin screen',
+    total_rows: rows.length - 1,
+  }).select('id').single();
+  if (lErr) { say($('impMsg'), lErr.message, 'err'); $('impBtn').disabled = false; return; }
+
+  // Optional fields go to contact_fields under their canonical key, so the
+  // profile screen reads one shape whatever the file called the column.
+  const optional = fieldDefs.filter((f) => !f.is_required && !f.column_name);
+  const seen = new Set(); const contacts = []; let bad = 0;
+  let unusable = 0, noZone = 0;
+  // Ph#2..Ph#10, keyed by the primary number so they can be turned into
+  // dialer_contact_phones rows once the contacts have ids. Before v563
+  // nothing created those rows and the alternates were mapped, stored and
+  // never dialled -- see that migration's header.
+  const altsFor = new Map();
+
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const phone = toE164(at(row, 'phone'));
+    if (!phone || seen.has(phone)) { bad++; continue; }
+    seen.add(phone);
+
+    // Screened here rather than loaded and screened later: a service code
+    // or a toll-free switchboard is knowable from the digits, and letting
+    // one in costs a dial and a mark against the DID that placed it.
+    if (numberProblem(phone)) { unusable++; continue; }
+
+    const first = at(row, 'first_name'), last = at(row, 'last_name');
+    const extra = {};
+    optional.forEach((f) => { const v = at(row, f.key); if (v) extra[f.key] = v; });
+
+    // source_row stays the untouched original: mapping is lossy, and this is
+    // the only record of what the file actually contained.
+    const src = {}; csvHeaders.forEach((h, i) => { if (h) src[h] = row[i] ?? ''; });
+
+    // The two answers that used to cost $0.0015 each, taken from the number
+    // itself and from a column the file already had. A contact leaves this
+    // loop dialable; nothing has to run afterwards.
+    const tz = timezoneForNumber(phone);
+    if (!tz) noZone++;
+
+    // Each alternate carries its OWN zone, from its OWN area code. A
+    // seller's second line is routinely in a different state from their
+    // first, and dialer-call-control reads the phone row's timezone before
+    // the contact's, so inheriting the primary's would gate the alternate
+    // on the wrong clock. Alternates go through the same structural screen
+    // as the primary: an undialable one is dropped, not loaded and skipped.
+    const alts = [];
+    for (let n = 2; n <= 10; n++) {
+      const a = toE164(extra['phone_' + n]);
+      if (!a || a === phone || numberProblem(a)) continue;
+      if (alts.some((x) => x.phone_e164 === a)) continue;
+      alts.push({ rank: n, label: 'Ph#' + n, phone_e164: a, timezone: timezoneForNumber(a) });
+    }
+    if (alts.length) altsFor.set(phone, alts);
+
+    contacts.push({
+      list_id: list.id, campaign_id: campaignId, phone_e164: phone,
+      first_name: first || null, last_name: last || null,
+      contact_name: [first, last].filter(Boolean).join(' ') || null,
+      address: at(row, 'address') || null,
+      city: at(row, 'city') || null,
+      state: at(row, 'state') || null,
+      zip: at(row, 'zip') || null,
+      email: at(row, 'email') || null,
+      timezone: tz,
+      phone_rank: rankForPhoneType(at(row, 'phone_type')),
+      status: 'new', source_row: src, contact_fields: extra,
+    });
+  }
+
+  // Batched: a single insert of thousands of rows will not survive, and any
+  // Supabase call over ~1000 rows silently truncates without explicit paging.
+  let done = 0;
+  for (let i = 0; i < contacts.length; i += 500) {
+    const { error } = await sb.from('dialer_contacts')
+      .upsert(contacts.slice(i, i + 500), { onConflict: 'list_id,phone_e164', ignoreDuplicates: true });
+    if (error) { say($('impMsg'), 'Stopped after ' + done + ': ' + error.message, 'err'); $('impBtn').disabled = false; return; }
+    done += Math.min(500, contacts.length - i);
+    say($('impMsg'), 'Imported ' + done + ' of ' + contacts.length + '...', 'ok');
+  }
+
+  // ---- the per-number rows the queue actually works ---------------------
+  // dialer_next_number reads dialer_contact_phones, not dialer_contacts. A
+  // contact with no rows here has no alternates the engine can reach and
+  // falls back to its primary alone -- which is what every import between
+  // v548 and v563 quietly produced. Rank 1 is the primary; 2..10 are the
+  // Ph# columns the mapper picked up.
+  //
+  // Ids come from reading the list back rather than from the upsert, which
+  // returns nothing under ignoreDuplicates, and re-importing the same file
+  // must not create a second set of rows.
+  say($('impMsg'), 'Imported ' + done + ' contacts. Building number rows...', 'ok');
+  const phoneRows = [];
+  for (let from = 0; ; from += 1000) {
+    const { data: page, error } = await sb.from('dialer_contacts')
+      .select('id, phone_e164, timezone')
+      .eq('list_id', list.id)
+      .order('id')
+      .range(from, from + 999);
+    if (error) { say($('impMsg'), 'Contacts loaded, but number rows failed: ' + error.message, 'err'); break; }
+    if (!page?.length) break;
+    for (const c of page) {
+      phoneRows.push({
+        contact_id: c.id, rank: 1, label: 'Phone number',
+        phone_e164: c.phone_e164, timezone: c.timezone, status: 'new',
+      });
+      for (const a of (altsFor.get(c.phone_e164) || [])) {
+        phoneRows.push({ contact_id: c.id, ...a, status: 'new' });
+      }
+    }
+    if (page.length < 1000) break;
+  }
+
+  let phonesDone = 0;
+  for (let i = 0; i < phoneRows.length; i += 500) {
+    const { error } = await sb.from('dialer_contact_phones')
+      .upsert(phoneRows.slice(i, i + 500),
+              { onConflict: 'contact_id,phone_e164', ignoreDuplicates: true });
+    if (error) { say($('impMsg'), 'Number rows stopped after ' + phonesDone + ': ' + error.message, 'err'); break; }
+    phonesDone += Math.min(500, phoneRows.length - i);
+  }
+
+  // v660: checked. The contacts are already in by this point, so a failure
+  // here does not lose the import -- but the list stays stuck in its
+  // pre-import status while the message below says it is dialable, which is
+  // the kind of contradiction that sends somebody hunting for a bug in the
+  // importer. Say which half actually happened.
+  const { error: listErr } = await sb.from('dialer_lists').update({
+    status: 'ready', loaded_rows: done, skipped_rows: bad + unusable,
+  }).eq('id', list.id);
+  if (listErr) {
+    $('impBtn').disabled = false;
+    say($('impMsg'), `Imported ${done} contacts, but the list could not be marked ready: `
+      + `${listErr.message}. The contacts are loaded; the list status needs fixing before it dials.`, 'err');
+    loadLists();
+    return;
+  }
+
+  $('impBtn').disabled = false;
+  say($('impMsg'), 'Imported ' + done + ' contacts (' + phonesDone + ' numbers incl. alternates), dialable now. '
+    + bad + ' skipped (no usable phone, or a duplicate of a row already in this list)'
+    + (unusable ? ', ' + unusable + ' skipped as undialable numbers (service codes, '
+      + 'toll-free or placeholder digits)' : '')
+    + (noZone ? '. ' + noZone + ' have an area code this build does not know, so they have no '
+      + 'time zone and cannot be dialled until a carrier check resolves them' : '') + '.', 'ok');
+  $('impCsv').value = ''; $('impName').value = ''; $('impScrubbed').checked = false;
+  csvHeaders = []; csvFirstRow = []; show($('impMapWrap'), false);
+  loadLists();
+};
+
+
+window.DialerAdmin = { showSection };
+})();

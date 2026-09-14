@@ -1569,6 +1569,15 @@
     cursor:pointer;
   }
   .side-subnav .dialer-subtab-btn:hover{ color:var(--text-2); }
+  /* v675: Dialer Admin's sections, same pill as the other sidebar subtabs. */
+  .side-subnav .da-subtab-btn{
+    width:100%; justify-content:flex-start; text-align:left; background:transparent; border:none;
+    color:var(--text-dim); font-family:var(--mono); font-size:10.5px; text-transform:uppercase;
+    letter-spacing:0.5px; border-radius:6px; padding:7px 10px 7px 22px; cursor:pointer; line-height:1.3;
+  }
+  .side-subnav .da-subtab-btn:hover:not(.active){ color:var(--text-2); }
+  .side-subnav .da-subtab-btn.active{ color:var(--text); background:var(--card-hover); }
+  #daHost{ min-height:200px; }
   .side-subnav .dialer-subtab-btn .subtab-icon{ flex-shrink:0; }
   .side-subnav-activity .act-group-row{ display:flex; flex-direction:column; gap:1px; margin-bottom:8px; flex-wrap:nowrap; }
   .side-subnav-activity .act-subtab-row{ display:flex; flex-direction:column; gap:1px; flex-wrap:nowrap; }
@@ -2735,20 +2744,22 @@
       <button class="tab-btn" data-tab="dialer_management" title="Dialer Management"><svg class="tab-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg><span>Dialer Management</span></button>
       <div class="side-subnav side-subnav-dialer">
         <button class="tab-btn dialer-subtab-btn" data-tab="dialer" title="Dialer"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3.5h2.3l1 3.3-1.6 1.3a10 10 0 004.2 4.2l1.3-1.6 3.3 1v2.3a1 1 0 01-1.1 1C9 14.5 5.5 11 4 5.6a1 1 0 011-1.1z"/></svg>Dialer</button>
-        <!-- v529: Dialer Admin — number pool, list import, campaigns, at
-             admin.proptechnologyai.com. A SEPARATE tab key from 'dialer' on
-             purpose -- and since the cutover a separate ORIGIN too, which is
-             stronger than any role check: an agent's dialer session is not
-             merely refused here, it does not exist here.
-             The two are different jobs, not two views of one. Quality reviews
-             calls and must never land on a console with a Dial button; agents
-             run the console and have no business ordering numbers. Keeping
-             them as independent grants is what lets a role have one without
-             the other -- which is why grouping them under one parent here
-             changes presentation only and NOT permissions. Real access
-             control is server-side (can_manage_dialer / can_review_calls,
-             v529) — this only gates nav visibility. -->
-        <button class="tab-btn dialer-subtab-btn" data-tab="dialer_admin" title="Dialer Admin"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h12M4 10h12M4 15h7"/><circle cx="15.5" cy="15" r="2.2"/></svg>Dialer Admin</button>
+        <!-- v675: Dialer Admin lives HERE now, not at admin.proptechnologyai.com.
+             Its eleven sections are sub-tabs of Dialer Management, loaded on
+             first open (dialer-admin/), each with its own View/Edit in User
+             Management (roles.dialer_admin_sections). They ship hidden;
+             applyRolePermissionsToNav() reveals the ones this role may see. -->
+        <button class="da-subtab-btn" data-da-section="numbers" style="display:none">Numbers</button>
+        <button class="da-subtab-btn" data-da-section="lists" style="display:none">Lists</button>
+        <button class="da-subtab-btn" data-da-section="campaigns" style="display:none">Campaigns</button>
+        <button class="da-subtab-btn" data-da-section="agents" style="display:none">Agents</button>
+        <button class="da-subtab-btn" data-da-section="inbound" style="display:none">Inbound</button>
+        <button class="da-subtab-btn" data-da-section="calllog" style="display:none">Call log</button>
+        <button class="da-subtab-btn" data-da-section="research" style="display:none">Research</button>
+        <button class="da-subtab-btn" data-da-section="reports" style="display:none">Reports</button>
+        <button class="da-subtab-btn" data-da-section="inbox" style="display:none">Inbox</button>
+        <button class="da-subtab-btn" data-da-section="settings" style="display:none">Settings</button>
+        <button class="da-subtab-btn" data-da-section="pipeline" style="display:none">Pipeline</button>
       </div>
     </div>
     <div class="side-nav-group">
@@ -6793,6 +6804,11 @@
        into the 'review' sub-section — real RLS enforcement via
        can_review_hr_candidates(), not just client-side hiding, since a
        submitter shouldn't be able to approve their own candidate). ===== -->
+  <!-- v675: Dialer Admin. Filled on first open from dialer-admin/. -->
+  <div class="tab-panel" id="tab-dialer_management">
+    <div id="daHost"><div style="padding:28px; color:var(--text-dim); font-size:13px;">Loading Dialer Admin…</div></div>
+  </div>
+
   <div class="tab-panel" id="tab-hr">
 
     <div class="hr-section" id="hrSection-submission">
@@ -8754,6 +8770,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     // other tab clears it because activateTab() toggles .active off every
     // .tab-btn that does not match.
     if(btn.dataset.tab === 'dialer_management'){
+      // v675: a role that can see a Dialer Admin section lands on it (the
+      // parent now HAS a panel). One that only has the agent Dialer keeps the
+      // old disclosure behaviour.
+      if(typeof daVisibleSections === 'function' && daVisibleSections().length){
+        activateTab('dialer_management');
+        return;
+      }
       document.querySelectorAll('.side-main-nav > .side-nav-group > .tab-btn')
         .forEach(b => b.classList.toggle('active', b === btn));
       return;
@@ -9266,7 +9289,7 @@ async function establishSession(user, { isNewLogin = true } = {}){
     showForcePasswordScreen(user, profile.must_change_password ? 'new' : 'expired');
     return;
   }
-  const { data: roleRow, error: roleErr } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, data_science_sections, taxes_sections, time_management_sections, task_category_ids, can_text_clients, can_edit_compensation').eq('name', profile?.role || '').maybeSingle();
+  const { data: roleRow, error: roleErr } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, dialer_admin_sections, can_manage_dialer, can_review_calls, data_science_sections, taxes_sections, time_management_sections, task_category_ids, can_text_clients, can_edit_compensation').eq('name', profile?.role || '').maybeSingle();
   // v41 fix: a genuine query failure (e.g. activity_sections not existing
   // yet because the newest supabase/schema.sql migration hasn't been run)
   // used to be silently treated the same as "no matching role row" —
@@ -9315,6 +9338,7 @@ async function establishSession(user, { isNewLogin = true } = {}){
     csubSections: roleRow?.csub_sections || {},
     financeSections: roleRow?.finance_sections || {},
     hrSections: roleRow?.hr_sections || {},
+    dialerAdminSections: roleRow?.dialer_admin_sections || {}, // v675
     dataScienceSections: roleRow?.data_science_sections || {},
     taxesSections: roleRow?.taxes_sections || {},
     timeManagementSections: roleRow?.time_management_sections || {},
@@ -9578,6 +9602,11 @@ function applyRolePermissionsToNav(){
     const _canDialerAdmin = myIsOwner || myPermissions.allowedTabs.includes('dialer_admin');
     _dmBtn.style.display = (_canDialer || _canDialerAdmin) ? '' : 'none';
   }
+  // v675: only the Dialer Admin sections this role may view.
+  document.querySelectorAll('.da-subtab-btn').forEach(b => {
+    b.style.display = canViewDialerAdminSection(b.dataset.daSection) ? '' : 'none';
+  });
+  daOpenDeepLinkOnce();
   const _aub = document.getElementById('addUserBtn');
   if(_aub) _aub.style.display = myPermissions.canManageUsers ? '' : 'none';
   const _ncc = document.getElementById('chatNewClientChatBtn');
@@ -9661,6 +9690,7 @@ function activateTab(tabKey){
   if(tabKey === 'usermanagement') initUserManagementTab();
   if(tabKey === 'finance') initFinanceTab();
   if(tabKey === 'hr') initHrTab();
+  if(tabKey === 'dialer_management') initDialerAdminTab(); // v675
   if(tabKey === 'data_science') initDataSciTab();
   if(tabKey === 'taxes') initTaxesTab();
 }
@@ -18337,7 +18367,8 @@ let allRoles = [];
 let allViewableUsers = []; // every non-protected user, for the "which users can view" picker
 let editingRoleName = null; // null = the form is creating a new role
 
-function renderRoleTabsPicker(selectedTabs, tabEdit, umSections, activitySections, leadsSections, csubSections, financeSections, hrSections, dataScienceSections, taxesSections, timeManagementSections){
+function renderRoleTabsPicker(selectedTabs, tabEdit, umSections, activitySections, leadsSections, csubSections, financeSections, hrSections, dataScienceSections, taxesSections, timeManagementSections, dialerAdminSections){
+  dialerAdminSections = dialerAdminSections || {}; // v675
   selectedTabs = selectedTabs || [];
   tabEdit = tabEdit || {};
   umSections = umSections || {};
@@ -18439,6 +18470,29 @@ function renderRoleTabsPicker(selectedTabs, tabEdit, umSections, activitySection
                 ${s.editable ? `
                   <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
                     <input type="checkbox" class="finance-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
+                  </label>
+                ` : ''}
+              </div>
+            `;
+          }).join('')}
+        </div>
+      ` : ''}
+      ${t.key === 'dialer_admin' ? `
+        <div id="dialerAdminSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
+          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-section access within Dialer Admin (only matters if the "Dialer Admin" checkbox above is on). Saving also sets the database's own dialer rights to match: any Edit here lets this role change dialer settings, any View lets it review calls. Ordering phone numbers stays Owner/Admin only whatever is ticked. Research, Reports and Inbox have nothing to change, so no Edit column.</div>
+          ${DIALER_ADMIN_SECTIONS.map(s => {
+            const cur = dialerAdminSections[s.key] || {};
+            const view = typeof cur.view === 'boolean' ? cur.view : dialerAdminSectionDefault(s.key);
+            const edit = typeof cur.edit === 'boolean' ? cur.edit : dialerAdminEditSectionDefault(s.key);
+            return `
+              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
+                <span style="min-width:160px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
+                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
+                  <input type="checkbox" class="da-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
+                </label>
+                ${s.editable ? `
+                  <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
+                    <input type="checkbox" class="da-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
                   </label>
                 ` : ''}
               </div>
@@ -18629,7 +18683,7 @@ function resetRoleForm(){
   $('rolesFormTitle').textContent = 'Add a user type';
   $('roleNameInput').value = '';
   $('roleNameInput').disabled = false;
-  renderRoleTabsPicker([], {}, {}, {}, {}, {}, {}, {}, {}, {}, {});
+  renderRoleTabsPicker([], {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {});
   renderRoleTaskCategoriesPicker([]);
   $('roleCanTextClientsCb').checked = false;
   $('roleCanEditCompensationCb').checked = false;
@@ -21495,7 +21549,7 @@ function parseViewScopeList(viewScope){
 }
 
 async function loadRolesList(){
-  const { data, error } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, data_science_sections, taxes_sections, time_management_sections, task_category_ids, can_text_clients, can_edit_compensation').order('name');
+  const { data, error } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, dialer_admin_sections, can_manage_dialer, can_review_calls, data_science_sections, taxes_sections, time_management_sections, task_category_ids, can_text_clients, can_edit_compensation').order('name');
   const body = $('rolesBody');
   // v41 fix: this used to ignore `error` entirely and fall through to
   // `data || []`, silently rendering an EMPTY list — indistinguishable
@@ -21578,7 +21632,7 @@ function startEditRole(name){
   $('rolesFormTitle').textContent = `Editing "${name}"`;
   $('roleNameInput').value = role.name;
   $('roleNameInput').disabled = true; // v361: renaming happens inline in the roles list itself (saveRoleRename, via the staff-rename-role Edge Function) — kept disabled here so there's exactly one place that does it
-  renderRoleTabsPicker(role.allowed_tabs || [], role.tab_edit || {}, role.um_sections || {}, role.activity_sections || {}, role.leads_sections || {}, role.csub_sections || {}, role.finance_sections || {}, role.hr_sections || {}, role.data_science_sections || {}, role.taxes_sections || {}, role.time_management_sections || {});
+  renderRoleTabsPicker(role.allowed_tabs || [], role.tab_edit || {}, role.um_sections || {}, role.activity_sections || {}, role.leads_sections || {}, role.csub_sections || {}, role.finance_sections || {}, role.hr_sections || {}, role.data_science_sections || {}, role.taxes_sections || {}, role.time_management_sections || {}, role.dialer_admin_sections || {});
   renderRoleTaskCategoriesPicker(role.task_category_ids || []);
   $('roleCanTextClientsCb').checked = !!role.can_text_clients;
   $('roleCanEditCompensationCb').checked = !!role.can_edit_compensation;
@@ -21637,6 +21691,15 @@ $('roleSaveBtn').addEventListener('click', async () => {
     const viewCb = document.querySelector(`.hr-section-view-cb[data-section="${s.key}"]`);
     const editCb = document.querySelector(`.hr-section-edit-cb[data-section="${s.key}"]`);
     hrSections[s.key] = { view: viewCb ? viewCb.checked : hrSectionDefault(s.key), edit: editCb ? editCb.checked : hrEditSectionDefault(s.key) };
+  });
+  const dialerAdminSections = {}; // v675
+  DIALER_ADMIN_SECTIONS.forEach(s => {
+    const viewCb = document.querySelector(`.da-section-view-cb[data-section="${s.key}"]`);
+    const editCb = document.querySelector(`.da-section-edit-cb[data-section="${s.key}"]`);
+    dialerAdminSections[s.key] = {
+      view: viewCb ? viewCb.checked : dialerAdminSectionDefault(s.key),
+      edit: s.editable ? (editCb ? editCb.checked : dialerAdminEditSectionDefault(s.key)) : false,
+    };
   });
   const dataScienceSections = {};
   DATA_SCIENCE_SECTIONS.forEach(s => {
@@ -21723,8 +21786,17 @@ $('roleSaveBtn').addEventListener('click', async () => {
     `This takes effect immediately for every account with this role. Save anyway?`
   )) return;
 
-  const payload = { allowed_tabs: allowedTabs, tab_edit: tabEdit, um_sections: umSections, activity_sections: activitySections, leads_sections: leadsSections, csub_sections: csubSections, finance_sections: financeSections, hr_sections: hrSections, data_science_sections: dataScienceSections, taxes_sections: taxesSections, time_management_sections: timeManagementSections, view_scope: viewScope, viewable_user_ids: viewableUserIds, viewable_role: viewableRole, task_category_ids: taskCategoryIds, can_text_clients: $('roleCanTextClientsCb').checked, can_edit_compensation: $('roleCanEditCompensationCb').checked };
+  const payload = { allowed_tabs: allowedTabs, tab_edit: tabEdit, um_sections: umSections, activity_sections: activitySections, leads_sections: leadsSections, csub_sections: csubSections, finance_sections: financeSections, hr_sections: hrSections, dialer_admin_sections: dialerAdminSections, data_science_sections: dataScienceSections, taxes_sections: taxesSections, time_management_sections: timeManagementSections, view_scope: viewScope, viewable_user_ids: viewableUserIds, viewable_role: viewableRole, task_category_ids: taskCategoryIds, can_text_clients: $('roleCanTextClientsCb').checked, can_edit_compensation: $('roleCanEditCompensationCb').checked };
   if(editingRoleName !== 'admin') payload.can_manage_users = false;
+  // v675: the portal decides Dialer Admin access, so the database's own dialer
+  // rights follow these ticks. Without this a role could be given Edit here
+  // and have every save refused by the database.
+  {
+    const daTab = allowedTabs.includes('dialer_admin');
+    const vals = Object.values(dialerAdminSections);
+    payload.can_manage_dialer = daTab && vals.some(v => v.edit);
+    payload.can_review_calls = daTab && vals.some(v => v.view);
+  }
   if(editingRoleName){
     // .select() here is deliberate: without it, an update blocked entirely
     // by RLS (e.g. this account isn't actually signed in as 'owner') comes
@@ -39936,6 +40008,130 @@ function hrSectionDefault(key){ return key !== 'review' && key !== 'history'; }
 // default), open for Submission (anyone with the tab can submit a candidate
 // by default, same as before this was split into its own toggle).
 function hrEditSectionDefault(key){ return key !== 'review'; }
+// ---------- v675: Dialer Admin inside the portal ----------
+// The eleven sections of what was admin.proptechnologyai.com. Permissions are
+// the portal's own (roles.dialer_admin_sections), on top of the 'dialer_admin'
+// tab. Research, Reports and Inbox have nothing to edit, so they have no Edit
+// column; they inherit "can edit" from the rest so the module never labels a
+// floor manager's report "view only".
+const DIALER_ADMIN_SECTIONS = [
+  { key: 'numbers', label: 'Numbers', editable: true },
+  { key: 'lists', label: 'Lists', editable: true },
+  { key: 'campaigns', label: 'Campaigns', editable: true },
+  { key: 'agents', label: 'Agents', editable: true },
+  { key: 'inbound', label: 'Inbound', editable: true },
+  { key: 'calllog', label: 'Call log', editable: true },
+  { key: 'research', label: 'Research' },
+  { key: 'reports', label: 'Reports' },
+  { key: 'inbox', label: 'Inbox' },
+  { key: 'settings', label: 'Settings', editable: true },
+  { key: 'pipeline', label: 'Pipeline', editable: true },
+];
+// A new role with the tab can LOOK at every section; changing anything is
+// closed until someone ticks Edit -- the same defaults as the other sub-tabs.
+function dialerAdminSectionDefault(){ return true; }
+function dialerAdminEditSectionDefault(){ return false; }
+function hasDialerAdminTab(){
+  return !!myPermissions && (myIsOwner || (myPermissions.allowedTabs || []).includes('dialer_admin'));
+}
+function canViewDialerAdminSection(key){
+  if(!hasDialerAdminTab()) return false;
+  if(myPermissions.isProtected) return true;
+  const s = (myPermissions.dialerAdminSections || {})[key];
+  return s && typeof s.view === 'boolean' ? s.view : dialerAdminSectionDefault(key);
+}
+function canEditDialerAdminSection(key){
+  if(!hasDialerAdminTab()) return false;
+  if(myPermissions.isProtected) return true;
+  const def = DIALER_ADMIN_SECTIONS.find(x => x.key === key);
+  if(!def) return false;
+  if(!def.editable) return DIALER_ADMIN_SECTIONS.some(x => x.editable && canEditDialerAdminSection(x.key));
+  const s = (myPermissions.dialerAdminSections || {})[key];
+  return s && typeof s.edit === 'boolean' ? s.edit : dialerAdminEditSectionDefault(key);
+}
+function daVisibleSections(){
+  return DIALER_ADMIN_SECTIONS.filter(s => canViewDialerAdminSection(s.key)).map(s => s.key);
+}
+
+// Loaded on first open, never with the page: the portal is already one very
+// large document, and most sessions never open Dialer Admin. Bump the version
+// when dialer-admin/ changes so browsers do not serve a stale copy.
+const DIALER_ADMIN_VERSION = '675';
+let daLoadPromise = null;
+let daActiveSection = null;
+function loadDialerAdminModule(){
+  if(daLoadPromise) return daLoadPromise;
+  daLoadPromise = (async () => {
+    const host = $('daHost');
+    if(!document.getElementById('daCss')){
+      const link = document.createElement('link');
+      link.id = 'daCss'; link.rel = 'stylesheet';
+      link.href = `dialer-admin/dialer-admin.css?v=${DIALER_ADMIN_VERSION}`;
+      document.head.appendChild(link);
+    }
+    const res = await fetch(`dialer-admin/dialer-admin.html?v=${DIALER_ADMIN_VERSION}`, { cache: 'no-cache' });
+    if(!res.ok) throw new Error(`Dialer Admin could not load (${res.status}).`);
+    host.innerHTML = await res.text();
+    // The module reads this instead of making its own client: same session,
+    // no second sign-in, and Edit asked per section of the portal's rules.
+    window.__dialerAdminCtx = {
+      sb, supabaseUrl: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY,
+      userId: myUserId, role: myRole,
+      canEdit: (key) => canEditDialerAdminSection(key),
+    };
+    await new Promise((resolve, reject) => {
+      const el = document.createElement('script');
+      el.src = `dialer-admin/dialer-admin.js?v=${DIALER_ADMIN_VERSION}`;
+      el.onload = resolve;
+      el.onerror = () => reject(new Error('Dialer Admin could not load its code.'));
+      document.body.appendChild(el);
+    });
+    if(!window.DialerAdmin) throw new Error('Dialer Admin loaded but did not start.');
+  })().catch(e => {
+    daLoadPromise = null;
+    $('daHost').innerHTML = `<div class="msg error" style="margin:20px;">${escapeHtml(e.message)} Reload the page to try again.</div>`;
+    throw e;
+  });
+  return daLoadPromise;
+}
+async function activateDialerAdminSection(key){
+  daActiveSection = key;
+  document.querySelectorAll('.da-subtab-btn').forEach(b => b.classList.toggle('active', b.dataset.daSection === key));
+  try { history.replaceState(null, '', '#dialer-admin/' + key); } catch(e){}
+  try {
+    await loadDialerAdminModule();
+    if(daActiveSection !== key) return;      // they clicked on while it loaded
+    await window.DialerAdmin.showSection(key);
+  } catch(e){ console.error('Dialer Admin:', e); }
+}
+function initDialerAdminTab(){
+  const vis = daVisibleSections();
+  if(!vis.length){
+    $('daHost').innerHTML = '<div style="padding:28px; color:var(--text-dim); font-size:13px;">Your role cannot see any Dialer Admin section.</div>';
+    return;
+  }
+  activateDialerAdminSection(vis.includes(daActiveSection) ? daActiveSection : vis[0]);
+}
+document.querySelectorAll('.da-subtab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if(!canViewDialerAdminSection(btn.dataset.daSection)) return;
+    daActiveSection = btn.dataset.daSection;
+    activateTab('dialer_management');
+  });
+});
+// admin.proptechnologyai.com now redirects to #dialer-admin/<section>.
+let daDeepLinkDone = false;
+function daOpenDeepLinkOnce(){
+  if(daDeepLinkDone) return;
+  daDeepLinkDone = true;
+  const m = /^#dialer-admin(?:\/([a-z]+))?/.exec(location.hash || '');
+  if(!m) return;
+  const vis = daVisibleSections();
+  if(!vis.length) return;
+  daActiveSection = vis.includes(m[1]) ? m[1] : vis[0];
+  setTimeout(() => activateTab('dialer_management'), 0);
+}
+
 function canViewHrSection(key){
   if(myPermissions.isProtected) return true;
   const s = myPermissions.hrSections[key];

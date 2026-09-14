@@ -1,0 +1,777 @@
+<!-- v675: Dialer Admin, inside the staff portal. Generated once from
+     dialer/admin.html by tools/convert-dialer-admin.py; this file is now
+     the source. Loaded into #daHost by the portal on first open. -->
+<div id="gate" class="msg err hide"></div>
+<div id="daReadOnlyNote" class="msg warn hide"></div>
+  <!-- ================================================ NUMBERS ========== -->
+  <section id="tab-numbers" class="hide">
+    <div class="panel">
+      <h2>Coverage</h2>
+      <p class="hint">
+        Where your dialable queue actually is, against the area codes you own numbers in.
+        A contact with no local caller ID gets dialled from an out-of-area number, which
+        is one of the strongest "don't answer" signals there is — so the biggest gaps are
+        the numbers worth buying first.
+      </p>
+      <div id="covSummary" style="margin-bottom:12px"></div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Area code</th><th class="num">Queued contacts</th>
+            <th class="num">DIDs owned</th><th></th></tr></thead>
+          <tbody id="covRows"><tr><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Buy numbers</h2>
+      <p class="hint">
+        New numbers are added as <strong>resting</strong>, not active. A fresh DID has no
+        reputation history, and dropping one straight into rotation at full volume is how
+        numbers get flagged early. Activate them below once you are ready to warm them in.
+      </p>
+      <div class="row">
+        <div class="field"><label for="searchNpa">Area code</label>
+          <input id="searchNpa" maxlength="3" style="width:90px" placeholder="312"></div>
+        <div class="field"><label for="searchLimit">Show</label>
+          <input id="searchLimit" type="number" value="10" min="1" max="50" style="width:80px"></div>
+        <button id="searchBtn" class="primary">Search</button>
+        <button id="orderBtn" disabled>Order selected</button>
+      </div>
+      <div id="searchMsg"></div>
+      <div class="scroll hide" id="searchWrap">
+        <table>
+          <thead><tr><th style="width:34px"></th><th>Number</th><th>State</th>
+            <th>Rate centre</th><th class="num">Monthly</th></tr></thead>
+          <tbody id="searchRows"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Pool</h2>
+      <p class="hint">
+        <strong>Sync</strong> reconciles this against what Telnyx says you own. Numbers
+        released in the Telnyx portal but still marked active here would hand agents a
+        caller ID the carrier rejects at dial time.
+      </p>
+      <!-- v594. The remediation workflow, where the numbers are. -->
+      <p class="hint">
+        <strong>Reputation.</strong> Call your own phones from a number now and then. If it
+        shows "Spam Likely", set it to <em>Flagged</em> — agents stop calling from it at once.
+        File disputes at <a href="https://www.freecallerregistry.com" target="_blank" rel="noopener" style="color:#4EA8FF">freecallerregistry.com</a>,
+        <a href="https://www.voicespamfeedback.com" target="_blank" rel="noopener" style="color:#4EA8FF">Verizon</a> and
+        <a href="https://callreporting.t-mobile.com" target="_blank" rel="noopener" style="color:#4EA8FF">T-Mobile</a> (AT&amp;T's labels come
+        from Hiya), then set <em>Dispute filed</em>. Once it calls through clean, set <em>Clean</em>:
+        it goes back into rotation and the dispute is closed. Tick <em>CNAM</em> once the caller
+        name is set in Telnyx, and <em>Registry</em> once it is registered.
+      </p>
+      <div class="row">
+        <button id="syncBtn">Sync from Telnyx</button>
+        <span id="poolMsg" style="color:var(--ink2);font-size:13px"></span>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Number</th><th>NPA</th><th>State</th><th>Status</th>
+            <th class="num">Today</th><th class="num">Cap</th><th>Reputation</th><th></th></tr></thead>
+          <tbody id="poolRows"><tr><td colspan="8">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================== LISTS ========== -->
+  <section id="tab-lists" class="hide">
+    <div class="panel">
+      <h2>Import a list</h2>
+      <p class="hint">
+        Paste a CSV that has already been scrubbed in ReadyMode. Automated imports arrive
+        by email through <span class="mono">dialer-list-import</span>; this is the manual
+        path for a one-off file.
+      </p>
+      <div class="row">
+        <div class="field" style="min-width:220px"><label for="impCampaign">Campaign</label>
+          <select id="impCampaign"></select></div>
+        <div class="field" style="min-width:220px"><label for="impName">List name</label>
+          <input id="impName" placeholder="e.g. DealMachine TX — Feb"></div>
+        <div class="field"><label for="impFile">Or upload</label>
+          <input id="impFile" type="file" accept=".csv,text/csv"></div>
+      </div>
+      <textarea id="impCsv" rows="7" placeholder="phone,first_name,last_name&#10;5551234567,Jane,Doe"></textarea>
+
+      <!-- Column mapping. Appears as soon as a file is loaded, because the
+           only moment anyone can say which column is which is while looking
+           at the file. Guesses by header name first, so a tidy export needs
+           no touching; anything it cannot place is left for a person. -->
+      <div id="impMapWrap" class="hide" style="margin-top:16px">
+        <div class="row" style="margin-bottom:10px">
+          <span class="fb-label" id="impMapSummary"></span>
+          <button id="impMapReset" class="sm">Re-guess</button>
+          <button id="impMapClear" class="sm">Clear all</button>
+        </div>
+        <div class="scroll" style="max-height:420px">
+          <table>
+            <thead><tr><th style="width:230px">Dialer field</th><th style="width:250px">Column in your file</th>
+              <th>First row</th></tr></thead>
+            <tbody id="impMapRows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- v524 blocks a list reaching 'ready' without a scrub timestamp. This
+           is that constraint surfaced as a deliberate human attestation rather
+           than something a form quietly fills in. -->
+      <div class="msg warn" style="margin-top:14px">
+        <label style="display:flex;gap:9px;align-items:flex-start;cursor:pointer">
+          <input type="checkbox" id="impScrubbed" style="margin-top:3px">
+          <span>I confirm this list was scrubbed against DNC in ReadyMode. Contacts cannot
+          be dialled without this — the database rejects an unscrubbed list, and saying so
+          when it is not true is the one thing that check exists to prevent.</span>
+        </label>
+        <div class="row" style="margin:10px 0 0">
+          <div class="field"><label for="impScrubDate">Scrubbed on</label>
+            <input type="date" id="impScrubDate"></div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:6px">
+        <button id="impBtn" class="primary">Import</button>
+        <span id="impMsg" style="font-size:13px"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Lists</h2>
+      <p class="hint">
+        <strong>Imported contacts are dialable immediately, at no cost.</strong> The
+        calling-hours gate needs each number's own time zone, and the area code carries
+        it — a ported US number keeps its area code and its state, so the first three
+        digits answer the question a paid lookup used to answer for $0.0015. Import also
+        drops undialable numbers on the digits alone, and takes mobile-versus-landline
+        from your file's phone-type column to rank the queue.
+        <br><br>
+        <strong>No time zone</strong> counts the rows whose area code this build's table
+        does not carry. It reads zero on an ordinary US list. When it does not, you have
+        two ways out and neither needs a paid lookup for the whole list: set the
+        campaign's <strong>fallback time zone</strong> (Campaigns &rarr; Edit) so those
+        rows are gated on it instead of refused, or use the button on that row to
+        resolve just those numbers for real, at $0.0015 each.
+        <br><br>
+        <strong>Carrier check is optional now.</strong> The one thing free cannot see is
+        a number that is well-formed and correctly zoned but dead; a carrier check finds
+        those before the first dial, at $0.0015 each. Skipping it costs one wasted dial
+        per dead number — the call log retires them automatically when the carrier
+        answers "unallocated".
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>List</th><th>Campaign</th><th>Status</th><th class="num">Loaded</th>
+            <th class="num">No time zone</th><th>Scrubbed</th><th></th></tr></thead>
+          <tbody id="listRows"><tr><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div id="valMsg" style="margin-top:10px;font-size:13px"></div>
+    </div>
+  </section>
+
+  <!-- ============================================== CAMPAIGNS ========== -->
+  <section id="tab-campaigns" class="hide">
+    <div class="panel">
+      <h2>New campaign</h2>
+      <p class="hint">
+        Dial mode is preview or power only. There is deliberately no predictive option:
+        one line per agent is what keeps the abandonment rate structurally zero, and
+        changing that needs a pacing governor that does not exist in this system.
+      </p>
+      <div class="row">
+        <div class="field" style="min-width:240px"><label for="cName">Name</label>
+          <input id="cName" placeholder="Warm callbacks — March"></div>
+        <div class="field"><label for="cMode">Dial mode</label>
+          <select id="cMode"><option value="preview">Preview</option><option value="power">Power</option></select></div>
+        <div class="field"><label for="cStart">Window opens</label>
+          <input type="time" id="cStart" value="09:00"></div>
+        <div class="field"><label for="cEnd">Window closes</label>
+          <input type="time" id="cEnd" value="19:00"></div>
+        <button id="cCreate" class="primary">Create</button>
+      </div>
+      <p class="hint" style="margin:0">
+        The window is in each contact's own local time, not yours.
+      </p>
+      <div id="cMsg"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Campaigns</h2>
+      <p class="hint">
+        Edit opens the queue's limits and the agents assigned to it. Assignment is
+        a permission, not a filter: an agent who is not on a queue cannot read its
+        contacts at all, whatever their screen shows them.
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Name</th><th>Mode</th><th>Window</th><th>Status</th>
+            <th class="num">Queued</th><th class="num">Agents</th><th></th></tr></thead>
+          <tbody id="campRows"><tr><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- v592. The outcome catalogue every queue picks from. Admins only: the
+         table's RLS allows nobody else to write it, so the panel is not drawn
+         for anyone who would be refused. -->
+    <div class="panel hide" id="dispoCatPanel">
+      <h2>Wrap-up outcomes</h2>
+      <p class="hint">
+        Every outcome a queue can offer at wrap-up. A queue offers the ones in the default list
+        unless it has its own list (Edit a campaign above). Renaming changes it everywhere;
+        switching one off takes it out of every queue. A new outcome behaves like one of the
+        presets, so a slip can never put a seller on the do-not-call list.
+      </p>
+      <div class="scroll"><table>
+        <thead><tr><th>Outcome</th><th>What it does</th><th>Default list</th><th>On</th>
+          <th class="num">Order</th><th></th></tr></thead>
+        <tbody id="dispoCatRows"><tr><td colspan="6">Loading…</td></tr></tbody>
+      </table></div>
+      <div class="row" style="margin-top:14px">
+        <div class="field" style="min-width:220px"><label for="newDispoLabel">New outcome</label>
+          <input id="newDispoLabel" placeholder="e.g. Asked for an offer"></div>
+        <div class="field" style="min-width:320px"><label for="newDispoPreset">Behaves like</label>
+          <select id="newDispoPreset"></select></div>
+        <label style="display:flex;align-items:center;gap:6px;margin-bottom:9px">
+          <input type="checkbox" id="newDispoDefault"> In the default list</label>
+        <button class="primary" id="newDispoAdd">Add outcome</button>
+      </div>
+      <div id="dispoCatMsg"></div>
+    </div>
+  </section>
+
+  <!-- ================================================ AGENTS =========== -->
+  <section id="tab-agents" class="hide">
+    <div class="panel">
+      <h2>Agent statuses</h2>
+      <p class="hint">
+        What an agent can put themselves in, and what each one means to the system.
+        <b>Dials</b> decides whether the queue keeps feeding them — Ready and Last
+        call do; everything else holds the queue. <b>Counts as</b> is what a
+        timesheet should call the time. <b>Limit</b> is a daily budget in minutes:
+        it is advisory, and warns rather than logging anyone out, because cutting
+        an agent off mid-call to enforce a break budget is worse than the overrun.
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Status</th><th>Dials</th><th>Counts as</th>
+            <th class="num">Limit (min/day)</th><th>Active</th></tr></thead>
+          <tbody id="statusRows"><tr><td colspan="5">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:14px">
+        <button id="statusSave" class="primary">Save statuses</button>
+        <span id="statusMsg"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Who is on shift</h2>
+      <p class="hint">Live sessions, newest first — what each agent is set to right now.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Agent</th><th>Status</th><th>Queue</th><th>Since</th></tr></thead>
+          <tbody id="shiftRows"><tr><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- v610: booking availability. Owned HERE, by the floor, rather than by
+         the rep in their own console -- when somebody can be booked is a
+         rostering decision, not a personal preference. The rep sees their own
+         hours read-only in the dialer so they can answer "why was that slot
+         not offered?" without asking. -->
+    <div class="panel">
+      <h2>Booking availability</h2>
+      <p class="hint">
+        When each rep can have appointments booked with them. Prospects are only
+        ever offered these hours, minus anything already on that rep's calendar,
+        minus the notice period. A rep with no hours set cannot be booked at all.
+        Days are Monday&ndash;Sunday.
+      </p>
+      <div class="row" style="margin-bottom:10px">
+        <div class="field" style="min-width:240px"><label for="calRep">Rep</label>
+          <select id="calRep"><option value="">Loading…</option></select></div>
+      </div>
+      <div id="calEditor"><p class="muted">Pick a rep.</p></div>
+    </div>
+  </section>
+
+  <!-- ================================================ INBOUND ========== -->
+  <section id="tab-inbound" class="hide">
+    <div class="panel">
+      <h2>New queue</h2>
+      <p class="hint">
+        A queue answers a number, greets the caller, rings whoever is available
+        and takes a message if nobody is. Agents only ring when their status
+        allows inbound — <b>Ready</b> and <b>Inbound only</b> by default, which
+        is set on the Agents tab.
+      </p>
+      <div class="row">
+        <div class="field" style="min-width:240px"><label for="qName">Name</label>
+          <input id="qName" placeholder="Seller inbound"></div>
+        <div class="field"><label for="qOpen">Opens</label>
+          <input type="time" id="qOpen" value="09:00"></div>
+        <div class="field"><label for="qClose">Closes</label>
+          <input type="time" id="qClose" value="19:00"></div>
+        <button id="qCreate" class="primary">Create</button>
+      </div>
+      <div id="qMsg"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Queues</h2>
+      <p class="hint">
+        Edit opens the greeting, timeouts, hours, the agents who answer it and
+        the numbers that reach it. A queue with no number routed to it can
+        never receive a call.
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Name</th><th>Hours</th><th>Strategy</th>
+            <th class="num">Ring</th><th class="num">Wait</th>
+            <th class="num">Agents</th><th class="num">Numbers</th>
+            <th>Status</th><th></th></tr></thead>
+          <tbody id="queueRows"><tr><td colspan="9">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>On the line now</h2>
+      <p class="hint">Callers currently waiting, and who is free to take them.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Queue</th><th>From</th><th>Waiting</th><th>Offered to</th></tr></thead>
+          <tbody id="waitingRows"><tr><td colspan="4">Nobody waiting.</td></tr></tbody>
+        </table>
+      </div>
+      <div id="availableNow" class="hint" style="margin-top:12px"></div>
+    </div>
+  </section>
+
+  <!-- =============================================== CALL LOG ========== -->
+  <section id="tab-calllog" class="hide">
+    <div class="panel">
+      <div class="filterbar">
+        <!-- Call results is a multi-select, not a single pick: "everything
+             except voicemail and no-answer" is the question people actually
+             ask of a call log, and a one-of dropdown cannot express it. -->
+        <div class="ms" id="recDispWrap">
+          <button type="button" class="ms-btn" id="recDispBtn">All call results</button>
+          <div class="ms-panel hide" id="recDispPanel">
+            <div class="ms-actions">
+              <button type="button" class="sm" id="recDispAll">Check all</button>
+              <button type="button" class="sm" id="recDispNone">Uncheck all</button>
+            </div>
+            <div id="recDispList"></div>
+          </div>
+        </div>
+        <span class="fb-label">Time range</span>
+        <input type="date" id="recFrom">
+        <span class="fb-label">to</span>
+        <input type="date" id="recTo">
+        <select id="recAgent"><option value="">All users</option></select>
+        <select id="recCampaign"><option value="">All campaigns</option></select>
+        <select id="recList"><option value="">All files</option></select>
+        <select id="recSource">
+          <option value="">All Sources</option>
+          <option value="campaign">Campaign</option>
+          <option value="manual">Manual</option>
+          <option value="outbound">Outbound</option>
+          <option value="inbound">Inbound</option>
+        </select>
+        <select id="recDuration">
+          <option value="">All durations</option>
+          <option value="none">No talk time</option>
+          <option value="1-30">1–30s</option>
+          <option value="31-60">31–60s</option>
+          <option value="61-180">61–180s</option>
+          <option value="180+">Over 3 min</option>
+        </select>
+        <select id="recStatus">
+          <option value="">All types</option>
+          <option value="completed">Completed</option>
+          <option value="answered">Answered</option>
+          <option value="no_answer">No answer</option>
+          <option value="busy">Busy</option>
+          <option value="failed">Failed</option>
+          <option value="canceled">Canceled</option>
+        </select>
+        <select id="recDisp"><option value="">All dispositions</option></select>
+        <button id="recExport" class="primary">Export</button>
+      </div>
+      <div class="filterbar" style="border-top:none;padding-top:0">
+        <label class="fb-check"><input type="checkbox" id="recSummary"> Summary view</label>
+        <label class="fb-check"><input type="checkbox" id="recRecorded"> Recorded calls only</label>
+        <button id="recRefresh" class="sm">Refresh</button>
+        <span id="recMsg" style="font-size:12.5px;color:var(--text-2)"></span>
+      </div>
+    </div>
+
+    <!-- ---------------- summary view ---------------- -->
+    <div class="panel hide" id="recSummaryPanel">
+      <h2>Disposition summary</h2>
+      <div style="margin:14px 0 20px">
+        <span class="stat"><b id="sumTotal">0</b><span>Total calls</span></span>
+        <span class="stat"><b id="sumTime">0</b><span>Total call time</span></span>
+        <span class="stat"><b id="sumAvg">0</b><span>Average call time</span></span>
+      </div>
+      <div class="scroll">
+        <table class="disp-table">
+          <thead><tr><th>Disposition</th><th class="num"># of Calls</th><th class="num">% of Total</th></tr></thead>
+          <tbody id="sumRows"><tr><td colspan="3">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <p class="hint" style="margin:14px 0 0">
+        Percentages are of the filtered total above, not of all time — the summary always
+        describes exactly the calls the log is showing.
+      </p>
+    </div>
+
+    <!-- ---------------- detail view ---------------- -->
+    <div class="panel" id="recListPanel">
+      <h2>Calls</h2>
+      <p class="hint">
+        Playback links are <strong>minted on demand</strong>. Telnyx signs them for ten minutes
+        at a time, so the URL stored against a call is dead within the hour and nothing here
+        uses it — pressing play asks the carrier for a fresh one, which is why there is a short
+        pause before audio starts.
+      </p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>User</th><th>Start</th><th>Result</th><th style="width:96px">Recording</th>
+            <th class="num">Length</th><th>Contact</th><th>Campaign / file</th></tr></thead>
+          <tbody id="recRows"><tr><td colspan="7">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- =============================================== RESEARCH ========== -->
+  <section id="tab-research" class="hide">
+    <div class="panel">
+      <h2>Research a number</h2>
+      <p class="hint">
+        Everything this system holds about one phone number: which lists it arrived on, whether
+        it is on the internal DNC, and every call ever placed to it. Any format works —
+        <span class="mono">(815) 822-5358</span>, <span class="mono">8158225358</span> and
+        <span class="mono">+18158225358</span> all resolve to the same number.
+      </p>
+      <div class="row">
+        <div class="field" style="min-width:260px"><label for="resNum">Phone number</label>
+          <input id="resNum" placeholder="(815) 822-5358" autocomplete="off"></div>
+        <button id="resGo" class="primary">Submit</button>
+        <span id="resMsg" style="font-size:13px;color:var(--text-2)"></span>
+      </div>
+    </div>
+
+    <div id="resResults" class="hide">
+      <div class="panel">
+        <h2>Lead status for <span class="mono" id="resNumEcho"></span></h2>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Contact</th><th>File</th><th>Campaign</th><th>Entry date</th>
+              <th class="num">Calls</th><th>Status</th><th>Last outcome</th><th>Next attempt</th></tr></thead>
+            <tbody id="resContacts"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Internal DNC entries</h2>
+        <p class="hint" style="margin-bottom:12px">
+          Append-only by design — suppression is evidence, so nothing is ever deleted to
+          un-suppress. Any row here means the number is blocked for every campaign.
+        </p>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Added</th><th>Source</th><th>Reason</th><th>Added by</th>
+              <th>Synced to ReadyMode</th></tr></thead>
+            <tbody id="resDnc"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Connection logs</h2>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Start</th><th class="num">Length</th><th>User</th><th>Source</th>
+              <th>Result</th><th style="width:150px">Recording</th></tr></thead>
+            <tbody id="resCalls"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================ REPORTS ========== -->
+  <!-- Aggregates only. The Call log tab already lists individual calls with
+       filters, and Agents already shows who is on shift -- this answers the
+       question neither does: how did a person or a campaign perform over a
+       period. Built on dialer_agent_stats / dialer_campaign_stats (v541),
+       which aggregate in Postgres because any Supabase read over ~1000 rows
+       truncates silently and summing a month here would under-report. -->
+  <section id="tab-reports" class="hide">
+    <div class="panel">
+      <h2>Agent performance</h2>
+      <p class="hint">
+        <strong>Talk</strong> is real conversation time; <strong>billed</strong> is what the
+        carrier charges, rounded up to a whole minute per answered call. They diverge sharply
+        and only the second reconciles to an invoice.
+      </p>
+      <div class="row">
+        <div class="field"><label for="rpAFrom">From</label><input type="date" id="rpAFrom"></div>
+        <div class="field"><label for="rpATo">To</label><input type="date" id="rpATo"></div>
+        <button class="primary" id="rpARun">Run</button>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Agent</th><th class="num">Dials</th><th class="num">Connects</th>
+            <th class="num">Answer&nbsp;%</th><th class="num">Talk</th><th class="num">Billed</th>
+            <th class="num">Leads</th><th class="num">Manual</th>
+            <th class="num">Hours&nbsp;unchecked</th></tr></thead>
+          <tbody id="rpAgentRows"><tr><td colspan="9">Pick a range and run.</td></tr></tbody>
+        </table>
+      </div>
+      <div id="rpUnchecked" class="msg warn hide"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Campaign performance</h2>
+      <p class="hint">
+        <strong>Abandoned</strong> should always read zero. At one line per agent the agent is
+        on the call before the contact's phone rings, so a live answer with nobody there cannot
+        happen by design — a non-zero figure here is an incident in the call path, not a pacing
+        number to tune.
+      </p>
+      <div class="row">
+        <div class="field"><label for="rpCFrom">From</label><input type="date" id="rpCFrom"></div>
+        <div class="field"><label for="rpCTo">To</label><input type="date" id="rpCTo"></div>
+        <button class="primary" id="rpCRun">Run</button>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Campaign</th><th class="num">Dials</th><th class="num">Connects</th>
+            <th class="num">Answer&nbsp;%</th><th class="num">Leads</th>
+            <th class="num">Abandoned</th><th>Call results</th></tr></thead>
+          <tbody id="rpCampRows"><tr><td colspan="7">Pick a range and run.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================== INBOX ========== -->
+  <!-- Two-way SMS on +1 312-638-0895 through Telnyx (v593; it was the GHL
+       number before). Replies land in dialer_sms_messages via
+       telnyx-sms-webhook, and the old GHL history is still read, through
+       v542's RPCs,
+       which carry the visibility rule -- an agent sees threads they have
+       personally sent into, a reviewer sees all of them. Threads are scoped
+       to numbers the dialer has engaged, so client-notification traffic from
+       the other number stays out. -->
+  <section id="tab-inbox" class="hide">
+    <div class="panel">
+      <h2>Messages</h2>
+      <p class="hint">
+        Two-way SMS on <span class="mono">+1 312-638-0895</span>. Agents see conversations
+        they have texted in; team leaders, Quality and admins see every conversation.
+        Numbers on the internal do-not-call list cannot be texted at all.
+      </p>
+      <div class="row" style="margin-bottom:10px">
+        <button id="inboxRefresh">Refresh</button>
+        <span id="inboxMsg" style="font-size:13px;color:var(--ink2)"></span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:300px 1fr;gap:14px;align-items:start">
+        <div class="scroll" style="max-height:520px">
+          <table>
+            <thead><tr><th>Conversation</th></tr></thead>
+            <tbody id="inboxThreads"><tr><td>Loading…</td></tr></tbody>
+          </table>
+        </div>
+
+        <div>
+          <div class="scroll" id="inboxThreadWrap"
+               style="max-height:430px;padding:12px;background:#fbfcfc">
+            <div id="inboxThread" style="font-size:13px;color:var(--ink2)">
+              Pick a conversation on the left.
+            </div>
+          </div>
+          <div class="row" style="margin:10px 0 0;align-items:stretch">
+            <textarea id="inboxBody" rows="2" style="flex:1;min-width:240px"
+              placeholder="Reply…" disabled></textarea>
+            <button class="primary" id="inboxSend" disabled>Send</button>
+          </div>
+          <div class="hint" id="inboxLen" style="margin-top:4px"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =============================================== PIPELINE ========== -->
+  <!-- v595. The team's follow-ups and opportunities in one place. In the
+       dialer each rep sees only their own; this is the floor's view, so a
+       follow-up going overdue while its rep is off does not go unseen, and
+       it can be handed to someone who is in. Follow-ups are readable by
+       managers only (their RLS), so Quality sees the opportunities alone. -->
+  <section id="tab-pipeline" class="hide">
+    <div class="panel">
+      <h2>By rep</h2>
+      <div class="row" style="margin-bottom:10px;align-items:center">
+        <div class="field"><label for="pipeDays">Converted and lost in the last</label>
+          <select id="pipeDays">
+            <option value="7">7 days</option><option value="30" selected>30 days</option>
+            <option value="90">90 days</option>
+          </select></div>
+        <button id="pipeRefresh">Refresh</button>
+        <span id="pipeMsg" style="font-size:13px;color:var(--ink2)"></span>
+      </div>
+      <p class="hint" style="margin:0 0 10px">
+        Conversion is converted &divide; (converted + lost) in the period. An opportunity
+        still open does not count against anyone yet.
+      </p>
+      <div class="scroll"><table>
+        <thead><tr><th>Rep</th><th class="num">Open opportunities</th><th class="num">Converted</th>
+          <th class="num">Lost</th><th class="num">Conversion</th><th class="num">Open follow-ups</th>
+          <th class="num">Overdue</th></tr></thead>
+        <tbody id="pipeReps"><tr><td colspan="7">Loading…</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <h2>Follow-ups due</h2>
+      <p class="hint">
+        Overdue, and due in the next 24 hours, across the team. Handing one to another rep
+        re-arms its reminder, so if it is already due they are reminded within a minute.
+      </p>
+      <div class="scroll"><table>
+        <thead><tr><th>Due</th><th>Contact</th><th>Rep</th><th>Note</th></tr></thead>
+        <tbody id="pipeFollowUps"><tr><td colspan="4">Loading…</td></tr></tbody>
+      </table></div>
+    </div>
+
+    <div class="panel">
+      <h2>Open opportunities</h2>
+      <p class="hint">
+        Oldest activity last. Handing one to another rep moves its open follow-ups with it.
+      </p>
+      <div class="scroll"><table>
+        <thead><tr><th>Contact</th><th>Property</th><th>Rep</th><th>Last activity</th>
+          <th class="num">Notes</th><th></th></tr></thead>
+        <tbody id="pipeOpps"><tr><td colspan="6">Loading…</td></tr></tbody>
+      </table></div>
+      <div id="pipeOppNotes" class="hide" style="margin-top:14px"></div>
+    </div>
+  </section>
+
+  <!-- ============================================== SETTINGS ============ -->
+  <!-- v648. Two things that were previously hardcoded and could only be
+       changed with a deploy: which number a rep sends from, and which
+       sections of the console a role can see. -->
+  <section id="tab-settings" class="hide">
+    <div class="panel">
+      <h2>Outbound numbers</h2>
+      <p class="muted" style="margin-top:-2px">
+        The number a rep's texts and manual dials go out from. One number per
+        person &mdash; the database enforces it, so assigning a number that
+        already belongs to someone else moves it rather than duplicating it.
+        A number left unassigned stays in the general rotation.
+      </p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Number</th><th>Area</th><th>Status</th><th>Assigned to</th></tr></thead>
+        <tbody id="setNumbersBody"><tr><td colspan="4">Loading…</td></tr></tbody>
+      </table></div>
+      <div id="setNumbersMsg" class="msg hide" style="margin-top:10px"></div>
+    </div>
+
+    <!-- v650: the WhatsApp sender. dialer-whatsapp reads
+         app_settings.whatsapp_from_number at send time, so this changes
+         without a deploy. It was only settable by raw SQL before. -->
+    <div class="panel" style="margin-top:16px">
+      <h2>WhatsApp sender</h2>
+      <p class="muted" style="margin-top:-2px">
+        The number WhatsApp replies go out from. It must be a number
+        <b>Telnyx itself owns</b> and that is WhatsApp-enabled on the WABA
+        &mdash; Telnyx resolves the messaging profile from the sender, so a
+        virtual or test number can receive but never send (error 40305).
+        WhatsApp is reply-only either way: Meta allows free text solely inside
+        24 hours of the contact's last message.
+      </p>
+      <div class="btn-row" style="align-items:center">
+        <input id="setWaNumber" class="mono" placeholder="+13126380895" style="max-width:220px">
+        <button id="setWaSave" class="sm">Save</button>
+        <button id="setWaTest" class="sm">Check status</button>
+      </div>
+      <div id="setWaMsg" class="msg hide" style="margin-top:10px"></div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h2>Console access</h2>
+      <p class="muted" style="margin-top:-2px">
+        Which sections of the agent console each role sees. A role you have
+        not configured here keeps its current behaviour, decided by its
+        capabilities &mdash; so nothing changes until you tick something.
+        Owner and Admin always see everything and are not listed.
+      </p>
+      <div class="tbl-wrap"><table>
+        <thead><tr id="setAccessHead"><th>Role</th></tr></thead>
+        <tbody id="setAccessBody"><tr><td>Loading…</td></tr></tbody>
+      </table></div>
+      <div class="btn-row" style="margin-top:10px">
+        <button id="setAccessSave" class="sm">Save access</button>
+        <span id="setAccessMsg" class="muted"></span>
+      </div>
+    </div>
+
+    <!-- v669. The words the outcome rules send. Rules pick a template; the
+         template says the channel and who it comes from. -->
+    <div class="panel" style="margin-top:16px">
+      <h2>Message templates</h2>
+      <p class="hint">
+        Used by each queue's outcome rules. <b>Shared sender</b> emails go from the address below;
+        <b>rep</b> emails go from the rep's own connected Gmail. Texts always go from the rep's
+        assigned number, and only to people who agreed to receive texts and are not on do-not-call.
+        Merge fields: <span class="mono">{{first_name}} {{last_name}} {{full_name}} {{agent}}
+        {{agent_first_name}} {{address}} {{city}} {{state}} {{phone}}</span>.
+      </p>
+      <div id="tplList"><p class="hint">Loading…</p></div>
+      <div class="btn-row" style="margin-top:6px">
+        <button id="tplAddEmail" class="sm">Add an email</button>
+        <button id="tplAddSms" class="sm">Add a text</button>
+      </div>
+    </div>
+
+    <div class="panel" style="margin-top:16px">
+      <h2>Hand-offs &amp; callbacks</h2>
+      <p class="hint">
+        Where the rules send things. Change the Sales owner here when someone joins or leaves Sales.
+      </p>
+      <div class="row">
+        <div class="field"><label>An agent's Buyer/Investor goes to</label><select id="setSalesOwner" style="min-width:220px"></select></div>
+        <div class="field"><label>"Spanish speaker" moves the contact to</label><select id="setSpanishQueue" style="min-width:220px"></select></div>
+        <div class="field"><label>Hold an owned callback for (hours after due)</label><input id="setCbHold" type="number" min="1" max="720" style="width:120px"></div>
+      </div>
+      <div class="fb-label" style="margin:6px 0 8px">Shared sender</div>
+      <div class="row">
+        <div class="field"><label>From name</label><input id="setFromName" style="min-width:200px"></div>
+        <div class="field"><label>From address</label><input id="setFromAddr" class="mono" style="min-width:260px"></div>
+      </div>
+      <p class="hint" style="margin-top:-4px">
+        Sent through Namecheap Private Email (mail.privateemail.com, port 465). The mailbox password is
+        never stored here: it is the <span class="mono">PRIVATEEMAIL_SMTP_USER</span> /
+        <span class="mono">PRIVATEEMAIL_SMTP_PASS</span> secret on the server. Use "Send a test" on a
+        shared-sender template to confirm it works.
+      </p>
+      <div class="btn-row">
+        <button id="setHandoffSave" class="sm">Save</button>
+        <span id="setHandoffMsg" class="muted"></span>
+      </div>
+    </div>
+  </section>

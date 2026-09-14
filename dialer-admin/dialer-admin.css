@@ -1,0 +1,136 @@
+/* v675: Dialer Admin inside the staff portal. Generated once from
+   dialer/admin.html (tools/convert-dialer-admin.py); now the source. Every
+   rule is confined to #daHost. */
+#daHost{font-family:var(--sans);color:var(--text);font-size:14px}
+#daHost label{text-transform:none;letter-spacing:normal;margin:0;font-family:inherit}
+#daHost input,#daHost select{width:auto;font-size:13.5px}
+#daHost .msg{font-family:inherit}
+#daHost table{width:100%}
+#daHost{
+  --bg:#10131A; --card:#171B23; --card-hover:#1D222C; --inset:#0C0F14;
+  --border:#262D39; --border-light:#323A48;
+  --text:#F2EDE6; --text-2:#A79E8E; --text-dim:#726B5C; --num:#F2EDE6;
+  --focus:#4EA8FF; --focus-dim:#1B3A57; --away:#F5A623; --away-dim:#4A3818;
+  --idle:#2A313C; --danger:#E5484D; --danger-dim:#3A1518;
+  --good:#3DD68C; --good-dim:#173A2B;
+  --gold:#C9A66B; --gold-soft:#E4C88F; --gold-dim:#3A3020;
+  
+  --info:#4EA8FF; --info-dim:#1B3A57; --teal:#2DD4BF; --teal-dim:#0F3D38;
+  --brand-grad:linear-gradient(90deg, var(--info), var(--teal));
+  --mono:'JetBrains Mono', 'IBM Plex Mono', ui-monospace, monospace;
+  --sans:'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+:root[data-theme="light"] #daHost{
+  --bg:#F6F3EE; --card:#FFFFFF; --card-hover:#F3EEE6; --inset:#EFEAE0;
+  --border:#E7E0D2; --border-light:#D8CDB8;
+  --text:#241E14; --text-2:#6E6455; --text-dim:#9C9280; --num:#241E14;
+  --focus:#1E7FD1; --focus-dim:#DCEBFA; --away:#D9720A; --away-dim:#FBEBD2;
+  --idle:#E2E5EA; --danger:#C3272C; --danger-dim:#F8D7D7;
+  --good:#1A9A5C; --good-dim:#DCF5E8;
+  --gold:#9C7A3C; --gold-soft:#B8935A; --gold-dim:#F3E9D2;
+  --info:#1E7FD1; --info-dim:#DCEBFA; --teal:#0E9488; --teal-dim:#D7F5F1;
+  --brand-grad:linear-gradient(90deg, var(--info), var(--teal));
+}
+#daHost, #daHost *{box-sizing:border-box;margin:0;padding:0}
+#daHost{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:14px}
+#daHost .app-title{font-size:19px;font-weight:800;letter-spacing:-.01em;color:var(--text)}
+@keyframes soChecking{from{opacity:0}to{opacity:1}}
+#daHost .panel{background:var(--card);border:1px solid var(--border);border-radius:12px;
+  padding:22px;margin-bottom:16px}
+#daHost .panel h2{font-family:var(--sans);font-size:13.5px;letter-spacing:-.1px;
+  color:var(--text);margin:0 0 6px;font-weight:700}
+#daHost .panel p.hint{margin:0 0 16px;color:var(--text-2);font-size:13px;line-height:1.6;max-width:74ch}
+#daHost button{border:1px solid var(--border-light);border-radius:999px;padding:9px 17px;font-weight:600;
+  font-size:13px;cursor:pointer;font-family:var(--sans);background:var(--inset);color:var(--text)}
+#daHost button:hover:not(:disabled){background:var(--card-hover)}
+#daHost button:disabled{opacity:.42;cursor:not-allowed}
+#daHost button.primary{background:var(--focus);border-color:var(--focus);color:#04212E;
+  box-shadow:0 8px 22px -8px rgba(78,168,255,.45)}
+#daHost button.primary:hover:not(:disabled){box-shadow:0 10px 26px -6px rgba(78,168,255,.55);background:var(--focus)}
+#daHost button.sm{padding:5px 12px;font-size:11.5px}
+#daHost input, #daHost select, #daHost textarea{background:var(--inset);border:1px solid var(--border-light);color:var(--text);
+  padding:9px 12px;border-radius:8px;font-size:13.5px;font-family:var(--sans)}
+#daHost input:focus, #daHost select:focus, #daHost textarea:focus{outline:none;border-color:var(--focus)}
+#daHost textarea{width:100%;resize:vertical;font-family:var(--mono);font-size:12px;line-height:1.6}
+#daHost input[type=checkbox]{width:16px;height:16px;accent-color:var(--focus);padding:0}
+#daHost table{border-collapse:collapse;width:100%;font-size:13px}
+#daHost th{text-align:left;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-dim);padding:10px 12px;border-bottom:1px solid var(--border);
+  background:var(--inset);white-space:nowrap;position:sticky;top:0;z-index:1}
+#daHost td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
+#daHost tbody tr:nth-child(even){background:rgba(127,140,160,0.05)}
+#daHost td.num, #daHost th.num{text-align:right;font-variant-numeric:tabular-nums}
+#daHost .mono{font-family:var(--mono)}
+#daHost .scroll{overflow:auto;max-height:440px;border:1px solid var(--border);border-radius:10px}
+#daHost .tag{display:inline-block;font-family:var(--mono);font-size:9.5px;font-weight:600;
+  text-transform:uppercase;letter-spacing:.6px;padding:3px 9px;border-radius:999px;
+  border:1px solid currentColor}
+#daHost .t-active{color:var(--good)}
+#daHost .t-resting{color:var(--away)}
+#daHost .t-quarantined{color:var(--danger)}
+#daHost .t-retired{color:var(--text-dim)}
+#daHost .gap{color:var(--danger);font-weight:700}
+#daHost .row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:14px}
+#daHost .field{display:flex;flex-direction:column;gap:6px}
+#daHost .field label{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-dim);font-weight:600}
+#daHost .msg{padding:11px 14px;border-radius:10px;font-size:13px;margin:14px 0;
+  border:1px solid transparent;line-height:1.6}
+#daHost .msg.err{background:var(--danger-dim);color:var(--danger);border-color:var(--danger)}
+#daHost .msg.ok{background:var(--focus-dim);color:var(--focus);border-color:var(--focus)}
+#daHost .msg.warn{background:var(--gold-dim);color:var(--gold);border-color:var(--gold)}
+#daHost .hide{display:none!important}
+#daHost .filterbar{display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  padding:14px 0 4px;border-top:1px solid var(--border)}
+#daHost .filterbar:first-child{border-top:none;padding-top:0}
+#daHost .filterbar select, #daHost .filterbar input[type=date]{padding:7px 10px;font-size:12.5px;
+  max-width:190px}
+#daHost .fb-label{font-family:var(--mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:1px;color:var(--text-dim)}
+#daHost .rule-card{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--card)}
+#daHost .rule-card.off{opacity:.6}
+#daHost .rule-top{display:flex;gap:10px;align-items:center;margin-bottom:8px}
+#daHost .rule-line{font-size:13px;color:var(--text-2);line-height:2.3}
+#daHost .rule-line input[type=number]{width:74px;padding:4px 8px;margin:0 3px}
+#daHost .rule-line select{padding:4px 8px;margin:0 3px;max-width:340px}
+#daHost .rule-codes summary{cursor:pointer;font-size:13px;color:var(--text-2);margin-bottom:4px}
+#daHost .rule-codegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:2px 12px;
+  padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--inset);margin:4px 0 8px}
+#daHost .rule-codegrid label{display:flex;align-items:center;gap:6px;font-size:12.5px}
+#daHost .tpl-card{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--card)}
+#daHost .tpl-card textarea{width:100%;font-family:var(--sans)}
+#daHost .fb-check{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);
+  font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-2);cursor:pointer}
+#daHost .fb-check input{width:15px;height:15px;accent-color:var(--focus)}
+#daHost .result-count{font-family:var(--mono);font-size:11px;color:var(--text);background:var(--inset);
+  border:1px solid var(--border-light);border-radius:999px;padding:6px 13px;white-space:nowrap}
+#daHost .ms{position:relative}
+#daHost .ms-btn{font-family:var(--mono);font-size:11px;background:var(--inset);color:var(--text);
+  border:1px solid var(--border-light);border-radius:999px;padding:7px 14px;white-space:nowrap}
+#daHost .ms-btn::after{content:' ▾';opacity:.6}
+#daHost .ms-panel{position:absolute;top:calc(100% + 6px);left:0;z-index:60;width:250px;
+  max-height:340px;overflow-y:auto;background:var(--card);border:1px solid var(--border-light);
+  border-radius:10px;box-shadow:0 16px 40px rgba(0,0,0,.35)}
+#daHost .ms-actions{display:flex;gap:6px;padding:9px;border-bottom:1px solid var(--border);
+  position:sticky;top:0;background:var(--card);z-index:1}
+#daHost .ms-group{font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:1px;
+  color:var(--text-dim);padding:10px 11px 5px;border-top:1px solid var(--border)}
+#daHost .ms-group:first-child{border-top:none}
+#daHost .ms-item{display:flex;align-items:center;gap:9px;padding:6px 11px;font-size:12.5px;
+  color:var(--text);cursor:pointer}
+#daHost .ms-item:hover{background:var(--card-hover)}
+#daHost .ms-item input{width:15px;height:15px;accent-color:var(--focus);flex-shrink:0}
+#daHost .inline-player{display:flex;align-items:center;gap:8px}
+#daHost .inline-player audio{height:34px;min-width:230px}
+#daHost .ip-close{background:transparent;border:none;color:var(--danger);font-size:17px;
+  line-height:1;padding:2px 5px;border-radius:6px;cursor:pointer}
+#daHost .ip-close:hover{background:var(--danger-dim)}
+#daHost .disp-table tr.d-dnc td, #daHost .disp-table tr.d-invalid td{background:var(--danger-dim)}
+#daHost .disp-table tr.d-converted td{background:var(--good-dim)}
+#daHost .disp-table tr.d-callback td, #daHost .disp-table tr.d-contacted td{background:var(--focus-dim)}
+#daHost .disp-table td:first-child{font-weight:600}
+#daHost .stat{display:inline-block;margin-right:26px}
+#daHost .stat b{display:block;font-family:var(--mono);font-size:23px;font-variant-numeric:tabular-nums;
+  letter-spacing:-.02em;color:var(--num)}
+#daHost .stat span{font-family:var(--mono);font-size:10px;text-transform:uppercase;
+  letter-spacing:.8px;color:var(--text-dim)}
