@@ -57,12 +57,27 @@
         is one of the strongest "don't answer" signals there is — so the biggest gaps are
         the numbers worth buying first.
       </p>
+      <div class="fb-label" style="margin:4px 0 6px">How many numbers you need</div>
+      <p class="hint" style="margin:0 0 10px">
+        Reps dialing &times; dials per rep per day &divide; dials allowed per number per day.
+        Sales numbers (a number assigned to one rep) are left out on both sides: that rep
+        dials from their own number, so neither they nor their number count toward the shared pool.
+      </p>
+      <div class="row" style="align-items:flex-end">
+        <div class="field"><label for="covDials">Dials per rep per day</label>
+          <input type="number" id="covDials" min="1" max="2000" value="350" style="width:120px"></div>
+        <div class="field"><label for="covCap">Dials per number per day</label>
+          <input type="number" id="covCap" min="1" max="500" value="80" style="width:120px"></div>
+        <span id="covPlanMsg" class="muted"></span>
+      </div>
+      <div id="covPlan" style="margin-bottom:14px"></div>
+      <div class="fb-label" style="margin:4px 0 6px">Where the queue is</div>
       <div id="covSummary" style="margin-bottom:12px"></div>
       <div class="scroll">
         <table>
           <thead><tr><th>Area code</th><th class="num">Queued contacts</th>
-            <th class="num">DIDs owned</th><th></th></tr></thead>
-          <tbody id="covRows"><tr><td colspan="4">Loading…</td></tr></tbody>
+            <th class="num">DIDs owned</th><th class="num">Needed</th><th></th></tr></thead>
+          <tbody id="covRows"><tr><td colspan="5">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -244,6 +259,8 @@
           <input id="cName" placeholder="Warm callbacks — March"></div>
         <div class="field"><label for="cMode">Dial mode</label>
           <select id="cMode"><option value="preview">Preview</option><option value="power">Power</option></select></div>
+        <div class="field" style="min-width:200px"><label for="cClient">Client</label>
+          <select id="cClient"><option value="">No client (internal)</option></select></div>
         <div class="field"><label for="cStart">Window opens</label>
           <input type="time" id="cStart" value="09:00"></div>
         <div class="field"><label for="cEnd">Window closes</label>
@@ -259,15 +276,16 @@
     <div class="panel">
       <h2>Campaigns</h2>
       <p class="hint">
-        Edit opens the queue's limits and the agents assigned to it. Assignment is
+        Edit opens the queue's client, autopilot, limits and the agents assigned to it. Assignment is
         a permission, not a filter: an agent who is not on a queue cannot read its
-        contacts at all, whatever their screen shows them.
+        contacts at all, whatever their screen shows them. Linking a client is internal only &mdash;
+        the client is never notified, and leads from the dialer never send the client an alert.
       </p>
       <div class="scroll">
         <table>
-          <thead><tr><th>Name</th><th>Mode</th><th>Window</th><th>Status</th>
+          <thead><tr><th>Name</th><th>Client</th><th>Mode</th><th>Window</th><th>Status</th><th>Autopilot</th>
             <th class="num">Queued</th><th class="num">Agents</th><th></th></tr></thead>
-          <tbody id="campRows"><tr><td colspan="7">Loading…</td></tr></tbody>
+          <tbody id="campRows"><tr><td colspan="9">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -620,7 +638,7 @@
       <div class="da-convo-bar">
         <input id="cvSearch" type="search" placeholder="Search name, number, message…" style="flex:1;min-width:200px">
         <select id="cvRep"><option value="">All reps</option></select>
-        <select id="cvChannel"><option value="">All channels</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option></select>
+        <select id="cvChannel"><option value="">All channels</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="voicemail">Voicemail</option></select>
         <select id="cvView">
           <option value="">Everything</option>
           <option value="reply">Needs a reply</option>

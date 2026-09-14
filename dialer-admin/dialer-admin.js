@@ -60,7 +60,7 @@ let canReview = false;      // may look, and nothing else
 const DA_WRITE_IDS = {
   numbers: ['searchBtn', 'orderBtn', 'syncBtn', 'searchNpa', 'searchLimit'],
   lists: ['impBtn', 'impCampaign', 'impName', 'impFile', 'impCsv', 'impScrubbed', 'impScrubDate'],
-  campaigns: ['cCreate', 'cName', 'cMode', 'cStart', 'cEnd'],
+  campaigns: ['cCreate', 'cName', 'cMode', 'cClient', 'cStart', 'cEnd'],
   inbound: ['qCreate', 'qName', 'qOpen', 'qClose'],
   contacts: ['ctAdd', 'ctASave'],
   inbox: ['inboxBody', 'inboxSend'],
@@ -182,6 +182,9 @@ async function showSection(path) {
   if (pane === 'pipeline') loadPipeline();    // v595: fresh each time it is opened
   if (pane === 'settings') loadSettingsTab(); // v648
   if (pane === 'history') initHistory();      // v677
+  // v679: boot() draws this table before the section's edit permission is
+  // known, so it came up with no Edit/Pause buttons for anyone.
+  if (pane === 'campaigns') loadCampaigns();
   if (pane === 'lists' && first) loadLists();
   if (pane === 'numbers' && first) { loadCoverage(); loadPool(); }
 }
@@ -973,9 +976,120 @@ $('resGo').onclick = researchNumber;
 $('resNum').addEventListener('keydown', (e) => { if (e.key === 'Enter') researchNumber(); });
 
 // -------------------------------------------------------------- coverage --
+// v679: how many numbers the floor actually needs. Reps dialing x dials per
+// rep per day / dials allowed per number per day. A rep with a number of their
+// own (a sales number) dials from it, so that rep and that number are both
+// left out of the shared pool on either side of the sum.
+const COV_DEFAULTS = { dials_per_rep: 350, dials_per_number: 80 };
+let covFacts = null;
+let covPlanLoaded = false;
+let covSaveTimer = null;
+
+async function loadCoverageFacts() {
+  const [agentsRes, didsRes, settingRes] = await Promise.all([
+    sb.from('dialer_campaign_agents').select('agent_id, campaign_id').eq('is_active', true),
+    sb.from('dialer_dids').select('status, assigned_to').neq('status', 'retired'),
+    covPlanLoaded ? Promise.resolve({ data: null })
+      : sb.from('dialer_settings').select('value').eq('key', 'coverage_plan').maybeSingle(),
+  ]);
+  if (agentsRes.error || didsRes.error) {
+    covFacts = { error: (agentsRes.error || didsRes.error).message };
+    return;
+  }
+  if (!covPlanLoaded) {
+    const v = settingRes.data?.value || {};
+    $('covDials').value = Number(v.dials_per_rep) || COV_DEFAULTS.dials_per_rep;
+    $('covCap').value = Number(v.dials_per_number) || COV_DEFAULTS.dials_per_number;
+    covPlanLoaded = true;
+  }
+  const live = new Set(campaigns.filter((c) => c.status === 'active').map((c) => c.id));
+  const dids = didsRes.data || [];
+  const salesReps = new Set(dids.filter((d) => d.assigned_to).map((d) => d.assigned_to));
+  const dialing = new Set((agentsRes.data || []).filter((a) => live.has(a.campaign_id)).map((a) => a.agent_id));
+  covFacts = {
+    reps: [...dialing].filter((id) => !salesReps.has(id)).length,
+    salesRepsLeftOut: [...dialing].filter((id) => salesReps.has(id)).length,
+    active: dids.filter((d) => !d.assigned_to && d.status === 'active').length,
+    resting: dids.filter((d) => !d.assigned_to && d.status === 'resting').length,
+    salesNumbers: dids.filter((d) => d.assigned_to).length,
+  };
+}
+
+function coveragePlan() {
+  if (!covFacts || covFacts.error) return null;
+  const perRep = Math.max(1, Number($('covDials').value) || COV_DEFAULTS.dials_per_rep);
+  const perNumber = Math.max(1, Number($('covCap').value) || COV_DEFAULTS.dials_per_number);
+  const dialsPerDay = covFacts.reps * perRep;
+  const needed = Math.ceil(dialsPerDay / perNumber);
+  return { ...covFacts, perRep, perNumber, dialsPerDay, needed, short: Math.max(0, needed - covFacts.active) };
+}
+
+function renderCoveragePlan() {
+  if (covFacts?.error) { $('covPlan').innerHTML = `<p class="hint">${esc(covFacts.error)}</p>`; return; }
+  const p = coveragePlan();
+  if (!p) return;
+  const stat = (v, label, gap) => `<div class="stat"><b class="${gap ? 'gap' : ''}">${Number(v).toLocaleString()}</b><span>${label}</span></div>`;
+  $('covPlan').innerHTML =
+    stat(p.reps, 'Reps dialing')
+    + stat(p.dialsPerDay, 'Dials per day')
+    + stat(p.needed, 'Numbers needed')
+    + stat(p.active, 'Active numbers you have')
+    + stat(p.resting, 'Resting')
+    + stat(p.short, 'Short by', p.short > 0)
+    + `<p class="hint" style="margin:8px 0 0">${p.reps.toLocaleString()} rep${p.reps === 1 ? '' : 's'} on active campaigns
+      &times; ${p.perRep.toLocaleString()} dials &divide; ${p.perNumber.toLocaleString()} per number
+      = <strong>${p.needed.toLocaleString()} numbers</strong>.
+      Left out: ${p.salesNumbers} sales number${p.salesNumbers === 1 ? '' : 's'}
+      and ${p.salesRepsLeftOut} rep${p.salesRepsLeftOut === 1 ? '' : 's'} who dial${p.salesRepsLeftOut === 1 ? 's' : ''} from their own.
+      ${p.short > 0 ? `Buy about <strong>${p.short}</strong> more, spread over the area codes below.` : 'The pool covers this volume.'}
+      Resting numbers are not counted: they are off so they can recover.</p>`;
+}
+
+function saveCoveragePlan() {
+  renderCoveragePlan();
+  renderCoverageRows();
+  if (!canManage) return;
+  clearTimeout(covSaveTimer);
+  covSaveTimer = setTimeout(async () => {
+    const p = coveragePlan();
+    if (!p) return;
+    const { error } = await sb.from('dialer_settings').upsert({
+      key: 'coverage_plan', value: { dials_per_rep: p.perRep, dials_per_number: p.perNumber },
+      updated_by: meId, updated_at: new Date().toISOString(),
+    });
+    $('covPlanMsg').textContent = error ? `Not saved: ${error.message}` : 'Saved.';
+  }, 600);
+}
+$('covDials').addEventListener('input', saveCoveragePlan);
+$('covCap').addEventListener('input', saveCoveragePlan);
+
+let covRowsData = [];
+function renderCoverageRows() {
+  const p = coveragePlan();
+  const total = covRowsData.reduce((s, x) => s + Number(x.contacts), 0);
+  $('covRows').innerHTML = covRowsData.length
+    ? covRowsData.map((x) => {
+      // The day's numbers shared out by where the queue is.
+      const need = p && total ? Math.ceil(p.needed * Number(x.contacts) / total) : null;
+      return `<tr>
+        <td class="mono">${esc(x.area_code)}</td>
+        <td class="num">${Number(x.contacts).toLocaleString()}</td>
+        <td class="num ${Number(x.active_dids) === 0 ? 'gap' : ''}">${x.active_dids}</td>
+        <td class="num ${need !== null && need > Number(x.active_dids) ? 'gap' : ''}">${need === null ? '—' : need}</td>
+        <td><button class="sm" data-npa="${esc(x.area_code)}">Find numbers</button></td>
+      </tr>`;
+    }).join('')
+    : '<tr><td colspan="5">No dialable contacts queued yet.</td></tr>';
+
+  $('covRows').querySelectorAll('button[data-npa]').forEach((b) => {
+    b.onclick = () => { $('searchNpa').value = b.dataset.npa; $('searchBtn').click(); };
+  });
+}
+
 async function loadCoverage() {
-  const r = await callFn('dialer-pool', { action: 'coverage_gaps' });
-  if (!r?.ok) { $('covRows').innerHTML = `<tr><td colspan="4">${esc(r?.error || 'Failed')}</td></tr>`; return; }
+  const [r] = await Promise.all([callFn('dialer-pool', { action: 'coverage_gaps' }), loadCoverageFacts()]);
+  renderCoveragePlan();
+  if (!r?.ok) { $('covRows').innerHTML = `<tr><td colspan="5">${esc(r?.error || 'Failed')}</td></tr>`; return; }
   const s = r.summary || {};
   $('covSummary').innerHTML =
     `<div class="stat"><b>${s.area_codes ?? 0}</b><span>Area codes in queue</span></div>` +
@@ -983,18 +1097,8 @@ async function loadCoverage() {
     `<div class="stat"><b class="${s.uncovered ? 'gap' : ''}">${s.uncovered ?? 0}</b><span>No local DID</span></div>` +
     `<div class="stat"><b class="${s.contacts_without_local_did ? 'gap' : ''}">${(s.contacts_without_local_did ?? 0).toLocaleString()}</b><span>Contacts affected</span></div>`;
 
-  $('covRows').innerHTML = (r.rows || []).length
-    ? r.rows.map((x) => `<tr>
-        <td class="mono">${esc(x.area_code)}</td>
-        <td class="num">${Number(x.contacts).toLocaleString()}</td>
-        <td class="num ${Number(x.active_dids) === 0 ? 'gap' : ''}">${x.active_dids}</td>
-        <td><button class="sm" data-npa="${esc(x.area_code)}">Find numbers</button></td>
-      </tr>`).join('')
-    : '<tr><td colspan="4">No dialable contacts queued yet.</td></tr>';
-
-  $('covRows').querySelectorAll('button[data-npa]').forEach((b) => {
-    b.onclick = () => { $('searchNpa').value = b.dataset.npa; $('searchBtn').click(); };
-  });
+  covRowsData = r.rows || [];
+  renderCoverageRows();
 }
 
 // ---------------------------------------------------------------- search --
@@ -1161,14 +1265,41 @@ $('syncBtn').onclick = async () => {
 };
 
 // ------------------------------------------------------------- campaigns --
+// v679: the client a campaign works for. Internal only -- nothing is sent to
+// the client when a campaign is linked.
+let clients = [];
+let clientsLoaded = false;
+async function loadClients() {
+  if (clientsLoaded) return;
+  const { data } = await sb.from('client_accounts').select('id, full_name, company_name, is_active');
+  clients = (data || []).sort((a, b) => clientName(a).localeCompare(clientName(b)));
+  clientsLoaded = true;
+}
+function clientName(c) {
+  if (!c) return '';
+  return c.company_name && c.full_name ? `${c.company_name} (${c.full_name})` : (c.company_name || c.full_name || 'Client');
+}
+function clientOptions(selected) {
+  return '<option value="">No client (internal)</option>'
+    + clients.filter((c) => c.is_active !== false || c.id === selected)
+      .map((c) => `<option value="${esc(c.id)}"${c.id === selected ? ' selected' : ''}>${esc(clientName(c))}</option>`).join('')
+    // A role that cannot read clients still sees that a link exists.
+    + (selected && !clients.some((c) => c.id === selected) ? `<option value="${esc(selected)}" selected>Linked client</option>` : '');
+}
+
 async function loadCampaigns() {
-  const { data } = await sb.from('dialer_campaigns')
-    .select('id, name, dial_mode, status, calling_window_start, calling_window_end')
-    .neq('status', 'archived').order('name');
+  const [{ data }] = await Promise.all([
+    sb.from('dialer_campaigns')
+      .select('id, name, dial_mode, status, calling_window_start, calling_window_end, client_id, autopilot_enabled')
+      .neq('status', 'archived').order('name'),
+    loadClients(),
+  ]);
   campaigns = data || [];
   $('impCampaign').innerHTML = campaigns.map((c) =>
     `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
     || '<option value="">No campaigns yet</option>';
+  const keepClient = $('cClient').value;
+  $('cClient').innerHTML = clientOptions(keepClient);
 
   const counts = {};
   for (const c of campaigns) {
@@ -1189,9 +1320,13 @@ async function loadCampaigns() {
   $('campRows').innerHTML = campaigns.length
     ? campaigns.map((c) => `<tr data-row="${esc(c.id)}">
         <td>${esc(c.name)}</td>
+        <td>${c.client_id
+            ? esc(clientName(clients.find((x) => x.id === c.client_id)) || 'Linked client')
+            : '<span class="muted">—</span>'}</td>
         <td>${esc(c.dial_mode)}</td>
         <td class="mono">${esc(c.calling_window_start)}–${esc(c.calling_window_end)}</td>
         <td><span class="tag ${c.status === 'active' ? 't-active' : 't-resting'}">${esc(c.status)}</span></td>
+        <td><span class="tag ${c.autopilot_enabled ? 't-active' : 't-resting'}">${c.autopilot_enabled ? 'on' : 'off'}</span></td>
         <td class="num">${counts[c.id].toLocaleString()}</td>
         <td class="num">${agentCounts[c.id] ? agentCounts[c.id]
             : '<span style="color:var(--away)">0</span>'}</td>
@@ -1200,7 +1335,7 @@ async function loadCampaigns() {
           <button class="sm" data-camp="${esc(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">
           ${c.status === 'active' ? 'Pause' : 'Activate'}</button>` : ''}</td>
       </tr>`).join('')
-    : '<tr><td colspan="7">No campaigns yet.</td></tr>';
+    : '<tr><td colspan="9">No campaigns yet.</td></tr>';
 
   $('campRows').querySelectorAll('button[data-camp]').forEach((b) => {
     b.onclick = async () => {
@@ -1285,7 +1420,7 @@ async function toggleCampaignEditor(id) {
     .select('id, name, dial_mode, status, calling_window_start, calling_window_end, '
           + 'calling_days, max_attempts, min_hours_between_attempts, ring_seconds, '
           + 'attempts_per_number, recycle_enabled, recycle_after_days, max_recycles, '
-          + 'fallback_timezone, '
+          + 'fallback_timezone, client_id, autopilot_enabled, '
           + 'amd_enabled, recording_enabled, script, sms_fallback_enabled, sms_fallback_template')
     .eq('id', id).maybeSingle();
   if (!c) return;
@@ -1293,9 +1428,24 @@ async function toggleCampaignEditor(id) {
   const tr = document.createElement('tr');
   tr.dataset.editor = id;
   const td = document.createElement('td');
-  td.colSpan = 7;
+  td.colSpan = 9;
   td.style.cssText = 'background:var(--inset);padding:18px';
   td.innerHTML = `
+    <div class="row" style="align-items:flex-end">
+      <div class="field" style="min-width:280px"><label>Client</label>
+        <select data-f="client_id">${clientOptions(c.client_id)}</select></div>
+      <label style="display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:9px">
+        <input type="checkbox" data-f="autopilot_enabled"${c.autopilot_enabled ? ' checked' : ''}> Autopilot</label>
+    </div>
+    <p class="hint" style="margin:0 0 14px">
+      <strong>Client</strong> is an internal link: the client is not told, and leads from the dialer
+      never send the client an alert.
+      <strong>Autopilot</strong>: every dial goes out from the number in your inventory nearest to the
+      number being called &mdash; the same area code first, otherwise the closest one &mdash; spread across
+      equally close numbers. Each morning it also looks after the numbers this campaign dials from: a number
+      whose answer rate collapses is taken out, one that has worked 21 days is rested, and rested numbers come
+      back when the pool runs thin. A rep's own (sales) number is never touched.
+    </p>
     <div class="row">
       <div class="field"><label>Dial mode</label>
         <select data-f="dial_mode">
@@ -1544,6 +1694,8 @@ async function saveCampaign(id, td, tr) {
   const val = (k) => td.querySelector(`[data-f="${k}"]`);
 
   const patch = {
+    client_id: val('client_id').value || null,          // v679
+    autopilot_enabled: val('autopilot_enabled').checked, // v679
     dial_mode: val('dial_mode').value,
     calling_window_start: val('calling_window_start').value,
     calling_window_end: val('calling_window_end').value,
@@ -2858,6 +3010,7 @@ $('cCreate').onclick = async () => {
   const { error } = await sb.from('dialer_campaigns').insert({
     name, dial_mode: $('cMode').value, status: 'active',
     calling_window_start: $('cStart').value, calling_window_end: $('cEnd').value,
+    client_id: $('cClient').value || null,
   });
   if (error) { say($('cMsg'), error.message, 'err'); return; }
   say($('cMsg'), 'Created.', 'ok');
@@ -2895,16 +3048,89 @@ async function loadLists() {
         <td style="white-space:nowrap">${canManage ? (l.blocked
             ? `<button class="sm" data-val="${esc(l.id)}" data-tz="1">Resolve ${l.blocked.toLocaleString()} time zones</button>`
             : `<button class="sm" data-val="${esc(l.id)}">Carrier check</button>`)
-            + ` <button class="sm" data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button>` : ''}</td>
+            + ` <button class="sm" data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button> ` : ''}<button class="sm" data-lsdl="${esc(l.id)}" data-lsname="${esc(l.name)}">Download</button></td>
       </tr>`).join('')
     : '<tr><td colspan="7">No lists yet.</td></tr>';
 
   $('listRows').querySelectorAll('button[data-val]').forEach((b) => {
     b.onclick = () => validateList(b.dataset.val, b, b.dataset.tz === '1');
   });
+  $('listRows').querySelectorAll('button[data-lsdl]').forEach((b) => {
+    b.onclick = () => downloadList(b.dataset.lsdl, b.dataset.lsname, b);
+  });
   $('listRows').querySelectorAll('button[data-rq]').forEach((b) => {
     b.onclick = () => openListRequeue(b.dataset.rq, b.dataset.rqname);
   });
+}
+
+// ------------------------------------------------------ v679: download a list --
+// Every record on the list, every number on each record, and the fields that
+// were mapped at import -- the whole list as it now stands, statuses included.
+async function downloadList(listId, name, btn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+  try {
+    const cols = 'id, contact_name, first_name, last_name, company, phone_e164, email, address, city, state, zip, '
+      + 'timezone, status, retired_reason, attempt_count, last_outcome, last_attempt_at, next_attempt_at, '
+      + 'recycle_count, readymode_dnc, readymode_status, contact_fields, created_at';
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await sb.from('dialer_contacts').select(cols)
+        .eq('list_id', listId).order('created_at').order('id').range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    if (!rows.length) { alert('That list has no records to download.'); return; }
+
+    const phones = {};
+    for (let i = 0; i < rows.length; i += 200) {
+      const { data, error } = await sb.from('dialer_contact_phones')
+        .select('contact_id, rank, phone_e164, status')
+        .in('contact_id', rows.slice(i, i + 200).map((r) => r.id)).order('rank');
+      if (error) throw error;
+      (data || []).forEach((p) => { (phones[p.contact_id] = phones[p.contact_id] || []).push(p); });
+    }
+    const numbersOf = (r) => phones[r.id]?.length ? phones[r.id]
+      : (r.phone_e164 ? [{ phone_e164: r.phone_e164, status: '' }] : []);
+    const maxPh = Math.max(1, ...rows.map((r) => numbersOf(r).length));
+    const extra = [...new Set(rows.flatMap((r) => Object.keys(r.contact_fields || {})))].sort();
+    const pretty = (s) => String(s || '').replace(/_/g, ' ');
+
+    const head = ['Name', 'First name', 'Last name', 'Company'];
+    for (let i = 1; i <= maxPh; i++) head.push(`Phone ${i}`, `Phone ${i} status`);
+    head.push('Email', 'Address', 'City', 'State', 'Zip', 'Time zone', 'Status', 'Retired reason', 'Attempts',
+      'Last outcome', 'Last attempt', 'Next attempt', 'Recycles', 'ReadyMode DNC', 'ReadyMode status', 'Loaded');
+    extra.forEach((k) => head.push(k));
+
+    const cell = (v) => {
+      const s = v === null || v === undefined ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+      return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const lines = [head.map(cell).join(',')].concat(rows.map((r) => {
+      const out = [r.contact_name || [r.first_name, r.last_name].filter(Boolean).join(' '), r.first_name, r.last_name, r.company];
+      const ph = numbersOf(r);
+      for (let i = 0; i < maxPh; i++) out.push(ph[i]?.phone_e164 || '', pretty(ph[i]?.status));
+      out.push(r.email, r.address, r.city, r.state, r.zip, r.timezone, r.status, pretty(r.retired_reason), r.attempt_count,
+        pretty(r.last_outcome), r.last_attempt_at, r.next_attempt_at, r.recycle_count, r.readymode_dnc, r.readymode_status,
+        r.created_at);
+      extra.forEach((k) => out.push((r.contact_fields || {})[k]));
+      return out.map(cell).join(',');
+    }));
+    // The BOM makes Excel read accented names as UTF-8 instead of mangling them.
+    const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${String(name || 'list').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'list'}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) {
+    alert(`Could not download that list: ${e.message || e}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 }
 
 // ------------------------------------------------------- v677: requeue a list --
@@ -3685,7 +3911,7 @@ function renderInbox() {
       </div>
       <div class="cv-last">${r.last_direction === 'inbound' ? '' : '<b>Team:</b> '}${esc(r.last_body || '')}</div>
       <div class="cv-meta">
-        ${(r.channels || []).map((c) => `<span class="chip">${c === 'whatsapp' ? 'WhatsApp' : c === 'email' ? 'Email' : 'SMS'}</span>`).join('')}
+        ${(r.channels || []).map((c) => `<span class="chip">${c === 'whatsapp' ? 'WhatsApp' : c === 'email' ? 'Email' : c === 'voicemail' ? 'Voicemail' : 'SMS'}</span>`).join('')}
         ${Number(r.calls) ? `<span class="chip">${r.calls} call${Number(r.calls) === 1 ? '' : 's'}</span>` : ''}
         ${r.on_dnc ? '<span class="chip bad">DNC</span>' : ''}
         ${r.last_direction === 'inbound' ? '<span class="chip good">Needs reply</span>' : ''}
@@ -3709,11 +3935,27 @@ async function fetchTimeline(contactId, phone) {
     if (error) throw error;
     return data || [];
   }
-  const { data, error } = await sb.rpc('dialer_sms_thread', { p_phone: phone });
-  if (error) throw error;
-  return (data || []).map((m) => ({
+  // v679: not a dialer contact -- still show its calls, which is where a
+  // voicemail left on a rep's own line lives. Two .eq() queries rather than
+  // one .or(), because a literal '+' in an or() filter gets mangled.
+  const callCols = 'id, created_at, direction, disposition, talk_seconds, answered_at, left_voicemail, recording_id, recording_path, error, agent_id';
+  const [sms, outC, inC] = await Promise.all([
+    sb.rpc('dialer_sms_thread', { p_phone: phone }),
+    sb.from('dialer_attempts').select(callCols).eq('to_number', phone).order('created_at', { ascending: false }).limit(50),
+    sb.from('dialer_attempts').select(callCols).eq('from_number', phone).order('created_at', { ascending: false }).limit(50),
+  ]);
+  if (sms.error) throw sms.error;
+  const calls = new Map();
+  [...(outC.data || []), ...(inC.data || [])].forEach((a) => calls.set(a.id, a));
+  return (sms.data || []).map((m) => ({
     kind: 'sms', at: m.message_at, direction: m.direction, body: m.body,
-    actor: m.agent_name, meta: { provider: m.provider } }));
+    actor: m.agent_name, meta: { provider: m.provider } }))
+    .concat([...calls.values()].map((a) => ({
+      kind: 'call', at: a.created_at, direction: a.direction,
+      title: a.disposition ? String(a.disposition).replace(/_/g, ' ') : (a.answered_at ? 'call' : 'no answer'),
+      body: a.error || null, actor: null, ref_id: a.id,
+      meta: { talk_seconds: a.talk_seconds, left_voicemail: !!a.left_voicemail,
+              has_recording: !!(a.recording_id || a.recording_path), answered: !!a.answered_at } })));
 }
 
 function timelineHtml(items, kind, newestFirst) {
