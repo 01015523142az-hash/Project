@@ -10657,6 +10657,7 @@ async function initChatWidget(){
   handleCallbackHash();   // v702: a missed-call notification opened from the dialer
   initPushToggle();
   initVoiceCallSignaling();
+  setTimeout(() => voiceResumeSavedCall(), 1500);   // v707: a call this tab was on before a refresh
   initChatTypingSignaling();
   chatStartTypingSweep();
   chatUpdateMyAvatarButton();
@@ -15638,6 +15639,250 @@ $('callAddBtn').addEventListener('click', () => {
 
 
 
+// ---------------------------------------------------------------------------
+// v707 ("when the page is refreshed or the internet drops and comes back, the
+// call should reconnect instead of calling again"). A 1:1 call used to END
+// the moment its connection went 'failed', and a refresh simply lost it --
+// the only way back was to ring again.
+//
+// Now a live call is remembered in this TAB (sessionStorage) for a minute,
+// and the connection is rebuilt instead of the call being dropped:
+//   - network blip: both sides see the connection go 'disconnected' /
+//     'failed' and show "Reconnecting…". ONE side re-offers -- whoever
+//     placed the call -- so the two never collide; it repeats every 3 s
+//     until the other side answers (its realtime socket may still be down).
+//   - refresh: the reloaded tab gets the microphone back and re-offers
+//     itself. The other side answers it without ringing.
+// A reconnect is a fresh RTCPeerConnection on the same microphone stream,
+// exchanged as 'rejoin-request' / 'rejoin-answer', with ICE candidates tagged
+// by the reconnect's id so a late candidate from the dead connection is
+// never fed to the new one. If both sides re-offer at once the smaller id
+// leads. The attempt gives up after VOICE_REJOIN_WINDOW_MS, and sooner if the
+// voice_calls row says the other side hung up while we could not hear it.
+// Pages from before v707 ignore these messages (the call then ends as it
+// always did). "Add to call" legs are not restored -- only the 1:1 call.
+const VOICE_REJOIN_WINDOW_MS = 60000;
+const VOICE_SAVED_CALL_KEY = 'pt.activeCall';
+function voiceSaveCallForRejoin(){
+  const st = voiceCallState;
+  if(!st || st.status !== 'answered' || !st.callRowId || !st.peerId) return;
+  try{
+    sessionStorage.setItem(VOICE_SAVED_CALL_KEY, JSON.stringify({
+      callRowId: st.callRowId, peerId: st.peerId, peerName: st.peerName, role: st.role,
+      isClientCall: !!st.isClientCall, startedAt: st.startedAt || Date.now(),
+      groupId: st.groupId || null, savedAt: Date.now(),
+    }));
+  }catch(e){ /* private mode: no rejoin after a refresh, nothing else lost */ }
+}
+function voiceReadSavedCall(){
+  try{
+    const saved = JSON.parse(sessionStorage.getItem(VOICE_SAVED_CALL_KEY) || 'null');
+    if(!saved || !saved.callRowId || !saved.peerId) return null;
+    if(Date.now() - (saved.savedAt || 0) > VOICE_REJOIN_WINDOW_MS){ sessionStorage.removeItem(VOICE_SAVED_CALL_KEY); return null; }
+    return saved;
+  }catch(e){ return null; }
+}
+function voiceClearSavedCall(){ try{ sessionStorage.removeItem(VOICE_SAVED_CALL_KEY); }catch(e){ /* nothing to clear */ } }
+function voiceMarkLive(state){
+  voiceSaveCallForRejoin();
+  clearInterval(state.saveTimer);
+  state.saveTimer = setInterval(voiceSaveCallForRejoin, 5000);
+}
+window.addEventListener('pagehide', voiceSaveCallForRejoin);
+window.addEventListener('online', () => {
+  const st = voiceCallState;
+  if(st && st.reconnecting && (st.role === 'caller' || st.restored)) voiceSendRejoin(st);
+});
+
+// Every 1:1 call's connection reports here (replacing "failed = end call").
+function voiceOnPcState(pc){
+  const state = voiceCallState;
+  console.log('[call] connection state:', pc.connectionState);
+  if(!state || state.pc !== pc) return;              // a connection already replaced
+  const cs = pc.connectionState;
+  if(cs === 'connected'){ if(state.reconnecting) voiceRejoinDone(state); return; }
+  if(state.status !== 'answered'){ if(cs === 'failed') endVoiceCall('failed', true); return; }   // never got going
+  if(cs === 'disconnected' || cs === 'failed'){
+    if(state.reconnecting){
+      // A reconnect that itself failed: the leading side simply tries again.
+      if(cs === 'failed' && (state.role === 'caller' || state.restored)){
+        setTimeout(() => { if(voiceCallState === state && state.reconnecting && state.pc === pc) voiceSendRejoin(state); }, 2000);
+      }
+      return;
+    }
+    voiceBeginReconnect(state, cs === 'failed' ? 0 : 3000);
+  }
+}
+
+function voiceBeginReconnect(state, kickDelay){
+  if(voiceCallState !== state || state.reconnecting) return;
+  const r = state.reconnecting = { since: Date.now() };
+  voiceShowActiveBar(state.peerName, 'Reconnecting…', true);
+  r.deadline = setTimeout(() => {
+    if(voiceCallState === state && state.reconnecting === r) endVoiceCall('ended', true);
+  }, VOICE_REJOIN_WINDOW_MS);
+  // They may have hung up while we could not hear it.
+  r.poll = setInterval(async () => {
+    if(voiceCallState !== state || state.reconnecting !== r || !state.callRowId) return;
+    const { data } = await sb.from('voice_calls').select('status').eq('id', state.callRowId).maybeSingle();
+    if(data && ['ended', 'failed', 'missed', 'declined'].includes(data.status) && voiceCallState === state){
+      endVoiceCall(state.role === 'caller' ? 'ended' : null, false);
+    }
+  }, 5000);
+  // One side re-offers: whoever placed the call. (A tab restored after a
+  // refresh leads instead -- voiceResumeSavedCall -- and passes null here.)
+  if(kickDelay != null && state.role === 'caller'){
+    r.kick = setTimeout(() => {
+      if(voiceCallState !== state || state.reconnecting !== r || !state.pc) return;
+      if(state.pc.connectionState === 'connected') voiceRejoinDone(state);
+      else voiceSendRejoin(state);
+    }, kickDelay);
+  }
+}
+function voiceClearReconnect(state){
+  if(!state) return;
+  const r = state.reconnecting;
+  if(r){ clearTimeout(r.deadline); clearInterval(r.poll); clearTimeout(r.kick); }
+  state.reconnecting = null;
+  clearInterval(state.rejoinRetry);
+}
+function voiceRejoinDone(state){
+  voiceClearReconnect(state);
+  state.rejoinId = null;
+  if(!state.durationInterval) voiceStartCallTimer();
+  else {
+    voicePlayConnectSound();
+    voiceShowActiveBar(state.peerName, '', false);
+    $('callScreenShareBtn').style.display = 'flex';
+  }
+  const track = state.localStream && state.localStream.getAudioTracks()[0];
+  if(track) $('callMuteBtn').classList.toggle('muted', !track.enabled);
+  voiceMarkLive(state);
+}
+
+async function voiceEnsureChannel(state){
+  if(state.outboundChannel) return;
+  state.outboundChannel = sb.channel('call-signal-' + state.peerId);
+  await voiceChannelReady(state.outboundChannel);
+}
+// A screen share does not survive a rebuilt connection; stop it cleanly.
+function voiceDropScreenShare(state){
+  if(state.screenStream) state.screenStream.getTracks().forEach(t => t.stop());
+  state.screenStream = null; state.hasScreenShare = false; state.videoSender = null; state.peerSharing = false;
+  try{ voiceUpdateScreenShareUI(); }catch(e){ /* no call UI yet */ }
+}
+async function voiceBuildPc(state, tag){
+  const channel = state.outboundChannel;
+  const iceServers = await voiceIceServers();
+  const pc = new RTCPeerConnection({ iceServers });
+  state.localStream.getTracks().forEach(track => pc.addTrack(track, state.localStream));
+  pc.ontrack = (e) => { $(e.track.kind === 'video' ? 'remoteCallVideo' : 'remoteCallAudio').srcObject = e.streams[0]; };
+  pc.onicecandidate = (e) => { if(e.candidate) voiceSend(channel, { type: 'ice-candidate', candidate: e.candidate, tag }); };
+  voiceAttachDiagnostics(pc);
+  pc.onconnectionstatechange = () => voiceOnPcState(pc);
+  return pc;
+}
+
+async function voiceSendRejoin(state){
+  if(voiceCallState !== state) return;
+  const rejoinId = voiceGenId();
+  // Set BEFORE the awaits below, so candidates for this reconnect that
+  // arrive meanwhile are queued rather than fed to the dead connection.
+  state.rejoinId = rejoinId;
+  state.pcTag = rejoinId;
+  state.remoteDescSet = false;
+  state.pendingCandidates = [];
+  await voiceEnsureChannel(state);
+  const old = state.pc;
+  voiceDropScreenShare(state);
+  const pc = await voiceBuildPc(state, rejoinId);
+  if(voiceCallState !== state || state.rejoinId !== rejoinId){ pc.close(); return; }
+  state.pc = pc;
+  if(old){ try{ old.close(); }catch(e){ /* already closed */ } }
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  const payload = { type: 'rejoin-request', callRowId: state.callRowId, rejoinId, sdp: offer };
+  voiceSend(state.outboundChannel, payload);
+  clearInterval(state.rejoinRetry);
+  state.rejoinRetry = setInterval(() => {
+    if(voiceCallState !== state || state.rejoinId !== rejoinId || state.remoteDescSet){ clearInterval(state.rejoinRetry); return; }
+    voiceSend(state.outboundChannel, payload);
+  }, 3000);
+}
+
+// After a refresh: the call as it was, minus the connection.
+let voiceRestoring = null;
+function voiceEnsureRestored(saved){
+  if(voiceCallState) return Promise.resolve(voiceCallState);
+  if(!voiceRestoring) voiceRestoring = voiceRestoreFromSaved(saved).finally(() => { voiceRestoring = null; });
+  return voiceRestoring;
+}
+async function voiceRestoreFromSaved(saved){
+  let localStream;
+  try{ localStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch(e){
+    voiceClearSavedCall();
+    alert('Your call dropped when the page reloaded, and the microphone is blocked, so it could not reconnect. Allow the microphone and call them again.');
+    return null;
+  }
+  if(voiceCallState){ localStream.getTracks().forEach(t => t.stop()); return voiceCallState; }
+  const outboundChannel = sb.channel('call-signal-' + saved.peerId);
+  await voiceChannelReady(outboundChannel);
+  voiceCallState = { role: saved.role, isClientCall: !!saved.isClientCall, peerId: saved.peerId, peerName: saved.peerName, pc: null, localStream, outboundChannel, callRowId: saved.callRowId, status: 'answered', remoteDescSet: false, pendingCandidates: [], videoSender: null, screenStream: null, hasScreenShare: false, peerSharing: false, videoPanelMinimized: false, videoPanelMaximized: false, groupId: saved.groupId || voiceGenId(), extraPeers: {}, startedAt: saved.startedAt, restored: true };
+  voiceBeginReconnect(voiceCallState, null);
+  return voiceCallState;
+}
+async function voiceResumeSavedCall(){
+  const saved = voiceReadSavedCall();
+  if(!saved || voiceCallState) return;
+  const state = await voiceEnsureRestored(saved);
+  if(!state || state.callRowId !== saved.callRowId) return;
+  // Still on? The other side may have hung up during the reload.
+  const { data } = await sb.from('voice_calls').select('status').eq('id', saved.callRowId).maybeSingle();
+  if(data && data.status !== 'answered'){ if(voiceCallState === state) endVoiceCall(null, false); return; }
+  if(voiceCallState === state && !state.answeredRejoinId && !state.rejoinId && !state.remoteDescSet) voiceSendRejoin(state);
+}
+
+async function voiceHandleRejoinRequest(msg){
+  let state = voiceCallState;
+  if(!state){
+    // Only the tab that HAD this call answers; my other open tabs stay out.
+    const saved = voiceReadSavedCall();
+    if(!saved || saved.callRowId !== msg.callRowId || saved.peerId !== msg.from) return;
+    state = await voiceEnsureRestored(saved);
+    if(!state) return;
+  }
+  if(state.callRowId !== msg.callRowId || state.peerId !== msg.from || state.status !== 'answered') return;
+  if(state.answeredRejoinId === msg.rejoinId){   // a repeat: our answer may have been lost
+    if(state.lastRejoinAnswer && state.outboundChannel) voiceSend(state.outboundChannel, state.lastRejoinAnswer);
+    return;
+  }
+  // Both sides re-offered at once: the smaller id leads, the other answers.
+  if(state.rejoinId && state.rejoinId !== msg.rejoinId && !state.remoteDescSet && state.rejoinId < msg.rejoinId) return;
+  clearInterval(state.rejoinRetry);
+  state.rejoinId = null;
+  state.pcTag = msg.rejoinId;
+  state.remoteDescSet = false;
+  state.pendingCandidates = (state.candidateStash && state.candidateStash[msg.rejoinId]) || [];
+  if(state.candidateStash) delete state.candidateStash[msg.rejoinId];
+  if(!state.reconnecting) voiceBeginReconnect(state, null);
+  await voiceEnsureChannel(state);
+  const old = state.pc;
+  voiceDropScreenShare(state);
+  const pc = await voiceBuildPc(state, msg.rejoinId);
+  if(voiceCallState !== state || state.pcTag !== msg.rejoinId){ pc.close(); return; }
+  state.pc = pc;
+  if(old){ try{ old.close(); }catch(e){ /* already closed */ } }
+  await pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+  state.remoteDescSet = true;
+  await voiceFlushPendingCandidates(state);
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  state.answeredRejoinId = msg.rejoinId;
+  state.lastRejoinAnswer = { type: 'rejoin-answer', callRowId: state.callRowId, rejoinId: msg.rejoinId, sdp: answer };
+  voiceSend(state.outboundChannel, state.lastRejoinAnswer);
+}
+
 // v700: WHY SOME CALLS NEVER RANG. The offer used to be sent exactly ONCE.
 // A callee whose realtime connection blinked at that moment (a laptop waking,
 // a background tab, a network hiccup), or who opened the portal a few seconds
@@ -15690,8 +15935,20 @@ async function handleVoiceSignal(msg){
     voiceCallState.startedAt = Date.now();
     if(voiceCallState.callRowId) sb.from('voice_calls').update({ status: 'answered', answered_at: new Date().toISOString() }).eq('id', voiceCallState.callRowId).then(() => {});
     voiceStartCallTimer();
+    voiceMarkLive(voiceCallState);   // v707
   } else if(msg.type === 'ice-candidate'){
     if(!voiceCallState || !msg.candidate) return;
+    // v707: candidates carry the connection they belong to. One for a
+    // reconnect this side has not built yet is kept for it; one from a
+    // connection already replaced is dropped.
+    const tag = msg.tag || 'o';
+    if(tag !== (voiceCallState.pcTag || 'o')){
+      if(tag !== 'o'){
+        const stash = voiceCallState.candidateStash || (voiceCallState.candidateStash = {});
+        (stash[tag] || (stash[tag] = [])).push(msg.candidate);
+      }
+      return;
+    }
     // Two reasons a candidate can arrive "too early" to apply directly:
     // (1) the callee hasn't clicked Accept yet, so there's no peer
     // connection at all — the caller's candidates usually finish
@@ -15709,6 +15966,15 @@ async function handleVoiceSignal(msg){
       console.log('[call] queuing ICE candidate — connection not ready yet');
       (voiceCallState.pendingCandidates || (voiceCallState.pendingCandidates = [])).push(msg.candidate);
     }
+  } else if(msg.type === 'rejoin-request'){   // v707
+    await voiceHandleRejoinRequest(msg);
+  } else if(msg.type === 'rejoin-answer'){      // v707
+    const st = voiceCallState;
+    if(!st || st.callRowId !== msg.callRowId || st.rejoinId !== msg.rejoinId || !st.pc || st.remoteDescSet) return;
+    clearInterval(st.rejoinRetry);
+    await st.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+    st.remoteDescSet = true;
+    await voiceFlushPendingCandidates(st);
   } else if(msg.type === 'renegotiate-offer'){
     // Every call starts audio-only, so a renegotiation is only ever sent
     // for one reason in this app: the peer is adding a video track to
@@ -15918,10 +16184,7 @@ async function startVoiceCall(calleeId, calleeName){
     }
   };
   voiceAttachDiagnostics(pc);
-  pc.onconnectionstatechange = () => {
-    console.log('[call] connection state:', pc.connectionState);
-    if(pc.connectionState === 'failed') endVoiceCall('failed', true);
-  };
+  pc.onconnectionstatechange = () => voiceOnPcState(pc);   // v707: reconnects instead of ending
 
   const { data: callRow } = await sb.from('voice_calls').insert({ caller_id: myUserId, callee_id: calleeId }).select().single();
 
@@ -16006,9 +16269,7 @@ async function startVoiceCallToClient(clientId, clientName){
     if(e.candidate) voiceSend(outboundChannel, { type: 'ice-candidate', candidate: e.candidate });
   };
   voiceAttachDiagnostics(pc);
-  pc.onconnectionstatechange = () => {
-    if(pc.connectionState === 'failed') endVoiceCall('failed', true);
-  };
+  pc.onconnectionstatechange = () => voiceOnPcState(pc);   // v707
 
   const { data: callRow } = await sb.from('voice_calls').insert({ caller_id: myUserId, callee_client_id: clientId }).select().single();
 
@@ -16064,10 +16325,7 @@ async function acceptIncomingCall(){
     }
   };
   voiceAttachDiagnostics(pc);
-  pc.onconnectionstatechange = () => {
-    console.log('[call] connection state:', pc.connectionState);
-    if(pc.connectionState === 'failed') endVoiceCall('failed', true);
-  };
+  pc.onconnectionstatechange = () => voiceOnPcState(pc);   // v707: reconnects instead of ending
 
   // Assign pc (and flush any candidates that arrived while this call was
   // still just ringing, queued above) before creating the answer — this
@@ -16094,6 +16352,7 @@ async function acceptIncomingCall(){
 
   voiceShowActiveBar(voiceCallState.peerName, 'Connecting…', true);
   voiceStartCallTimer();
+  voiceMarkLive(voiceCallState);   // v707
   // v106: if this incoming call was itself an "Add to call" invite (this
   // browser is the person being added), complete the mesh by dialing
   // every other participant directly.
@@ -16307,7 +16566,7 @@ function voiceStartCallTimer(){
   voiceShowActiveBar(voiceCallState.peerName, '00:00', false);
   $('callScreenShareBtn').style.display = 'flex';
   voiceCallState.durationInterval = setInterval(() => {
-    if(!voiceCallState || !voiceCallState.startedAt) return;
+    if(!voiceCallState || !voiceCallState.startedAt || voiceCallState.reconnecting) return;   // v707: keep "Reconnecting…" up
     const secs = Math.floor((Date.now() - voiceCallState.startedAt) / 1000);
     $('activeCallStatus').textContent = `${String(Math.floor(secs/60)).padStart(2,'0')}:${String(secs%60).padStart(2,'0')}`;
   }, 1000);
@@ -16414,6 +16673,9 @@ function endVoiceCall(finalStatus, notifyPeer){
   clearTimeout(state.ringTimeout);
   clearInterval(state.offerRetry);   // v700
   clearInterval(state.durationInterval);
+  clearInterval(state.saveTimer);   // v707
+  voiceClearReconnect(state);
+  voiceClearSavedCall();
   voiceStopRingtone();
   if(state.status === 'answered') voicePlayHangupSound();
   if(state.screenStream) state.screenStream.getTracks().forEach(t => t.stop());
