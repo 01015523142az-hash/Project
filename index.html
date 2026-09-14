@@ -2546,6 +2546,19 @@
   .desouky-mascot-svg{ width:104px; }
   .desouky-mascot-svg .bot-mascot-eyes{ transform-box:fill-box; }
 
+  /* v696: Google (Gmail & Calendar) section in the profile menu. */
+  .profile-menu-google{ margin-top:10px; padding-top:10px; border-top:1px solid var(--border); }
+  .profile-menu-google-title{ font-family:var(--chat-sans, var(--sans)); font-size:10.5px; font-weight:700; color:var(--text-2); text-transform:uppercase; letter-spacing:.6px; }
+  .profile-menu-google-state{ font-family:var(--chat-sans, var(--sans)); font-size:12px; color:var(--text); margin-top:5px; line-height:1.45; word-break:break-word; }
+  .profile-menu-google-btns{ display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  .profile-menu-google-btn{
+    flex:1; padding:7px 10px; border-radius:9px; cursor:pointer;
+    background:var(--inset); color:var(--text); border:1px solid var(--border-light);
+    font-family:var(--chat-sans, var(--sans)); font-size:12px; font-weight:600;
+  }
+  .profile-menu-google-btn:hover{ border-color:var(--focus); color:var(--focus); background:var(--focus-dim); }
+  .profile-menu-google-btn:disabled{ opacity:.55; cursor:default; }
+
 </style>
 </head>
 <body>
@@ -2731,6 +2744,17 @@
                 <div class="profile-menu-name" id="profileMenuName"></div>
                 <div class="profile-menu-role" id="profileMenuRole"></div>
                 <div class="profile-menu-email" id="profileMenuEmail"></div>
+              </div>
+            </div>
+            <!-- v696: the caller's own Google (Gmail + Calendar) -- the same
+                 connection the dialer uses, via dialer-conversations. Shown
+                 only to roles that can use it (pmGoogleRefresh). -->
+            <div class="profile-menu-google" id="pmGoogle" style="display:none;">
+              <div class="profile-menu-google-title">Google (Gmail &amp; Calendar)</div>
+              <div class="profile-menu-google-state" id="pmGoogleState">Checking…</div>
+              <div class="profile-menu-google-btns">
+                <button type="button" class="profile-menu-google-btn" id="pmGoogleConnect" style="display:none;">Connect Google</button>
+                <button type="button" class="profile-menu-google-btn" id="pmGoogleDisconnect" style="display:none;">Disconnect</button>
               </div>
             </div>
             <button id="signOutBtn" class="profile-menu-signout" role="menuitem">Sign out</button>
@@ -10547,7 +10571,7 @@ function profileMenuSetOpen(open){
   if(!panel || !btn) return;
   panel.style.display = open ? 'block' : 'none';
   btn.setAttribute('aria-expanded', open ? 'true' : 'false');
-  if(open) renderProfileMenu();
+  if(open){ renderProfileMenu(); pmGoogleRefresh(); }   // v696: Google status too
 }
 (function wireProfileMenu(){
   const btn = $('profileMenuBtn');
@@ -10563,6 +10587,74 @@ function profileMenuSetOpen(open){
     if(wrap && !wrap.contains(e.target)) profileMenuSetOpen(false);
   });
   document.addEventListener('keydown', (e) => { if(e.key === 'Escape') profileMenuSetOpen(false); });
+})();
+
+// ---------- v696: Google (Gmail & Calendar) in the profile menu ----------
+// The caller's OWN Google connection -- the one the dialer sends automatic
+// emails from, reads Conversations with and puts appointments on -- managed
+// from here as well as from the dialer's profile menu. Everything goes
+// through dialer-conversations (status / connect_url / disconnect): one
+// function for the whole card in both places. A role without Conversations
+// or Appointments gets a 403 on status, and the section stays hidden.
+async function pmGoogleCall(action){
+  const { data, error } = await sb.functions.invoke('dialer-conversations', { body: { action } });
+  if(error){
+    let msg = error.message || 'Request failed';
+    const status = error.context && error.context.status;
+    try { const b = await error.context.json(); if(b && b.error) msg = b.error; } catch(e){}
+    return { ok: false, error: msg, status };
+  }
+  return data || { ok: false, error: 'No answer from the server' };
+}
+async function pmGoogleRefresh(){
+  const sec = $('pmGoogle');
+  if(!sec) return;
+  const r = await pmGoogleCall('status');
+  if(!r.ok){
+    if(r.status === 403){ sec.style.display = 'none'; return; }   // this role has no use for it
+    sec.style.display = 'block';
+    $('pmGoogleState').textContent = 'Could not check your Google connection.';
+    $('pmGoogleConnect').style.display = 'none';
+    $('pmGoogleDisconnect').style.display = 'none';
+    return;
+  }
+  sec.style.display = 'block';
+  const partial = r.connected && (!r.can_read || !r.can_calendar);
+  $('pmGoogleState').innerHTML = r.connected
+    ? `Connected as <b>${escapeHtml(r.email || 'your Google account')}</b>${partial ? ' — some permissions are missing' : ''}`
+    : 'Not connected.';
+  $('pmGoogleConnect').textContent = partial ? 'Reconnect for the rest' : 'Connect Google';
+  $('pmGoogleConnect').style.display = (!r.connected || partial) ? '' : 'none';
+  $('pmGoogleDisconnect').style.display = r.connected ? '' : 'none';
+}
+(function wirePmGoogle(){
+  if(!$('pmGoogleConnect')) return;
+  $('pmGoogleConnect').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const w = window.open('', '_blank');   // opened before the await, or the browser blocks it
+    const r = await pmGoogleCall('connect_url');
+    if(!r.ok || !r.url){
+      if(w) w.close();
+      $('pmGoogleState').textContent = r.error || 'Could not start the Google connection.';
+      return;
+    }
+    if(w) w.location = r.url; else location.href = r.url;
+    $('pmGoogleState').textContent = 'Finish in the Google tab, then come back here.';
+  });
+  $('pmGoogleDisconnect').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if(!confirm('Disconnect your Google account? Automatic emails, the email side of Conversations and calendar invitations all stop until you connect it again.')) return;
+    $('pmGoogleDisconnect').disabled = true;
+    const r = await pmGoogleCall('disconnect');
+    $('pmGoogleDisconnect').disabled = false;
+    if(!r.ok){ $('pmGoogleState').textContent = 'Could not disconnect: ' + (r.error || 'unknown error'); return; }
+    await pmGoogleRefresh();
+  });
+  // Back from Google's consent tab with the menu still open.
+  window.addEventListener('focus', () => {
+    const panel = $('profileMenuPanel');
+    if(panel && panel.style.display !== 'none') pmGoogleRefresh();
+  });
 })();
 
 // ---------- v125: staff notification center ----------
@@ -15995,6 +16087,45 @@ function resolveDashTz(agentOwnTz){
 function nonAgentDisplayTz(){
   return globalDisplayTzMode === 'agent' ? undefined : globalDisplayTzMode;
 }
+
+// v696: EVERY date and time the staff portal prints follows the "Times shown
+// in" toggle. About 25 call sites here (and ~36 in Dialer Management, which
+// shares this page) formatted with no timeZone at all, so they showed the
+// BROWSER's zone -- Egypt for most staff -- whatever the toggle said. Rather
+// than threading tz through each of them, and every future one, the three
+// Date formatters default to the toggle's zone when the caller names none.
+// A caller that passes its own timeZone (an agent's, in "Agent local" mode)
+// still wins, and "Agent local" leaves the browser's zone alone, as before.
+//
+// Calendar DATES are not moved. A plain date ("2026-09-14", a timesheet day,
+// an employment start date) is a Date at local or UTC midnight printed with
+// no time; giving it a zone would print the DAY BEFORE for anyone east of
+// that zone. So a date-only format of an exact-midnight value keeps its own
+// calendar day: local midnight as-is, UTC midnight in UTC. Verified in Node
+// as an Egypt browser with the toggle on US Central (scratch tztest.js).
+// Intl.DateTimeFormat is not wrapped: every use of it here names a zone.
+(function installGlobalTzDefault(){
+  const DATE_KEYS = ['year', 'month', 'day', 'weekday', 'dateStyle', 'era'];
+  const TIME_KEYS = ['hour', 'minute', 'second', 'timeStyle', 'dayPeriod', 'fractionalSecondDigits'];
+  function zoneFor(d, opts, kind){
+    if(opts && opts.timeZone) return opts;
+    let tz;
+    try { tz = nonAgentDisplayTz(); } catch(e){ return opts; }
+    if(!tz || !(d instanceof Date) || isNaN(d)) return opts;
+    const o = opts || {};
+    const dateOnly = kind === 'date'
+      || (kind === 'any' && opts && TIME_KEYS.every(k => o[k] === undefined) && DATE_KEYS.some(k => o[k] !== undefined));
+    if(dateOnly){
+      if(d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0 && d.getMilliseconds() === 0) return opts;
+      if(d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0 && d.getUTCMilliseconds() === 0) return Object.assign({}, o, { timeZone: 'UTC' });
+    }
+    return Object.assign({}, o, { timeZone: tz });
+  }
+  [['toLocaleString', 'any'], ['toLocaleDateString', 'date'], ['toLocaleTimeString', 'time']].forEach(([m, kind]) => {
+    const orig = Date.prototype[m];
+    Date.prototype[m] = function(locales, opts){ return orig.call(this, locales, zoneFor(this, opts, kind)); };
+  });
+})();
 document.querySelectorAll('.global-tz-btn').forEach(btn => {
   btn.addEventListener('click', () => {
     // Capture "today" under the OLD zone before switching, so we can tell
