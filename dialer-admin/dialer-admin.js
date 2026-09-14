@@ -987,13 +987,20 @@ let covFacts = null;
 let covPlanLoaded = false;
 let covSaveTimer = null;
 
+let npaGeo = null;   // v691: area code -> { lat, lon }, loaded once
+
 async function loadCoverageFacts() {
-  const [agentsRes, didsRes, settingRes] = await Promise.all([
+  const [agentsRes, didsRes, settingRes, geoRes] = await Promise.all([
     sb.from('dialer_campaign_agents').select('agent_id, campaign_id').eq('is_active', true),
-    sb.from('dialer_dids').select('status, assigned_to').neq('status', 'retired'),
+    sb.from('dialer_dids').select('status, assigned_to, area_code').neq('status', 'retired'),
     covPlanLoaded ? Promise.resolve({ data: null })
       : sb.from('dialer_settings').select('value').eq('key', 'coverage_plan').maybeSingle(),
+    npaGeo ? Promise.resolve({ data: null }) : sb.from('dialer_npa_geo').select('npa, lat, lon'),
   ]);
+  if (geoRes.data) {
+    npaGeo = {};
+    geoRes.data.forEach((g) => { npaGeo[g.npa] = { lat: Number(g.lat), lon: Number(g.lon) }; });
+  }
   if (agentsRes.error || didsRes.error) {
     covFacts = { error: (agentsRes.error || didsRes.error).message };
     return;
@@ -1014,6 +1021,7 @@ async function loadCoverageFacts() {
     active: dids.filter((d) => !d.assigned_to && d.status === 'active').length,
     resting: dids.filter((d) => !d.assigned_to && d.status === 'resting').length,
     salesNumbers: dids.filter((d) => d.assigned_to).length,
+    poolNpas: dids.filter((d) => !d.assigned_to && d.status === 'active' && d.area_code).map((d) => d.area_code),
   };
 }
 
@@ -1043,7 +1051,7 @@ function renderCoveragePlan() {
       = <strong>${p.needed.toLocaleString()} numbers</strong>.
       Left out: ${p.salesNumbers} sales number${p.salesNumbers === 1 ? '' : 's'}
       and ${p.salesRepsLeftOut} rep${p.salesRepsLeftOut === 1 ? '' : 's'} who dial${p.salesRepsLeftOut === 1 ? 's' : ''} from their own.
-      ${p.short > 0 ? `Buy about <strong>${p.short}</strong> more, spread over the area codes below.` : 'The pool covers this volume.'}
+      ${p.short > 0 ? `Buy about <strong>${p.short}</strong> more &mdash; the table below says which area codes, nearest to the queue first.` : 'The pool covers this volume.'}
       Resting numbers are not counted: they are off so they can recover.</p>`;
 }
 
@@ -1065,27 +1073,96 @@ function saveCoveragePlan() {
 $('covDials').addEventListener('input', saveCoveragePlan);
 $('covCap').addEventListener('input', saveCoveragePlan);
 
+// v691: WHERE to put the numbers the plan says to buy. Each number goes, in
+// turn, to the area code with the most queued contacts per number there --
+// numbers already owned count as placed -- so numbers follow dial volume and
+// an area code with a handful of contacts is not given one of its own. (A
+// pure nearest-distance placement was tried first and spent three of seven
+// numbers on area codes holding one contact each: one far contact outweighed
+// ten near ones.) Every area code left without a number dials from the
+// nearest one that has one -- autopilot's same-area-code-else-closest rule --
+// with straight-line miles between area-code centres (dialer_npa_geo).
+function covMiles(a, b) {
+  const r = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * r;
+  const dLon = (b.lon - a.lon) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+  return 3959 * 2 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function covRecommend(rows, toBuy) {
+  const geo = npaGeo || {};
+  const have = {};
+  (covFacts?.poolNpas || []).forEach((npa) => { have[npa] = (have[npa] || 0) + 1; });
+  const buy = {};
+  for (let i = 0; i < Math.max(0, toBuy) && rows.length; i++) {
+    let best = null;
+    rows.forEach((x) => {
+      const w = Number(x.contacts) / ((have[x.area_code] || 0) + (buy[x.area_code] || 0) + 1);
+      if (!best || w > best.w) best = { npa: x.area_code, w };
+    });
+    buy[best.npa] = (buy[best.npa] || 0) + 1;
+  }
+  const placed = [...new Set([...Object.keys(have), ...Object.keys(buy)])].filter((npa) => geo[npa]);
+  const byNpa = {};
+  rows.forEach((x) => {
+    if (have[x.area_code] || buy[x.area_code]) return;
+    const g = geo[x.area_code];
+    if (!g) return;
+    let near = null;
+    placed.forEach((npa) => {
+      const d = covMiles(g, geo[npa]);
+      if (!near || d < near.d) near = { npa, d, toBuy: !have[npa] };
+    });
+    byNpa[x.area_code] = near;
+  });
+  return { buy, have, byNpa };
+}
+
 let covRowsData = [];
 function renderCoverageRows() {
   const p = coveragePlan();
-  const total = covRowsData.reduce((s, x) => s + Number(x.contacts), 0);
+  const rec = p && covRowsData.length ? covRecommend(covRowsData, p.short) : null;
   $('covRows').innerHTML = covRowsData.length
     ? covRowsData.map((x) => {
-      // The day's numbers shared out by where the queue is.
-      const need = p && total ? Math.ceil(p.needed * Number(x.contacts) / total) : null;
+      const buy = rec?.buy[x.area_code] || 0;
+      const have = rec?.have[x.area_code] || 0;
+      const near = rec?.byNpa[x.area_code];
+      let cell = '—';
+      if (buy) cell = `<b style="color:var(--good)">Buy ${buy} here</b>${have ? ` <span class="muted">(you have ${have})</span>` : ''}`;
+      else if (have) cell = `Covered — you have ${have} here`;
+      else if (near) {
+        cell = `Dials from ${esc(near.npa)}${near.toBuy ? ' (to buy)' : ''} &middot; `
+          + (near.d < 1 ? 'same area' : `${Math.round(near.d).toLocaleString()} mi`);
+      }
       return `<tr>
         <td class="mono">${esc(x.area_code)}</td>
         <td class="num">${Number(x.contacts).toLocaleString()}</td>
         <td class="num ${Number(x.active_dids) === 0 ? 'gap' : ''}">${x.active_dids}</td>
-        <td class="num ${need !== null && need > Number(x.active_dids) ? 'gap' : ''}">${need === null ? '—' : need}</td>
+        <td>${cell}</td>
         <td><button class="sm" data-npa="${esc(x.area_code)}">Find numbers</button></td>
       </tr>`;
     }).join('')
-    : '<tr><td colspan="5">No dialable contacts queued yet.</td></tr>';
+    : '<tr><td colspan="5">No dialable contacts queued on campaigns that dial from the shared pool.</td></tr>';
+  renderCoverageRec(p, rec);
 
-  $('covRows').querySelectorAll('button[data-npa]').forEach((b) => {
+  document.querySelectorAll('#covRows button[data-npa], #covRec button[data-npa]').forEach((b) => {
     b.onclick = () => { $('searchNpa').value = b.dataset.npa; $('searchBtn').click(); };
   });
+}
+
+function renderCoverageRec(p, rec) {
+  const el = $('covRec');
+  if (!p || !rec) { el.innerHTML = ''; return; }
+  const owned = covFacts.poolNpas || [];
+  const picks = Object.entries(rec.buy).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  el.innerHTML = `<p class="hint" style="margin:0 0 8px">
+      <strong>${p.needed} number${p.needed === 1 ? '' : 's'}</strong>: the ${owned.length} you have${owned.length
+        ? ` (${owned.map(esc).join(', ')})` : ''}${picks.length
+        ? `, plus ${p.short} to buy in these area codes &mdash; where the queue is biggest; smaller area codes dial from the nearest one:`
+        : '. Nothing to buy.'}
+    </p>
+    ${picks.length ? `<div class="row" style="gap:6px;margin-bottom:12px">${picks.map(([npa, n]) =>
+      `<button class="sm" data-npa="${esc(npa)}" title="Search Telnyx for numbers in ${esc(npa)}">${esc(npa)}${n > 1 ? ` &times;${n}` : ''}</button>`).join('')}</div>` : ''}`;
 }
 
 async function loadCoverage() {
@@ -1352,10 +1429,12 @@ const CAMP_LIMITS = [
   { key: 'attempts_per_number', label: 'Tries per number before the next', min: 1, max: 10 },
   { key: 'recycle_after_days',  label: 'Recycle after (days)', min: 1, max: 365 },
   { key: 'max_recycles',        label: 'Max recycles', min: 0, max: 10 },
-  // ring_seconds deliberately NOT editable: ring duration is negotiated by
-  // the WebRTC SDK and the carrier on the leg the browser places, and
-  // nothing reads this column. Exposing it would promise a control that
-  // does not exist. The column stays for if server-side origination lands.
+  // v691: dialing speed. ring_seconds used to be hidden because nothing read
+  // it; the agent console now hangs up an unanswered queued dial after this
+  // long and records No answer itself. power_pause_seconds is the countdown
+  // between power calls (it was a hardcoded 5).
+  { key: 'ring_seconds',        label: 'Ring time before giving up (s)', min: 15, max: 60 },
+  { key: 'power_pause_seconds', label: 'Pause between power calls (s)', min: 2, max: 30 },
 ];
 // calling_days holds ISO weekdays -- Monday is 1 and SUNDAY IS 7, not 0.
 // dialer-call-control's gate 3 compares against Intl's weekday mapped the
@@ -1393,7 +1472,7 @@ async function toggleCampaignEditor(id) {
           + 'calling_days, max_attempts, min_hours_between_attempts, ring_seconds, '
           + 'attempts_per_number, recycle_enabled, recycle_after_days, max_recycles, '
           + 'fallback_timezone, autopilot_enabled, tsr_exempt, '
-          + 'amd_enabled, recording_enabled, script, sms_fallback_enabled, sms_fallback_template')
+          + 'amd_enabled, recording_enabled, script, sms_fallback_enabled, sms_fallback_template, power_pause_seconds')
     .eq('id', id).maybeSingle();
   if (!c) return;
 
@@ -1441,13 +1520,16 @@ async function toggleCampaignEditor(id) {
       <span class="fb-label">Calling days</span>
       ${CALLING_DAYS.map(([v, d]) => `<label style="display:flex;align-items:center;gap:5px">
         <input type="checkbox" data-day="${v}"${(c.calling_days || []).includes(v) ? ' checked' : ''}>${d}</label>`).join('')}
-      <label style="display:flex;align-items:center;gap:5px;margin-left:14px;opacity:.55" title="Not available: the agent's browser places the call, so there is no server-side dial to attach AMD to. Would need server-side origination, which is deliberately out of scope at one line per agent.">
-        <input type="checkbox" data-f="amd_enabled" disabled${c.amd_enabled ? ' checked' : ''}>Answering-machine detection <span style="font-size:11px">(n/a)</span></label>
+      <label style="display:flex;align-items:center;gap:5px;margin-left:14px;opacity:.55" title="Needs background dialing. Telnyx, like ReadyMode, only detects machines on calls the SERVER places; this dialer's calls are placed by the agent's browser. Available once background dialing is built.">
+        <input type="checkbox" data-f="amd_enabled" disabled${c.amd_enabled ? ' checked' : ''}>Answering-machine detection <span style="font-size:11px">(needs background dialing)</span></label>
       <label style="display:flex;align-items:center;gap:5px;opacity:.55" title="Recording is enabled per connection in the Telnyx portal (Outbound &rarr; Record All Outbound Calls), not per campaign. This checkbox does not control it.">
         <input type="checkbox" data-f="recording_enabled" disabled${c.recording_enabled ? ' checked' : ''}>Record calls <span style="font-size:11px">(set in Telnyx)</span></label>
     </div>
     <p class="hint" style="margin:12px 0 0">
       The window is in each contact's own local time, not yours.
+      <strong>Dialing speed</strong>: an unanswered call rings for the ring time, then the console hangs up
+      and records <em>No answer</em> by itself; on a power campaign the next call starts after the pause.
+      One line per agent &mdash; dialing several lines at once needs background dialing.
     </p>
 
     <!-- v562. How a contact's numbers are worked, and what happens when they
@@ -4422,7 +4504,8 @@ function contactsQuery(select, opts) {
   const term = $('ctSearch').value.trim().replace(/[,()*%\\]/g, ' ').trim();
   if (term) {
     const digits = term.replace(/\D/g, '');
-    const parts = [`contact_name.ilike.*${term}*`, `address.ilike.*${term}*`, `email.ilike.*${term}*`, `city.ilike.*${term}*`];
+    // v691: name, number or email -- not the address.
+    const parts = [`contact_name.ilike.*${term}*`, `first_name.ilike.*${term}*`, `last_name.ilike.*${term}*`, `email.ilike.*${term}*`];
     if (digits.length >= 3) parts.push(`phone_e164.ilike.*${digits}*`);
     q = q.or(parts.join(','));
   }

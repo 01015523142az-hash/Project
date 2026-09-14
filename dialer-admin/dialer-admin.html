@@ -83,11 +83,16 @@
       </div>
       <div id="covPlan" style="margin-bottom:14px"></div>
       <div class="fb-label" style="margin:4px 0 6px">Where the queue is</div>
+      <p class="hint" style="margin:0 0 10px">
+        Only campaigns that dial from the shared pool. A campaign whose reps all dial from their
+        own number (such as Sales) is left out &mdash; its calls never use these numbers.
+      </p>
       <div id="covSummary" style="margin-bottom:12px"></div>
+      <div id="covRec"></div>
       <div class="scroll">
         <table>
           <thead><tr><th>Area code</th><th class="num">Queued contacts</th>
-            <th class="num">DIDs owned</th><th class="num">Needed</th><th></th></tr></thead>
+            <th class="num">DIDs owned</th><th>Recommendation</th><th></th></tr></thead>
           <tbody id="covRows"><tr><td colspan="5">Loading…</td></tr></tbody>
         </table>
       </div>
@@ -692,7 +697,7 @@
   <section id="tab-contacts" class="hide">
     <div class="panel">
       <div class="da-convo-bar">
-        <input id="ctSearch" type="search" placeholder="Search name, phone, address, email…" style="flex:1;min-width:220px">
+        <input id="ctSearch" type="search" placeholder="Search name, number or email…" style="flex:1;min-width:220px">
         <select id="ctCampaign"><option value="">All campaigns</option></select>
         <select id="ctList"><option value="">All lists</option></select>
         <select id="ctStatus">
