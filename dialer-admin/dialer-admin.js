@@ -1392,7 +1392,7 @@ async function toggleCampaignEditor(id) {
     .select('id, name, dial_mode, status, calling_window_start, calling_window_end, '
           + 'calling_days, max_attempts, min_hours_between_attempts, ring_seconds, '
           + 'attempts_per_number, recycle_enabled, recycle_after_days, max_recycles, '
-          + 'fallback_timezone, autopilot_enabled, '
+          + 'fallback_timezone, autopilot_enabled, tsr_exempt, '
           + 'amd_enabled, recording_enabled, script, sms_fallback_enabled, sms_fallback_template')
     .eq('id', id).maybeSingle();
   if (!c) return;
@@ -1402,6 +1402,7 @@ async function toggleCampaignEditor(id) {
   const td = document.createElement('td');
   td.colSpan = 8;
   td.style.cssText = 'background:var(--inset);padding:18px';
+  td.dataset.tsrExempt = c.tsr_exempt ? '1' : '';   // v690: read by saveCampaign
   td.innerHTML = `
     <div class="row" style="align-items:flex-end">
       <label style="display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:9px">
@@ -1414,6 +1415,11 @@ async function toggleCampaignEditor(id) {
       whose answer rate collapses is taken out, one that has worked 21 days is rested, and rested numbers come
       back when the pool runs thin. A rep's own (sales) number is never touched.
     </p>
+    <p class="hint" style="margin:0 0 10px">${c.tsr_exempt
+      ? '<strong>Test campaign</strong>: no legal calling-hours limit, so it can dial around the clock. '
+        + 'Load only test numbers and your own here &mdash; never a real lead list.'
+      : '<strong>Calling window</strong>: between 08:00 and 21:00 in the called person&rsquo;s local time '
+        + '&mdash; the legal limit for telemarketing calls. A narrower window is fine.'}</p>
     <div class="row">
       <div class="field"><label>Dial mode</label>
         <select data-f="dial_mode">
@@ -1421,9 +1427,11 @@ async function toggleCampaignEditor(id) {
           <option value="power"${c.dial_mode === 'power' ? ' selected' : ''}>Power</option>
         </select></div>
       <div class="field"><label>Window opens</label>
-        <input type="time" data-f="calling_window_start" value="${esc((c.calling_window_start || '').slice(0, 5))}"></div>
+        <input type="time" data-f="calling_window_start"${c.tsr_exempt ? '' : ' min="08:00" max="21:00"'}
+               value="${esc((c.calling_window_start || '').slice(0, 5))}"></div>
       <div class="field"><label>Window closes</label>
-        <input type="time" data-f="calling_window_end" value="${esc((c.calling_window_end || '').slice(0, 5))}"></div>
+        <input type="time" data-f="calling_window_end"${c.tsr_exempt ? '' : ' min="08:00" max="21:00"'}
+               value="${esc((c.calling_window_end || '').slice(0, 5))}"></div>
       ${CAMP_LIMITS.map((f) => `
       <div class="field"><label>${esc(f.label)}</label>
         <input type="number" data-f="${f.key}" min="${f.min}" max="${f.max}"
@@ -1657,6 +1665,23 @@ async function toggleCampaignEditor(id) {
   td.querySelector('[data-save]').onclick = () => saveCampaign(id, td, tr);
 }
 
+// v690: the calling-window rule in words, shared by the editor and Create.
+// The database enforces the same thing (dialer_campaigns_calling_window_
+// within_tsr) and would otherwise answer with its constraint name. tsr_exempt
+// (test campaigns dialling only test numbers) is set by migration, never here.
+const WINDOW_LAW_MSG = 'Calls are only allowed between 08:00 and 21:00 in the called person’s local time '
+  + '(the legal limit for telemarketing). Pick a window inside those hours.';
+function windowError(start, end, exempt) {
+  const s = String(start || '').slice(0, 5);
+  const e = String(end || '').slice(0, 5);
+  if (!s || !e) return 'Both ends of the calling window are required.';
+  if (s >= e) return 'The calling window must close after it opens.';
+  if (!exempt && (s < '08:00' || e > '21:00')) return WINDOW_LAW_MSG;
+  return '';
+}
+const campaignDbError = (error) =>
+  (/calling_window_within_tsr/.test(error?.message || '') ? WINDOW_LAW_MSG : (error?.message || String(error)));
+
 async function saveCampaign(id, td, tr) {
   const msg = td.querySelector('[data-msg]');
   const val = (k) => td.querySelector(`[data-f="${k}"]`);
@@ -1691,9 +1716,8 @@ async function saveCampaign(id, td, tr) {
     }
     patch[f.key] = n;
   }
-  if (!patch.calling_window_start || !patch.calling_window_end) {
-    say(msg, 'Both ends of the calling window are required.', 'err'); return;
-  }
+  const winErr = windowError(patch.calling_window_start, patch.calling_window_end, td.dataset.tsrExempt === '1');
+  if (winErr) { say(msg, winErr, 'err'); return; }
   if (!patch.calling_days.length) {
     say(msg, 'Pick at least one calling day, or the queue can never dial.', 'err'); return;
   }
@@ -1705,7 +1729,7 @@ async function saveCampaign(id, td, tr) {
   say(msg, 'Saving…', 'ok');
 
   const { error } = await sb.from('dialer_campaigns').update(patch).eq('id', id);
-  if (error) { say(msg, error.message, 'err'); td.querySelector('[data-save]').disabled = false; return; }
+  if (error) { say(msg, campaignDbError(error), 'err'); td.querySelector('[data-save]').disabled = false; return; }
 
   // Assignment rows: upsert the ones that are ticked, and mark the rest
   // inactive rather than deleting them -- assigned_by/assigned_at is a record
@@ -3197,11 +3221,13 @@ $('fmName').onchange = () => {
 $('cCreate').onclick = async () => {
   const name = $('cName').value.trim();
   if (!name) { say($('cMsg'), 'Give the campaign a name.', 'err'); return; }
+  const winErr = windowError($('cStart').value, $('cEnd').value, false);
+  if (winErr) { say($('cMsg'), winErr, 'err'); return; }
   const { error } = await sb.from('dialer_campaigns').insert({
     name, dial_mode: $('cMode').value, status: 'active',
     calling_window_start: $('cStart').value, calling_window_end: $('cEnd').value,
   });
-  if (error) { say($('cMsg'), error.message, 'err'); return; }
+  if (error) { say($('cMsg'), campaignDbError(error), 'err'); return; }
   say($('cMsg'), 'Created.', 'ok');
   $('cName').value = '';
   loadCampaigns();

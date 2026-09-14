@@ -40231,7 +40231,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '689'; // 689: floor map times calls from the dial/answer (688: floor map replaces "Who is on shift")
+const DIALER_ADMIN_VERSION = '690'; // 690: calling-window rule explained in words; test campaign exempt (689: floor map call timer)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
