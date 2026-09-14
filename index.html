@@ -10622,7 +10622,7 @@ async function pmGoogleRefresh(){
   const partial = r.connected && (!r.can_read || !r.can_calendar);
   $('pmGoogleState').innerHTML = r.connected
     ? `Connected as <b>${escapeHtml(r.email || 'your Google account')}</b>${partial ? ' — some permissions are missing' : ''}`
-    : 'Not connected.';
+    : 'Not connected. Use your @proptechnologyai.com Google account.';
   $('pmGoogleConnect').textContent = partial ? 'Reconnect for the rest' : 'Connect Google';
   $('pmGoogleConnect').style.display = (!r.connected || partial) ? '' : 'none';
   $('pmGoogleDisconnect').style.display = r.connected ? '' : 'none';
