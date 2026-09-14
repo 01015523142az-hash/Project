@@ -11195,7 +11195,11 @@ function staffNotifKindAllowed(kind){
 // dialer follow-up coming due is the first -- so unread ones load at sign-in
 // and new ones arrive over realtime. Opening or clearing one marks it read,
 // so it does not come back at the next sign-in.
-const STAFF_NOTIF_KIND_ICONS = { dialer_follow_up: '📞' };
+const STAFF_NOTIF_KIND_ICONS = { dialer_follow_up: '📞', missed_call: '📞', dialer_handoff: '🤝', dialer_appointment: '📅', dialer_task: '✅' };
+// v700: the kinds that need the person to act go to the Priority tab -- the
+// same set the dialer's bell uses (staff-shell.js KIND), plus a missed call
+// (written by the voice_calls_missed_notify trigger).
+const STAFF_NOTIF_PRIORITY_KINDS = new Set(['dialer_follow_up', 'dialer_handoff', 'dialer_appointment', 'dialer_task', 'missed_call']);
 const shownDurableNotifIds = new Set();
 function showDurableStaffNotification(row, silent){
   if(!row || shownDurableNotifIds.has(row.id)) return;
@@ -11205,6 +11209,7 @@ function showDurableStaffNotification(row, silent){
     title: row.title,
     body: row.body || '',
     durableId: row.id,
+    priority: STAFF_NOTIF_PRIORITY_KINDS.has(row.kind),   // v700
     at: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     silent,
     onClick: () => {
@@ -11649,9 +11654,30 @@ function initPushToggle(){
   btn.addEventListener('click', async () => {
     const reg = await navigator.serviceWorker.getRegistration().catch(() => null);
     const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
-    if(sub) await pushUnsubscribe(); else await pushSubscribeIfNeeded();
+    // v700: remember a deliberate "off", so the automatic switch-on below
+    // never overrides it.
+    if(sub){ try{ localStorage.setItem('pt.pushOff', '1'); }catch(e){} await pushUnsubscribe(); }
+    else { try{ localStorage.removeItem('pt.pushOff'); }catch(e){} await pushSubscribeIfNeeded(); }
   });
   updatePushToggleBtn();
+  // v700: PUSH WAS OPT-IN, AND ALMOST NOBODY OPTED IN. Only 3 of 13 staff had
+  // ever clicked the bell button, so a call to anyone else rang only if their
+  // portal tab happened to be open. Now: a browser that already allows
+  // notifications is (re)registered silently at sign-in; one that has not
+  // been asked is asked ONCE, at the next click (browsers only allow the
+  // question after a click). "Block" is respected, and so is turning it off.
+  if(!pushSupported() || !('Notification' in window)) return;
+  let off = false, asked = false;
+  try{ off = localStorage.getItem('pt.pushOff') === '1'; asked = localStorage.getItem('pt.pushAsked') === '1'; }catch(e){}
+  if(off) return;
+  if(Notification.permission === 'granted'){ pushSubscribeIfNeeded(); return; }
+  if(Notification.permission !== 'default' || asked) return;
+  const ask = () => {
+    ['pointerup', 'keydown'].forEach(ev => document.removeEventListener(ev, ask, true));
+    try{ localStorage.setItem('pt.pushAsked', '1'); }catch(e){}
+    pushSubscribeIfNeeded();
+  };
+  ['pointerup', 'keydown'].forEach(ev => document.addEventListener(ev, ask, true));
 }
 
 // Fire-and-forget: sends a push to each of the given user ids, but ONLY
@@ -11661,8 +11687,13 @@ function initPushToggle(){
 // already reaches them; a push on top of that would just be a duplicate
 // ding. This is deliberately best-effort: a failed/slow push call never
 // blocks sending the chat message or placing the call it's attached to.
-function notifyPushRecipients(userIds, payload){
-  const targets = (userIds || []).filter(id => id && id !== myUserId && chatContactStatus(id) !== 'active');
+// v700: opts.always skips that gate, for CALLS. Someone working in the dialer
+// shows "active" (the dialer sends the same heartbeat) while no staff portal
+// tab is listening for the call -- so the gate meant the person most likely
+// to be at their desk was never told they were being called.
+function notifyPushRecipients(userIds, payload, opts){
+  const always = !!(opts && opts.always);
+  const targets = (userIds || []).filter(id => id && id !== myUserId && (always || chatContactStatus(id) !== 'active'));
   targets.forEach(id => {
     sb.functions.invoke('send-push-notification', { body: { user_id: id, ...payload } })
       .then(({ error }) => { if(error) console.error('send-push-notification failed for', id, error); })
@@ -14373,9 +14404,34 @@ $('callAddBtn').addEventListener('click', () => {
 
 
 
+// v700: WHY SOME CALLS NEVER RANG. The offer used to be sent exactly ONCE.
+// A callee whose realtime connection blinked at that moment (a laptop waking,
+// a background tab, a network hiccup), or who opened the portal a few seconds
+// after the push, never received it -- and the caller heard ringback into
+// nothing. Now the caller repeats it as 'offer-retry' every 4 s while it
+// rings, and rings for 45 s. A retry only rings a tab that is not already in
+// a call and has not rung for that call before. Pages from before v700 ignore
+// the new message type, so mixed versions stay safe.
+const VOICE_RING_MS = 45000;
+const VOICE_OFFER_RETRY_MS = 4000;
+const voiceRangCallIds = new Set();
+function voiceRepeatOffer(channel, payload){
+  const state = voiceCallState;
+  if(!state || !payload.callRowId) return;
+  state.offerRetry = setInterval(() => {
+    if(voiceCallState !== state || state.status !== 'ringing'){ clearInterval(state.offerRetry); return; }
+    voiceSend(channel, payload);
+  }, VOICE_OFFER_RETRY_MS);
+}
+
 async function handleVoiceSignal(msg){
+  if(msg.type === 'offer-retry'){
+    if(voiceCallState || !msg.callRowId || voiceRangCallIds.has(msg.callRowId)) return;
+    msg = { ...msg, type: 'offer' };
+  }
   if(msg.type === 'offer'){
     if(voiceCallState){ voiceSendOneOff(msg.from, { type: 'busy' }); return; } // already on/starting a call
+    if(msg.callRowId) voiceRangCallIds.add(msg.callRowId);
     voiceCallState = { role: 'callee', peerId: msg.from, peerName: msg.fromName, callRowId: msg.callRowId, offerSdp: msg.sdp, status: 'ringing', remoteDescSet: false, pendingCandidates: [], videoSender: null, screenStream: null, hasScreenShare: false, peerSharing: false, videoPanelMinimized: false, videoPanelMaximized: false, groupId: msg.groupId || voiceGenId(), extraPeers: {}, meshParticipants: msg.participants || [] };
     // v395: subscribe to the roster while still just ringing, not only
     // after Accept — the caller already inserted this browser's own row
@@ -14481,6 +14537,7 @@ async function handleVoiceSignal(msg){
       alert(`${name || 'They'} are on another call.`);
     }
   } else if(msg.type === 'claimed'){
+    if(msg.callRowId) voiceRangCallIds.add(msg.callRowId);   // v700
     // One of MY OWN other open tabs accepted this same incoming call —
     // dismiss my banner rather than leave it ringing for a call that's
     // already been answered elsewhere.
@@ -14647,7 +14704,7 @@ async function startVoiceCall(calleeId, calleeName){
     tag: `call-${callRow ? callRow.id : calleeId}`,
     url: '/' /* v636: was '/dashboard/dashboard.html', which 404s in production -- this portal is served from the ROOT and live/main has no dashboard/ directory at all. Worse than a dead link: sw.js focuses an already-open tab and then navigates it to this url, so clicking any push took a working signed-in portal and broke it. sw.js already defaults to '/' when no url is sent; this was overriding that. */,
     require_interaction: true,
-  });
+  }, { always: true });   // v700: see notifyPushRecipients
 
   voiceCallState = { role: 'caller', peerId: calleeId, peerName: calleeName, pc, localStream, outboundChannel, callRowId: callRow ? callRow.id : null, status: 'ringing', remoteDescSet: false, pendingCandidates: [], videoSender: null, screenStream: null, hasScreenShare: false, peerSharing: false, videoPanelMinimized: false, videoPanelMaximized: false, groupId: voiceGenId(), extraPeers: {} };
   // v395: seed the persistent roster — caller connects immediately, callee
@@ -14673,12 +14730,13 @@ async function startVoiceCall(calleeId, calleeName){
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   voiceSend(outboundChannel, { type: 'offer', sdp: offer, callRowId: voiceCallState.callRowId, groupId: voiceCallState.groupId });
+  voiceRepeatOffer(outboundChannel, { type: 'offer-retry', sdp: offer, callRowId: voiceCallState.callRowId, groupId: voiceCallState.groupId });   // v700
 
   voiceShowActiveBar(calleeName, 'Calling…', true);
   voiceStartRingtone('ringback');
   voiceCallState.ringTimeout = setTimeout(() => {
     if(voiceCallState && voiceCallState.status === 'ringing') endVoiceCall('missed', true);
-  }, 30000);
+  }, VOICE_RING_MS);
 }
 
 // v231: staff calling a CLIENT, in-app — nearly identical to startVoiceCall
@@ -14738,12 +14796,13 @@ async function startVoiceCallToClient(clientId, clientName){
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   voiceSend(outboundChannel, { type: 'offer', sdp: offer, callRowId: voiceCallState.callRowId });
+  voiceRepeatOffer(outboundChannel, { type: 'offer-retry', sdp: offer, callRowId: voiceCallState.callRowId });   // v700
 
   voiceShowActiveBar(clientName, 'Calling…', true);
   voiceStartRingtone('ringback');
   voiceCallState.ringTimeout = setTimeout(() => {
     if(voiceCallState && voiceCallState.status === 'ringing') endVoiceCall('missed', true);
-  }, 30000);
+  }, VOICE_RING_MS);
 }
 
 async function acceptIncomingCall(){
@@ -15119,6 +15178,7 @@ function endVoiceCall(finalStatus, notifyPeer){
   if(!voiceCallState) return;
   const state = voiceCallState;
   clearTimeout(state.ringTimeout);
+  clearInterval(state.offerRetry);   // v700
   clearInterval(state.durationInterval);
   voiceStopRingtone();
   if(state.status === 'answered') voicePlayHangupSound();
