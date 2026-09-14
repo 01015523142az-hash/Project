@@ -2493,6 +2493,52 @@
     padding:0; font-family:var(--chat-sans, var(--sans)); font-size:12px; font-weight:600;
   }
 
+  /* =========================================================================
+     v692: ONE LIGHT THEME FOR BOTH PORTALS (and Dialer Management).
+
+     The owner: in light mode the text is not visible, the theme is too
+     bright, and it does not match the dark one. Measured, not guessed: with
+     every section of this page shown in light mode, 990 of 1,468 text
+     elements fell under the 4.5:1 contrast small text needs. Nearly all of
+     them were --text-dim (#9C9280, pale taupe) on pure-white cards: 3.07:1.
+
+     So a calm stone ground instead of white, cards one step lighter than the
+     ground (the dark theme's own card-on-ground structure), and every text
+     token darkened until it clears 4.5:1 on a card. Gold is carried down to
+     #7A5C22 so it reads as link text; text ON gold turns white. The pastel
+     background blobs go -- they were most of the "too bright".
+
+     The SAME token values are in the client portal's v692 block and in
+     dialer-admin.css, so the three cannot drift again. Values only: every
+     rule that uses these tokens is untouched. Placed last so it wins over
+     the three earlier light blocks (v623's, the accent-hue one, v182's).
+     ========================================================================= */
+  :root[data-theme="light"]{
+    --bg:#E8E5DF; --card:#F3F1EC; --card-hover:#EAE7E0; --inset:#DFDBD3;
+    --border:#D2CCC1; --border-light:#C2BBAE;
+    --text:#1F1C17; --text-2:#4B4539; --text-dim:#655E51; --num:#1F1C17;
+    --focus:#7A5C22; --focus-dim:#EEE4D0;
+    --gold:#7A5C22; --gold-soft:#94722F; --gold-dim:#EEE4D0;
+    --away:#9A5205; --away-dim:#F1E0C8; --idle:#DCD8D0;
+    --danger:#AE2025; --danger-dim:#F1D5D3; --good:#16713F; --good-dim:#D3EAD9;
+    --info:#1A64A8; --info-dim:#D6E4F2; --violet:#5E37C7; --violet-dim:#E3DCF5;
+    --teal:#0B6F66; --teal-dim:#D2ECE8;
+    --blob-1:transparent; --blob-2:transparent; --blob-3:transparent;
+  }
+  /* Text ON the deep gold turns white. (.act-group-btn / .act-subtab-btn are
+     left out on purpose: in the light theme their active state sits on
+     --card-hover, not on gold, and white there measured 1.23:1.) */
+  :root[data-theme="light"] .btn-primary,
+  :root[data-theme="light"] .ispd-subtab-btn.active, :root[data-theme="light"] .sf-subtab-btn.active,
+  :root[data-theme="light"] .integ-subtab-btn.active, :root[data-theme="light"] .range-btn.active,
+  :root[data-theme="light"] .ts-pill.active, :root[data-theme="light"] .task-avatar{ color:#FFFFFF; }
+  :root[data-theme="light"] #loginScreen::before,
+  :root[data-theme="light"] #app::before{ background:none; }
+  /* v692 comfort: a keyboard user can always see where they are, and
+     selected text is gold rather than the browser's blue. */
+  :focus-visible{ outline:2px solid var(--gold); outline-offset:2px; }
+  ::selection{ background:var(--focus-dim); color:var(--text); }
+
 </style>
 </head>
 <body>
@@ -40231,7 +40277,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '691'; // 691: dialing speed in campaign edit, coverage excludes Sales + recommends area codes (690: calling-window rule)
+const DIALER_ADMIN_VERSION = '692'; // 692: shared readable light theme (691: dialing speed, coverage recommendations)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
