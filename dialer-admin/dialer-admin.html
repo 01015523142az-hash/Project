@@ -259,8 +259,6 @@
           <input id="cName" placeholder="Warm callbacks — March"></div>
         <div class="field"><label for="cMode">Dial mode</label>
           <select id="cMode"><option value="preview">Preview</option><option value="power">Power</option></select></div>
-        <div class="field" style="min-width:200px"><label for="cClient">Client</label>
-          <select id="cClient"><option value="">No client (internal)</option></select></div>
         <div class="field"><label for="cStart">Window opens</label>
           <input type="time" id="cStart" value="09:00"></div>
         <div class="field"><label for="cEnd">Window closes</label>
@@ -276,16 +274,15 @@
     <div class="panel">
       <h2>Campaigns</h2>
       <p class="hint">
-        Edit opens the queue's client, autopilot, limits and the agents assigned to it. Assignment is
+        Edit opens the queue's autopilot, limits and the agents assigned to it. Assignment is
         a permission, not a filter: an agent who is not on a queue cannot read its
-        contacts at all, whatever their screen shows them. Linking a client is internal only &mdash;
-        the client is never notified, and leads from the dialer never send the client an alert.
+        contacts at all, whatever their screen shows them.
       </p>
       <div class="scroll">
         <table>
-          <thead><tr><th>Name</th><th>Client</th><th>Mode</th><th>Window</th><th>Status</th><th>Autopilot</th>
+          <thead><tr><th>Name</th><th>Mode</th><th>Window</th><th>Status</th><th>Autopilot</th>
             <th class="num">Queued</th><th class="num">Agents</th><th></th></tr></thead>
-          <tbody id="campRows"><tr><td colspan="9">Loading…</td></tr></tbody>
+          <tbody id="campRows"><tr><td colspan="8">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>

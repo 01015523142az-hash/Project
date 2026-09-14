@@ -60,7 +60,7 @@ let canReview = false;      // may look, and nothing else
 const DA_WRITE_IDS = {
   numbers: ['searchBtn', 'orderBtn', 'syncBtn', 'searchNpa', 'searchLimit'],
   lists: ['impBtn', 'impCampaign', 'impName', 'impFile', 'impCsv', 'impScrubbed', 'impScrubDate'],
-  campaigns: ['cCreate', 'cName', 'cMode', 'cClient', 'cStart', 'cEnd'],
+  campaigns: ['cCreate', 'cName', 'cMode', 'cStart', 'cEnd'],
   inbound: ['qCreate', 'qName', 'qOpen', 'qClose'],
   contacts: ['ctAdd', 'ctASave'],
   inbox: ['inboxBody', 'inboxSend'],
@@ -1265,41 +1265,14 @@ $('syncBtn').onclick = async () => {
 };
 
 // ------------------------------------------------------------- campaigns --
-// v679: the client a campaign works for. Internal only -- nothing is sent to
-// the client when a campaign is linked.
-let clients = [];
-let clientsLoaded = false;
-async function loadClients() {
-  if (clientsLoaded) return;
-  const { data } = await sb.from('client_accounts').select('id, full_name, company_name, is_active');
-  clients = (data || []).sort((a, b) => clientName(a).localeCompare(clientName(b)));
-  clientsLoaded = true;
-}
-function clientName(c) {
-  if (!c) return '';
-  return c.company_name && c.full_name ? `${c.company_name} (${c.full_name})` : (c.company_name || c.full_name || 'Client');
-}
-function clientOptions(selected) {
-  return '<option value="">No client (internal)</option>'
-    + clients.filter((c) => c.is_active !== false || c.id === selected)
-      .map((c) => `<option value="${esc(c.id)}"${c.id === selected ? ' selected' : ''}>${esc(clientName(c))}</option>`).join('')
-    // A role that cannot read clients still sees that a link exists.
-    + (selected && !clients.some((c) => c.id === selected) ? `<option value="${esc(selected)}" selected>Linked client</option>` : '');
-}
-
 async function loadCampaigns() {
-  const [{ data }] = await Promise.all([
-    sb.from('dialer_campaigns')
-      .select('id, name, dial_mode, status, calling_window_start, calling_window_end, client_id, autopilot_enabled')
-      .neq('status', 'archived').order('name'),
-    loadClients(),
-  ]);
+  const { data } = await sb.from('dialer_campaigns')
+    .select('id, name, dial_mode, status, calling_window_start, calling_window_end, autopilot_enabled')
+    .neq('status', 'archived').order('name');
   campaigns = data || [];
   $('impCampaign').innerHTML = campaigns.map((c) =>
     `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('')
     || '<option value="">No campaigns yet</option>';
-  const keepClient = $('cClient').value;
-  $('cClient').innerHTML = clientOptions(keepClient);
 
   const counts = {};
   for (const c of campaigns) {
@@ -1320,9 +1293,6 @@ async function loadCampaigns() {
   $('campRows').innerHTML = campaigns.length
     ? campaigns.map((c) => `<tr data-row="${esc(c.id)}">
         <td>${esc(c.name)}</td>
-        <td>${c.client_id
-            ? esc(clientName(clients.find((x) => x.id === c.client_id)) || 'Linked client')
-            : '<span class="muted">—</span>'}</td>
         <td>${esc(c.dial_mode)}</td>
         <td class="mono">${esc(c.calling_window_start)}–${esc(c.calling_window_end)}</td>
         <td><span class="tag ${c.status === 'active' ? 't-active' : 't-resting'}">${esc(c.status)}</span></td>
@@ -1335,7 +1305,7 @@ async function loadCampaigns() {
           <button class="sm" data-camp="${esc(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">
           ${c.status === 'active' ? 'Pause' : 'Activate'}</button>` : ''}</td>
       </tr>`).join('')
-    : '<tr><td colspan="9">No campaigns yet.</td></tr>';
+    : '<tr><td colspan="8">No campaigns yet.</td></tr>';
 
   $('campRows').querySelectorAll('button[data-camp]').forEach((b) => {
     b.onclick = async () => {
@@ -1420,7 +1390,7 @@ async function toggleCampaignEditor(id) {
     .select('id, name, dial_mode, status, calling_window_start, calling_window_end, '
           + 'calling_days, max_attempts, min_hours_between_attempts, ring_seconds, '
           + 'attempts_per_number, recycle_enabled, recycle_after_days, max_recycles, '
-          + 'fallback_timezone, client_id, autopilot_enabled, '
+          + 'fallback_timezone, autopilot_enabled, '
           + 'amd_enabled, recording_enabled, script, sms_fallback_enabled, sms_fallback_template')
     .eq('id', id).maybeSingle();
   if (!c) return;
@@ -1428,18 +1398,14 @@ async function toggleCampaignEditor(id) {
   const tr = document.createElement('tr');
   tr.dataset.editor = id;
   const td = document.createElement('td');
-  td.colSpan = 9;
+  td.colSpan = 8;
   td.style.cssText = 'background:var(--inset);padding:18px';
   td.innerHTML = `
     <div class="row" style="align-items:flex-end">
-      <div class="field" style="min-width:280px"><label>Client</label>
-        <select data-f="client_id">${clientOptions(c.client_id)}</select></div>
       <label style="display:flex;align-items:center;gap:6px;font-weight:600;margin-bottom:9px">
         <input type="checkbox" data-f="autopilot_enabled"${c.autopilot_enabled ? ' checked' : ''}> Autopilot</label>
     </div>
     <p class="hint" style="margin:0 0 14px">
-      <strong>Client</strong> is an internal link: the client is not told, and leads from the dialer
-      never send the client an alert.
       <strong>Autopilot</strong>: every dial goes out from the number in your inventory nearest to the
       number being called &mdash; the same area code first, otherwise the closest one &mdash; spread across
       equally close numbers. Each morning it also looks after the numbers this campaign dials from: a number
@@ -1694,7 +1660,6 @@ async function saveCampaign(id, td, tr) {
   const val = (k) => td.querySelector(`[data-f="${k}"]`);
 
   const patch = {
-    client_id: val('client_id').value || null,          // v679
     autopilot_enabled: val('autopilot_enabled').checked, // v679
     dial_mode: val('dial_mode').value,
     calling_window_start: val('calling_window_start').value,
@@ -3010,7 +2975,6 @@ $('cCreate').onclick = async () => {
   const { error } = await sb.from('dialer_campaigns').insert({
     name, dial_mode: $('cMode').value, status: 'active',
     calling_window_start: $('cStart').value, calling_window_end: $('cEnd').value,
-    client_id: $('cClient').value || null,
   });
   if (error) { say($('cMsg'), error.message, 'err'); return; }
   say($('cMsg'), 'Created.', 'ok');

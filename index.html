@@ -28183,6 +28183,7 @@ function csubFieldValueByLabel(row, label){
 // submission field text otherwise (older campaigns predating the
 // subscription system, or ones whose subscription row was since deleted).
 let csubCampaignSubsByNorm = {};
+let csubCampaignClientById = {};   // v680: client_accounts by id, for Client Details
 // v395: normName -> { accepted, rejected, pending, total } lead outcome
 // counts, keyed the same way csubCampaignSubsByNorm is (csubNormalizeLabel
 // on the campaign's display name) so the Campaign Management table can
@@ -28263,7 +28264,7 @@ async function loadCsubCampaignSubsForCampaignTab(){
   // these off the same cached match used for Dialer/Data Source/Caller
   // Staffing above.
   const { data, error } = await sb.from('client_campaign_subscriptions')
-    .select('campaign_display_name, caller_tier, part_time_callers, full_time_callers, dialer_choice, data_choice, created_at, status, current_period_end, is_complimentary, complimentary_expires_at, ' + CAMPAIGN_SUB_BUCKET_KEYS.join(', '))
+    .select('campaign_display_name, client_id, caller_tier, part_time_callers, full_time_callers, dialer_choice, data_choice, created_at, status, current_period_end, is_complimentary, complimentary_expires_at, ' + CAMPAIGN_SUB_BUCKET_KEYS.join(', '))
     .order('created_at', { ascending: false });
   if(error){
     console.error('Failed to load campaign subscriptions for Campaign tab', error);
@@ -28275,6 +28276,14 @@ async function loadCsubCampaignSubsForCampaignTab(){
     const norm = csubNormalizeLabel(s.campaign_display_name || '');
     if(norm && !(norm in csubCampaignSubsByNorm)) csubCampaignSubsByNorm[norm] = s; // sorted desc -- first seen is the latest
   });
+  // v680: the campaign's own client, for Client Details on a campaign with no
+  // client-portal request row to read contact details from.
+  csubCampaignClientById = {};
+  const clientIds = Array.from(new Set((data || []).map(s => s.client_id).filter(Boolean)));
+  if(clientIds.length){
+    const { data: cl } = await sb.from('client_accounts').select('id, full_name, company_name, email, phone').in('id', clientIds);
+    (cl || []).forEach(c => { csubCampaignClientById[c.id] = c; });
+  }
 }
 // v296: dialer is now per-caller, so a subscription can mix "our dialer"
 // and "own dialer" callers -- a single dialer_choice label would be
@@ -28437,7 +28446,9 @@ function renderCsubCampaignTable(){
   const csubCampaignTz = nonAgentDisplayTz();
   bodyEl.innerHTML = rows.map(r => {
     const submitted = r.submitted_at ? new Date(r.submitted_at).toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', ...(csubCampaignTz ? { timeZone: csubCampaignTz } : {}) }) : (r.isPlaceholder ? 'No request submitted' : '—');
-    const clientDetails = [r.contact_name, r.contact_phone, r.contact_email].filter(Boolean).join(' · ') || '—';
+    const linkedClient = csubCampaignClientById[(csubCampaignSubsByNorm[csubNormalizeLabel(csubCampaignNameValue(r))] || {}).client_id];
+    const clientDetails = [r.contact_name, r.contact_phone, r.contact_email].filter(Boolean).join(' · ')
+      || (linkedClient ? [linkedClient.full_name || linkedClient.company_name, linkedClient.phone, linkedClient.email].filter(Boolean).join(' · ') : '—');
     const statusInfo = csubCampaignStatusInfo(r);
     const leadNorm = csubNormalizeLabel(csubCampaignNameValue(r));
     const leadStats = csubCampaignLeadStatsByNorm[leadNorm];
@@ -40153,7 +40164,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '679'; // 679: campaign client + Edit fix, list download, coverage planner, autopilot, voicemail in the inbox
+const DIALER_ADMIN_VERSION = '680'; // 680: dialer campaigns no longer carry a client (679: Edit fix, list download, coverage planner, autopilot, voicemail)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
