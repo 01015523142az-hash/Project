@@ -134,3 +134,81 @@
   letter-spacing:-.02em;color:var(--num)}
 #daHost .stat span{font-family:var(--mono);font-size:10px;text-transform:uppercase;
   letter-spacing:.8px;color:var(--text-dim)}
+
+/* ---- v676: revamp ------------------------------------------------------ */
+/* The pre-portal admin console used --ink/--ink2/--line/--accent and a few
+   light-only helpers; map them onto the portal tokens so nothing renders as a
+   white card on a dark page. */
+#daHost{--ink:var(--text);--ink2:var(--text-2);--line:var(--border);--accent:var(--focus)}
+#daHost .muted{color:var(--text-2);font-size:13px;line-height:1.6}
+#daHost .btn-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#daHost .tbl-wrap{overflow:auto;border:1px solid var(--border);border-radius:10px}
+#daHost .da-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:0 0 16px;
+  position:sticky;top:0;z-index:20;background:var(--bg);padding:6px 0 10px;border-bottom:1px solid var(--border)}
+#daHost .da-inner{display:flex;gap:4px;flex-wrap:wrap}
+#daHost .da-inner button{border-radius:8px;border:1px solid transparent;background:transparent;
+  color:var(--text-2);padding:7px 14px;font-size:13px}
+#daHost .da-inner button:hover:not(:disabled){background:var(--card-hover);color:var(--text)}
+#daHost .da-inner button.active{background:var(--card);border-color:var(--border-light);color:var(--text)}
+#daHost .da-inner .badge{display:inline-block;min-width:18px;margin-left:6px;padding:1px 6px;border-radius:999px;
+  background:var(--danger);color:#fff;font-size:10.5px;font-family:var(--mono);line-height:16px;text-align:center}
+#daHost .da-top-note{margin-left:auto;font-size:12px;color:var(--text-dim)}
+#daHost .da-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:12px}
+#daHost .da-kpi{display:flex;flex-direction:column;align-items:flex-start;gap:4px;text-align:left;
+  border-radius:12px;background:var(--card);border:1px solid var(--border);padding:14px 16px}
+#daHost .da-kpi b{font-family:var(--mono);font-size:24px;font-variant-numeric:tabular-nums;color:var(--num)}
+#daHost .da-kpi span{font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim)}
+#daHost .da-kpi.warn b{color:var(--away)}
+#daHost .da-kpi.bad b{color:var(--danger)}
+#daHost .da-convo{padding:16px}
+#daHost .da-convo-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;padding-bottom:12px}
+#daHost .da-convo-bar select{padding:7px 10px;font-size:12.5px}
+#daHost .da-convo-grid{display:grid;grid-template-columns:minmax(260px,340px) 1fr;gap:14px;align-items:stretch}
+#daHost .da-convo-list{border:1px solid var(--border);border-radius:10px;overflow:auto;max-height:640px;background:var(--inset)}
+#daHost .cv-item{display:block;width:100%;text-align:left;border:none;border-bottom:1px solid var(--border);
+  border-radius:0;background:transparent;padding:10px 12px;color:var(--text)}
+#daHost .cv-item:hover:not(:disabled){background:var(--card-hover)}
+#daHost .cv-item.active{background:var(--focus-dim)}
+#daHost .cv-top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}
+#daHost .cv-name{font-weight:700;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#daHost .cv-time{font-size:11px;color:var(--text-dim);white-space:nowrap}
+#daHost .cv-last{font-size:12px;color:var(--text-2);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#daHost .cv-meta{display:flex;gap:6px;flex-wrap:wrap;margin-top:5px;font-size:10.5px;color:var(--text-dim)}
+#daHost .cv-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--focus);margin-right:4px}
+#daHost .chip{display:inline-block;padding:1px 7px;border-radius:999px;border:1px solid var(--border-light);
+  font-size:10.5px;color:var(--text-2);font-family:var(--mono)}
+#daHost .chip.bad{border-color:var(--danger);color:var(--danger)}
+#daHost .chip.good{border-color:var(--good);color:var(--good)}
+#daHost .da-convo-main{display:flex;flex-direction:column;min-width:0;border:1px solid var(--border);border-radius:10px;padding:12px;background:var(--card)}
+#daHost .da-convo-head{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding-bottom:10px;border-bottom:1px solid var(--border)}
+#daHost .da-convo-tabs{display:flex;gap:6px;padding:10px 0 0}
+#daHost .da-convo-tabs button.active{background:var(--focus-dim);border-color:var(--focus);color:var(--focus)}
+#daHost .da-convo-thread{flex:1;overflow:auto;min-height:280px;max-height:470px;padding:12px 4px}
+#daHost .da-convo-reply{display:flex;gap:8px;align-items:stretch}
+#daHost .da-convo-reply textarea{flex:1;font-family:var(--sans);font-size:13px}
+#daHost .da-empty{padding:18px;color:var(--text-dim);font-size:13px}
+#daHost .tl{display:flex;margin-bottom:9px}
+#daHost .tl.out{justify-content:flex-end}
+#daHost .tl-b{max-width:76%;padding:8px 11px;border-radius:12px;font-size:13px;background:var(--inset);border:1px solid var(--border)}
+#daHost .tl.out .tl-b{background:var(--focus-dim);border-color:var(--focus)}
+#daHost .tl-body{white-space:pre-wrap;word-break:break-word}
+#daHost .tl-foot{font-size:10.5px;margin-top:4px;color:var(--text-dim)}
+#daHost .tl.event{justify-content:center}
+#daHost .tl.event .tl-b{max-width:90%;background:transparent;border-style:dashed;font-size:12px;color:var(--text-2)}
+#daHost .tl.note .tl-b{background:var(--gold-dim);border-color:var(--gold)}
+#daHost .da-pager{display:flex;align-items:center;gap:10px;justify-content:flex-end;padding-top:10px}
+#daHost tr.ct-row{cursor:pointer}
+#daHost tr.ct-row:hover td{background:var(--card-hover)}
+#daHost .da-addform{border:1px dashed var(--border-light);border-radius:10px;padding:12px;margin-bottom:12px}
+#daHost .da-drawer{position:fixed;top:0;right:0;bottom:0;width:min(520px,100vw);z-index:900;background:var(--card);
+  border-left:1px solid var(--border-light);box-shadow:-20px 0 50px rgba(0,0,0,.35);display:flex;flex-direction:column}
+#daHost .da-drawer-head{display:flex;justify-content:space-between;gap:10px;padding:16px 18px;border-bottom:1px solid var(--border)}
+#daHost .da-drawer-title{font-size:16px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#daHost .da-drawer-body{flex:1;overflow:auto;padding:14px 18px}
+#daHost .da-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;font-size:12.5px}
+#daHost .da-facts div span{display:block;font-family:var(--mono);font-size:9.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim)}
+@media (max-width: 900px){
+  #daHost .da-convo-grid{grid-template-columns:1fr}
+  #daHost .da-convo-list{max-height:280px}
+}
+#daHost .da-convo-reply button{align-self:flex-end}

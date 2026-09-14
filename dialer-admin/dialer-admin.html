@@ -3,6 +3,46 @@
      the source. Loaded into #daHost by the portal on first open. -->
 <div id="gate" class="msg err hide"></div>
 <div id="daReadOnlyNote" class="msg warn hide"></div>
+<div class="da-top">
+  <nav class="da-inner" id="daInner" aria-label="Sections"></nav>
+  <span class="da-top-note" id="daTopNote"></span>
+</div>
+  <!-- ============================================== LIVE FLOOR ========= -->
+  <!-- v676. What is happening right now, in one place. Refreshes itself every
+       15 seconds, only while this screen is open and the browser tab is visible. -->
+  <section id="tab-floor" class="hide">
+    <div class="da-kpis" id="floorKpis">
+      <button class="da-kpi" data-go="overview/floor"><b id="kOnShift">–</b><span>On shift</span></button>
+      <button class="da-kpi" data-go="overview/floor"><b id="kOnCall">–</b><span>On a call</span></button>
+      <button class="da-kpi" data-go="overview/floor"><b id="kReady">–</b><span>Ready</span></button>
+      <button class="da-kpi" data-go="campaigns/inbound"><b id="kWaiting">–</b><span>Callers waiting</span></button>
+      <button class="da-kpi" data-go="overview/pipeline"><b id="kOverdue">–</b><span>Follow-ups overdue</span></button>
+      <button class="da-kpi" data-go="conversations/inbox"><b id="kReply">–</b><span>Texts awaiting reply</span></button>
+    </div>
+    <div class="hint" id="floorUpdated" style="margin:0 0 10px"></div>
+    <div class="panel">
+      <h2>Who is on shift</h2>
+      <p class="hint">Live sessions, newest first — what each agent is set to right now.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Agent</th><th>Status</th><th>Queue</th><th>Since</th></tr></thead>
+          <tbody id="shiftRows"><tr><td colspan="4">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>On the line now</h2>
+      <p class="hint">Callers currently waiting, and who is free to take them.</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Queue</th><th>From</th><th>Waiting</th><th>Offered to</th></tr></thead>
+          <tbody id="waitingRows"><tr><td colspan="4">Nobody waiting.</td></tr></tbody>
+        </table>
+      </div>
+      <div id="availableNow" class="hint" style="margin-top:12px"></div>
+    </div>
+  </section>
+
   <!-- ================================================ NUMBERS ========== -->
   <section id="tab-numbers" class="hide">
     <div class="panel">
@@ -270,16 +310,6 @@
       </div>
     </div>
 
-    <div class="panel">
-      <h2>Who is on shift</h2>
-      <p class="hint">Live sessions, newest first — what each agent is set to right now.</p>
-      <div class="scroll">
-        <table>
-          <thead><tr><th>Agent</th><th>Status</th><th>Queue</th><th>Since</th></tr></thead>
-          <tbody id="shiftRows"><tr><td colspan="4">Loading…</td></tr></tbody>
-        </table>
-      </div>
-    </div>
 
     <!-- v610: booking availability. Owned HERE, by the floor, rather than by
          the rep in their own console -- when somebody can be booked is a
@@ -310,7 +340,7 @@
         A queue answers a number, greets the caller, rings whoever is available
         and takes a message if nobody is. Agents only ring when their status
         allows inbound — <b>Ready</b> and <b>Inbound only</b> by default, which
-        is set on the Agents tab.
+        is set under Team &amp; settings.
       </p>
       <div class="row">
         <div class="field" style="min-width:240px"><label for="qName">Name</label>
@@ -342,17 +372,6 @@
       </div>
     </div>
 
-    <div class="panel">
-      <h2>On the line now</h2>
-      <p class="hint">Callers currently waiting, and who is free to take them.</p>
-      <div class="scroll">
-        <table>
-          <thead><tr><th>Queue</th><th>From</th><th>Waiting</th><th>Offered to</th></tr></thead>
-          <tbody id="waitingRows"><tr><td colspan="4">Nobody waiting.</td></tr></tbody>
-        </table>
-      </div>
-      <div id="availableNow" class="hint" style="margin-top:12px"></div>
-    </div>
   </section>
 
   <!-- =============================================== CALL LOG ========== -->
@@ -576,44 +595,126 @@
        personally sent into, a reviewer sees all of them. Threads are scoped
        to numbers the dialer has engaged, so client-notification traffic from
        the other number stays out. -->
+  <!-- v676: the floor's inbox. dialer_admin_conversations() returns every
+       conversation across every rep and channel, reviewers only; the thread
+       pane is the contact's whole timeline (texts, calls, notes), so a
+       manager reads one history instead of three screens. -->
   <section id="tab-inbox" class="hide">
-    <div class="panel">
-      <h2>Messages</h2>
-      <p class="hint">
-        Two-way SMS on <span class="mono">+1 312-638-0895</span>. Agents see conversations
-        they have texted in; team leaders, Quality and admins see every conversation.
-        Numbers on the internal do-not-call list cannot be texted at all.
-      </p>
-      <div class="row" style="margin-bottom:10px">
-        <button id="inboxRefresh">Refresh</button>
-        <span id="inboxMsg" style="font-size:13px;color:var(--ink2)"></span>
+    <div class="panel da-convo">
+      <div class="da-convo-bar">
+        <input id="cvSearch" type="search" placeholder="Search name, number, message…" style="flex:1;min-width:200px">
+        <select id="cvRep"><option value="">All reps</option></select>
+        <select id="cvChannel"><option value="">All channels</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select>
+        <select id="cvView">
+          <option value="">Everything</option>
+          <option value="reply">Needs a reply</option>
+          <option value="unread">Unread</option>
+          <option value="nocontact">Not in the dialer</option>
+        </select>
+        <button id="inboxRefresh" class="sm">Refresh</button>
+        <span id="inboxMsg" class="result-count"></span>
       </div>
-
-      <div style="display:grid;grid-template-columns:300px 1fr;gap:14px;align-items:start">
-        <div class="scroll" style="max-height:520px">
-          <table>
-            <thead><tr><th>Conversation</th></tr></thead>
-            <tbody id="inboxThreads"><tr><td>Loading…</td></tr></tbody>
-          </table>
-        </div>
-
-        <div>
-          <div class="scroll" id="inboxThreadWrap"
-               style="max-height:430px;padding:12px;background:#fbfcfc">
-            <div id="inboxThread" style="font-size:13px;color:var(--ink2)">
-              Pick a conversation on the left.
-            </div>
+      <div class="da-convo-grid">
+        <div class="da-convo-list" id="inboxThreads"><div class="da-empty">Loading…</div></div>
+        <div class="da-convo-main">
+          <div class="da-convo-head" id="cvHead"><div class="da-empty" style="padding:0">Pick a conversation.</div></div>
+          <div class="da-convo-tabs hide" id="cvTabs">
+            <button class="sm active" data-cv="all">Everything</button>
+            <button class="sm" data-cv="sms">Messages</button>
+            <button class="sm" data-cv="call">Calls</button>
+            <button class="sm" data-cv="note">Notes</button>
           </div>
-          <div class="row" style="margin:10px 0 0;align-items:stretch">
-            <textarea id="inboxBody" rows="2" style="flex:1;min-width:240px"
-              placeholder="Reply…" disabled></textarea>
+          <div class="da-convo-thread" id="inboxThreadWrap"><div id="inboxThread"></div></div>
+          <div class="da-convo-reply">
+            <textarea id="inboxBody" rows="2" placeholder="Reply by SMS…" disabled></textarea>
             <button class="primary" id="inboxSend" disabled>Send</button>
           </div>
-          <div class="hint" id="inboxLen" style="margin-top:4px"></div>
+          <div class="hint" id="inboxLen" style="margin:4px 0 0"></div>
         </div>
       </div>
     </div>
   </section>
+
+  <!-- =============================================== CONTACTS ========== -->
+  <!-- v676. Every dialer contact, searchable and paged on the server, with
+       its whole history one click away. -->
+  <section id="tab-contacts" class="hide">
+    <div class="panel">
+      <div class="da-convo-bar">
+        <input id="ctSearch" type="search" placeholder="Search name, phone, address, email…" style="flex:1;min-width:220px">
+        <select id="ctCampaign"><option value="">All campaigns</option></select>
+        <select id="ctList"><option value="">All lists</option></select>
+        <select id="ctStatus">
+          <option value="">Any status</option><option value="new">New</option>
+          <option value="queued">Queued for a retry</option><option value="retired">Retired</option>
+        </select>
+        <span id="ctCount" class="result-count"></span>
+      </div>
+      <div class="da-convo-bar" style="padding-top:0">
+        <button id="ctAdd" class="sm">Add contact</button>
+        <button id="ctExport" class="sm">Export CSV</button>
+        <button id="ctRequeueSel" class="sm" disabled>Requeue selected</button>
+        <span id="ctMsg" class="hint" style="margin:0"></span>
+      </div>
+      <div id="ctAddWrap" class="da-addform hide">
+        <div class="row">
+          <div class="field"><label>First name</label><input id="ctAFirst"></div>
+          <div class="field"><label>Last name</label><input id="ctALast"></div>
+          <div class="field"><label>Phone</label><input id="ctAPhone" class="mono" placeholder="(555) 123-4567"></div>
+          <div class="field"><label>Email</label><input id="ctAEmail"></div>
+        </div>
+        <div class="row">
+          <div class="field" style="flex:1;min-width:220px"><label>Address</label><input id="ctAAddr" style="width:100%"></div>
+          <div class="field"><label>City</label><input id="ctACity"></div>
+          <div class="field"><label>State</label><input id="ctAState" style="width:70px" maxlength="2"></div>
+          <div class="field"><label>Zip</label><input id="ctAZip" style="width:90px"></div>
+          <div class="field"><label>Campaign</label><select id="ctACampaign"></select></div>
+          <button id="ctASave" class="primary">Save contact</button>
+        </div>
+      </div>
+      <div class="scroll" style="max-height:none">
+        <table>
+          <thead><tr><th style="width:28px"><input type="checkbox" id="ctAll" aria-label="Select all on this page"></th><th>Contact</th><th>Phone</th><th>Property</th>
+            <th>Campaign · list</th><th>Status</th><th class="num">Attempts</th><th>Last outcome</th><th>Next attempt</th></tr></thead>
+          <tbody id="ctRows"><tr><td colspan="9">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <div class="da-pager">
+        <button id="ctPrev" class="sm">‹ Previous</button>
+        <span id="ctPage" class="hint" style="margin:0"></span>
+        <button id="ctNext" class="sm">Next ›</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- Contact profile drawer, shared by Contacts and the inbox. -->
+  <div id="ctDrawer" class="da-drawer hide" role="dialog" aria-label="Contact">
+    <div class="da-drawer-head">
+      <div style="min-width:0">
+        <div id="cdName" class="da-drawer-title"></div>
+        <div id="cdSub" class="hint" style="margin:2px 0 0"></div>
+      </div>
+      <button id="cdClose" class="sm" aria-label="Close">✕</button>
+    </div>
+    <div class="da-drawer-body">
+      <div id="cdFacts" class="da-facts"></div>
+      <div class="btn-row" id="cdActions" style="margin:10px 0 14px">
+        <button id="cdRequeue" class="sm">Requeue now</button>
+        <button id="cdRetire" class="sm">Retire</button>
+        <button id="cdOpenConvo" class="sm">Open conversation</button>
+      </div>
+      <div id="cdActMsg" class="hint" style="margin:-6px 0 10px"></div>
+      <div class="fb-label" style="margin-bottom:6px">Numbers</div>
+      <div id="cdPhones" style="margin-bottom:14px"></div>
+      <div class="fb-label" style="margin-bottom:6px">Add a note</div>
+      <div class="da-convo-reply" style="margin-bottom:14px">
+        <textarea id="cdNote" rows="2" placeholder="Visible to the team on this contact's timeline"></textarea>
+        <button id="cdNoteSave" class="sm primary">Add</button>
+      </div>
+      <div class="fb-label" style="margin-bottom:6px">Timeline</div>
+      <div id="cdTimeline"></div>
+    </div>
+  </div>
 
   <!-- =============================================== PIPELINE ========== -->
   <!-- v595. The team's follow-ups and opportunities in one place. In the

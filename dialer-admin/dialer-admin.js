@@ -62,6 +62,8 @@ const DA_WRITE_IDS = {
   lists: ['impBtn', 'impCampaign', 'impName', 'impFile', 'impCsv', 'impScrubbed', 'impScrubDate'],
   campaigns: ['cCreate', 'cName', 'cMode', 'cStart', 'cEnd'],
   inbound: ['qCreate', 'qName', 'qOpen', 'qClose'],
+  contacts: ['ctAdd', 'ctASave'],
+  inbox: ['inboxBody', 'inboxSend'],
 };
 function applyReadOnly(tab) {
   // Everything back on, then this section's rules.
@@ -94,37 +96,149 @@ async function boot() {
   isOwnerAdmin = DA.role === 'owner' || DA.role === 'admin';
   isDialerAdmin = isOwnerAdmin;
   canReview = true;                 // the portal only mounts this for a role that may view a section
-  canManage = DA.canEdit('numbers');
+  canManage = false;
   $('impScrubDate').value = new Date().toISOString().slice(0, 10);
+  // v676: only what every screen needs. Coverage, the number pool and the
+  // lists table used to load here for every visit; they now load when their
+  // own screen is opened.
   await loadCampaigns();
-  loadCoverage(); loadPool(); loadLists();
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopFloorTimer();
+    else if (daPane === 'floor' && !$('tab-floor').classList.contains('hide')) startFloorTimer(true);
+  });
 }
 
-const DA_SECTIONS = ['numbers', 'lists', 'campaigns', 'agents', 'inbound', 'calllog', 'research', 'reports', 'inbox', 'pipeline', 'settings'];
+// v676: eleven sidebar entries became five groups, each with its own tabs
+// along the top. Permissions are per GROUP (roles.dialer_admin_sections).
+const DA_GROUPS = {
+  overview:      [['floor', 'Live floor'], ['reports', 'Performance'], ['pipeline', 'Pipeline']],
+  campaigns:     [['campaigns', 'Campaigns'], ['lists', 'Lists'], ['inbound', 'Inbound queues']],
+  conversations: [['inbox', 'Inbox'], ['contacts', 'Contacts'], ['calllog', 'Call log']],
+  numbers:       [['numbers', 'Numbers'], ['research', 'Research & DNC']],
+  team:          [['agents', 'Statuses & availability'], ['settings', 'Settings']],
+};
+const DA_PANES = Object.values(DA_GROUPS).flat().map(([k]) => k);
+// Links and bookmarks from before v676 name a section, not a group.
+const DA_LEGACY = {
+  reports: 'overview', pipeline: 'overview', agents: 'team', settings: 'team',
+  lists: 'campaigns', inbound: 'campaigns', inbox: 'conversations', calllog: 'conversations',
+  research: 'numbers', contacts: 'conversations', floor: 'overview',
+};
+const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } };
 
-// v675: the portal's sidebar calls this. Edit is PER SECTION (the portal's
-// role editor), so canManage is set for the section being opened before it
-// renders -- every existing `canManage` check in this file then answers for
-// the screen on show.
-async function showSection(tab) {
-  if (!DA_SECTIONS.includes(tab)) tab = 'numbers';
+function daResolve(path) {
+  const [a, b] = String(path || '').split('/');
+  const group = DA_GROUPS[a] ? a : (DA_LEGACY[a] || 'overview');
+  const panes = DA_GROUPS[group].map(([k]) => k);
+  let pane = panes.includes(b) ? b : (!DA_GROUPS[a] && panes.includes(a) ? a : null);
+  if (!pane) pane = lsGet('da.pane.' + group);
+  if (!panes.includes(pane)) pane = panes[0];
+  return { group, pane };
+}
+
+let daGroup = null;
+let daPane = null;
+const daLoadedOnce = new Set();
+let inboxBadge = 0;
+
+function renderInnerNav() {
+  const nav = $('daInner');
+  nav.innerHTML = DA_GROUPS[daGroup].map(([k, label]) => `<button type="button" data-pane="${k}"
+      class="${k === daPane ? 'active' : ''}">${esc(label)}${k === 'inbox' && inboxBadge
+        ? `<span class="badge">${inboxBadge}</span>` : ''}</button>`).join('');
+  nav.querySelectorAll('button').forEach((b) => {
+    b.onclick = () => showSection(daGroup + '/' + b.dataset.pane);
+  });
+  $('daTopNote').textContent = canManage ? '' : 'View only';
+}
+
+// The portal's sidebar calls this with a group ("conversations"), a group and
+// tab ("conversations/contacts"), or a pre-v676 section key ("inbox").
+async function showSection(path) {
+  const { group, pane } = daResolve(path);
   await boot();
-  canManage = DA.canEdit(tab);
-  DA_SECTIONS.forEach((t) => $('tab-' + t).classList.toggle('hide', t !== tab));
-  applyReadOnly(tab);
+  daGroup = group;
+  daPane = pane;
+  canManage = DA.canEdit(group);
+  lsSet('da.pane.' + group, pane);
+  renderInnerNav();
+  DA_PANES.forEach((t) => $('tab-' + t).classList.toggle('hide', t !== pane));
+  closeContactDrawer();
+  applyReadOnly(pane);
+  if (typeof DA.onNavigate === 'function') DA.onNavigate(group + '/' + pane);
 
-    // Loaded on first open rather than at boot: most sessions never look at
-    // the call log, and the query reads the whole CDR table.
-    if (tab === 'calllog' && !callLogLoaded) initCallLog();
-    // Same reasoning for the inbox: it is a per-agent read most sessions
-    // never open, and it should be fresh when it IS opened rather than as
-    // of whenever the page loaded.
-    if (tab === 'inbox') loadInbox();
-    if (tab === 'agents') { loadStatusEditor(); loadCalendarAdmin(); }
-    if (tab === 'inbound') loadQueues();
-    if (tab === 'pipeline') loadPipeline();   // v595: fresh each time it is opened
-    if (tab === 'settings') loadSettingsTab(); // v648
+  if (pane === 'floor') startFloorTimer(true); else stopFloorTimer();
+  const first = !daLoadedOnce.has(pane);
+  daLoadedOnce.add(pane);
+
+  // Loaded on first open rather than at boot: most sessions never look at
+  // the call log, and the query reads the whole CDR table.
+  if (pane === 'calllog' && !callLogLoaded) initCallLog();
+  if (pane === 'inbox') loadInbox();
+  if (pane === 'contacts') initContacts();
+  if (pane === 'agents') { loadStatusEditor(); loadCalendarAdmin(); }
+  if (pane === 'inbound') loadQueues();
+  if (pane === 'pipeline') loadPipeline();    // v595: fresh each time it is opened
+  if (pane === 'settings') loadSettingsTab(); // v648
+  if (pane === 'lists' && first) loadLists();
+  if (pane === 'numbers' && first) { loadCoverage(); loadPool(); }
 }
+
+// ------------------------------------------------------------ live floor --
+// v676. One screen for "what is happening right now". Polls every 15 s, but
+// only while it is the screen on show AND the browser tab is visible -- a
+// manager who leaves it open in a background tab costs nothing.
+let floorTimer = null;
+let floorThreadsAt = 0;
+function startFloorTimer(now) {
+  stopFloorTimer();
+  if (now) loadFloor();
+  floorTimer = setInterval(() => { if (!document.hidden) loadFloor(); }, 15000);
+}
+function stopFloorTimer() {
+  if (floorTimer) { clearInterval(floorTimer); floorTimer = null; }
+}
+
+async function loadFloor() {
+  const nowIso = new Date().toISOString();
+  const fresh = new Date(Date.now() - 120000).toISOString();
+  const [sessions, overdue] = await Promise.all([
+    sb.from('dialer_agent_sessions').select('agent_id, status, agent_status')
+      .is('ended_at', null).gt('last_heartbeat_at', fresh),
+    sb.from('dialer_follow_ups').select('id', { count: 'exact', head: true })
+      .eq('status', 'open').lt('due_at', nowIso),
+  ]);
+  const ss = sessions.data || [];
+  const kpi = (id, n, cls) => {
+    const el = $(id);
+    el.textContent = n === null || n === undefined ? '–' : n;
+    el.parentElement.classList.remove('warn', 'bad');
+    if (cls) el.parentElement.classList.add(cls);
+  };
+  kpi('kOnShift', new Set(ss.map((s) => s.agent_id)).size);
+  kpi('kOnCall', ss.filter((s) => s.status === 'on_call').length);
+  kpi('kReady', ss.filter((s) => s.agent_status === 'ready' && s.status !== 'on_call').length);
+  kpi('kOverdue', overdue.count ?? null, overdue.count ? 'bad' : '');
+
+  // The conversations read is the heaviest of these; once a minute is plenty.
+  if (Date.now() - floorThreadsAt > 60000) {
+    floorThreadsAt = Date.now();
+    const { data } = await sb.rpc('dialer_admin_conversations');
+    if (data) { cvRows = data; updateInboxBadge(); }
+  }
+  kpi('kReply', cvRows.filter((r) => r.last_direction === 'inbound').length,
+    cvRows.some((r) => r.last_direction === 'inbound') ? 'warn' : '');
+
+  await Promise.all([loadShift(), loadWaiting()]);
+  const waiting = $('waitingRows').querySelectorAll('tr td[class="mono"]').length;
+  kpi('kWaiting', waiting, waiting ? 'bad' : '');
+  $('floorUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    + ' · refreshes every 15 seconds while this screen is open';
+}
+$('floorKpis').querySelectorAll('[data-go]').forEach((b) => {
+  b.onclick = () => showSection(b.dataset.go);
+});
 
 // ------------------------------------------------------------- settings --
 // v648. Number assignment and console access, both of which used to require
@@ -3430,12 +3544,16 @@ rpInitDates();
 
 
 // ------------------------------------------------------------------ inbox --
-// Reads v542's RPCs, which carry the visibility rule themselves: an agent
-// sees only threads they have personally texted in, a reviewer sees all.
-// Nothing is filtered client-side, so opening this page directly gains
-// nobody a conversation they should not see.
+// v676: the floor's inbox. dialer_admin_conversations() carries the rule
+// itself -- reviewers (admins, team leaders, Quality) get every conversation
+// across every rep and channel, anyone else gets nothing -- so opening this
+// page directly gains nobody a conversation they should not see.
 let inboxPhone = null;
 let inboxName = null;
+let cvRows = [];
+let cvActive = null;        // the row on show
+let cvItems = [];           // its timeline
+let cvKind = 'all';
 
 const smsTime = (t) => new Date(t).toLocaleString([], {
   month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -3447,99 +3565,507 @@ const smsSegments = (t) => {
   const per = unicode ? 70 : 160;
   return Math.ceil(t.length / per);
 };
+const fmtDur = (s) => (s ? `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s` : '');
+
+function updateInboxBadge() {
+  inboxBadge = cvRows.filter((r) => Number(r.unread) > 0).length;
+  if (daGroup === 'conversations') renderInnerNav();
+}
 
 async function loadInbox() {
-  const { data, error } = await sb.rpc('dialer_sms_threads');
-  if (error) { $('inboxThreads').innerHTML = `<tr><td>${esc(error.message)}</td></tr>`; return; }
-  const rows = data || [];
-  $('inboxMsg').textContent = rows.length
-    ? `${rows.length} conversation${rows.length === 1 ? '' : 's'}`
-    : '';
-  $('inboxThreads').innerHTML = rows.length
-    ? rows.map((r) => `<tr>
-        <td style="cursor:pointer" data-ph="${esc(r.contact_phone)}"
-            data-nm="${esc(r.contact_name || '')}">
-          <div style="display:flex;justify-content:space-between;gap:8px">
-            <strong>${esc(r.contact_name || r.contact_phone)}</strong>
-            <span style="font-size:11px;color:var(--ink2)">${smsTime(r.last_at)}</span>
-          </div>
-          <div class="mono" style="font-size:11px;color:var(--ink2)">${esc(r.contact_phone)}</div>
-          <div style="font-size:12px;color:var(--ink2);margin-top:3px;
-                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
-            ${r.last_direction === 'inbound' ? '' : '<span style="color:var(--accent)">You: </span>'}${esc(r.last_body || '')}
-          </div>
-        </td></tr>`).join('')
-    : '<tr><td>No conversations yet.</td></tr>';
+  const { data, error } = await sb.rpc('dialer_admin_conversations');
+  if (error) { $('inboxThreads').innerHTML = `<div class="da-empty">${esc(error.message)}</div>`; return; }
+  cvRows = data || [];
+  floorThreadsAt = Date.now();
+  const repSel = $('cvRep');
+  const keep = repSel.value;
+  const reps = [...new Set(cvRows.flatMap((r) => r.reps || []))].sort();
+  repSel.innerHTML = '<option value="">All reps</option>'
+    + reps.map((n) => `<option${n === keep ? ' selected' : ''}>${esc(n)}</option>`).join('');
+  updateInboxBadge();
+  renderInbox();
+}
 
-  $('inboxThreads').querySelectorAll('td[data-ph]').forEach((td) => {
-    td.onclick = () => openThread(td.dataset.ph, td.dataset.nm);
+function renderInbox() {
+  const q = $('cvSearch').value.trim().toLowerCase();
+  const qDigits = q.replace(/\D/g, '');
+  const rep = $('cvRep').value;
+  const ch = $('cvChannel').value;
+  const view = $('cvView').value;
+  const rows = cvRows.filter((r) => {
+    if (rep && !(r.reps || []).includes(rep)) return false;
+    if (ch && !(r.channels || []).includes(ch)) return false;
+    if (view === 'reply' && r.last_direction !== 'inbound') return false;
+    if (view === 'unread' && !(Number(r.unread) > 0)) return false;
+    if (view === 'nocontact' && r.contact_id) return false;
+    if (q) {
+      const hay = `${r.contact_name || ''} ${r.last_body || ''} ${r.campaign_name || ''}`.toLowerCase();
+      const phoneHit = qDigits.length >= 3 && String(r.contact_phone || '').replace(/\D/g, '').includes(qDigits);
+      if (!hay.includes(q) && !phoneHit) return false;
+    }
+    return true;
+  });
+  $('inboxMsg').textContent = `${rows.length} of ${cvRows.length}`;
+  $('inboxThreads').innerHTML = rows.length ? rows.map((r) => {
+    const unread = Number(r.unread) > 0;
+    return `<button type="button" class="cv-item${cvActive && cvActive.phone_key === r.phone_key ? ' active' : ''}" data-k="${esc(r.phone_key)}">
+      <div class="cv-top">
+        <span class="cv-name">${unread ? '<span class="cv-dot"></span>' : ''}${esc(r.contact_name || r.contact_phone)}</span>
+        <span class="cv-time">${r.last_at ? smsTime(r.last_at) : ''}</span>
+      </div>
+      <div class="cv-last">${r.last_direction === 'inbound' ? '' : '<b>Team:</b> '}${esc(r.last_body || '')}</div>
+      <div class="cv-meta">
+        ${(r.channels || []).map((c) => `<span class="chip">${c === 'whatsapp' ? 'WhatsApp' : 'SMS'}</span>`).join('')}
+        ${Number(r.calls) ? `<span class="chip">${r.calls} call${Number(r.calls) === 1 ? '' : 's'}</span>` : ''}
+        ${r.on_dnc ? '<span class="chip bad">DNC</span>' : ''}
+        ${r.last_direction === 'inbound' ? '<span class="chip good">Needs reply</span>' : ''}
+        ${(r.reps || []).length ? `<span>${esc(r.reps.join(', '))}</span>` : ''}
+      </div>
+    </button>`;
+  }).join('') : `<div class="da-empty">${cvRows.length ? 'Nothing matches these filters.' : 'No conversations yet.'}</div>`;
+  $('inboxThreads').querySelectorAll('.cv-item').forEach((b) => {
+    b.onclick = () => openThread(cvRows.find((r) => r.phone_key === b.dataset.k));
+  });
+}
+['cvRep', 'cvChannel', 'cvView'].forEach((id) => $(id).addEventListener('change', renderInbox));
+$('cvSearch').addEventListener('input', renderInbox);
+
+// The same history the agent console shows: every text, call and note for the
+// contact (dialer_contact_timeline), or just the texts when the number is not a
+// dialer contact.
+async function fetchTimeline(contactId, phone) {
+  if (contactId) {
+    const { data, error } = await sb.rpc('dialer_contact_timeline', { p_contact: contactId });
+    if (error) throw error;
+    return data || [];
+  }
+  const { data, error } = await sb.rpc('dialer_sms_thread', { p_phone: phone });
+  if (error) throw error;
+  return (data || []).map((m) => ({
+    kind: 'sms', at: m.message_at, direction: m.direction, body: m.body,
+    actor: m.agent_name, meta: { provider: m.provider } }));
+}
+
+function timelineHtml(items, kind, newestFirst) {
+  const list = items.filter((i) => kind === 'all' || i.kind === kind
+    || (kind === 'note' && (i.kind === 'opportunity' || i.kind === 'follow_up')))
+    .sort((a, b) => (new Date(a.at) - new Date(b.at)) * (newestFirst ? -1 : 1));
+  if (!list.length) return '<div class="da-empty">Nothing here yet.</div>';
+  return list.map((i) => {
+    const m = i.meta || {};
+    const foot = `${i.at ? smsTime(i.at) : ''}${i.actor ? ' · ' + esc(i.actor) : ''}`;
+    if (i.kind === 'sms') {
+      const out = i.direction !== 'inbound';
+      return `<div class="tl ${out ? 'out' : ''}"><div class="tl-b">
+        <div class="tl-body">${esc(i.body || '')}</div>
+        <div class="tl-foot">${m.provider === 'telnyx_whatsapp' ? 'WhatsApp · ' : ''}${foot}</div></div></div>`;
+    }
+    if (i.kind === 'call') {
+      const bits = [i.direction === 'inbound' ? 'Inbound call' : 'Outbound call', i.title,
+        m.talk_seconds ? fmtDur(m.talk_seconds) : '', m.left_voicemail ? 'voicemail left' : ''].filter(Boolean);
+      return `<div class="tl event"><div class="tl-b">
+        📞 ${esc(bits.join(' · '))}
+        ${m.has_recording ? `<button class="sm" data-rec="${esc(i.ref_id)}" style="margin-left:8px">Play</button>` : ''}
+        ${i.body ? `<div class="tl-body" style="color:var(--danger)">${esc(i.body)}</div>` : ''}
+        <div class="tl-foot">${foot}</div></div></div>`;
+    }
+    return `<div class="tl event note"><div class="tl-b">
+      <b>${esc(i.title || i.kind)}</b>${m.stage ? ' · ' + esc(m.stage) : ''}
+      <div class="tl-body">${esc(i.body || '')}</div>
+      <div class="tl-foot">${foot}</div></div></div>`;
+  }).join('');
+}
+
+function wireRecordings(root) {
+  root.querySelectorAll('[data-rec]').forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = '…';
+      const res = await callFn('dialer-recording', { attempt_id: b.dataset.rec }).catch(() => null);
+      if (!res?.ok || !res.url) { b.textContent = 'No recording'; return; }
+      const audio = document.createElement('audio');
+      audio.controls = true; audio.autoplay = true; audio.src = res.url;
+      audio.style.cssText = 'display:block;height:34px;margin-top:6px;max-width:100%';
+      b.replaceWith(audio);
+    };
   });
 }
 
-async function openThread(phone, name) {
-  inboxPhone = phone;
-  inboxName = name || null;
-  // v593: no pull any more -- Telnyx pushes replies to telnyx-sms-webhook.
-  const { data, error } = await sb.rpc('dialer_sms_thread', { p_phone: phone });
-  if (error) { $('inboxThread').innerHTML = esc(error.message); return; }
-  const msgs = data || [];
-
-  $('inboxThread').innerHTML = msgs.length
-    ? msgs.map((m) => {
-      const out = m.direction !== 'inbound';
-      return `<div style="display:flex;justify-content:${out ? 'flex-end' : 'flex-start'};margin-bottom:8px">
-        <div style="max-width:74%;padding:8px 11px;border-radius:10px;font-size:13px;
-                    background:${out ? 'var(--accent)' : '#fff'};
-                    color:${out ? '#fff' : 'var(--ink)'};
-                    border:1px solid ${out ? 'var(--accent)' : 'var(--line)'}">
-          <div style="white-space:pre-wrap">${esc(m.body || '')}</div>
-          <div style="font-size:10.5px;margin-top:4px;opacity:.75">
-            ${smsTime(m.message_at)}${out && m.agent_name ? ' \u00b7 ' + esc(m.agent_name) : ''}
-          </div>
-        </div></div>`;
-    }).join('')
-    : '<div style="color:var(--ink2)">No messages in this conversation.</div>';
-
-  // Scroll to newest, which is what anyone opening a thread wants to read.
+function renderThread() {
+  $('inboxThread').innerHTML = timelineHtml(cvItems, cvKind, false);
+  wireRecordings($('inboxThread'));
   const wrap = $('inboxThreadWrap');
-  wrap.scrollTop = wrap.scrollHeight;
+  wrap.scrollTop = wrap.scrollHeight;   // newest at the bottom, like any chat
+}
+$('cvTabs').querySelectorAll('[data-cv]').forEach((b) => {
+  b.onclick = () => {
+    cvKind = b.dataset.cv;
+    $('cvTabs').querySelectorAll('[data-cv]').forEach((x) => x.classList.toggle('active', x === b));
+    renderThread();
+  };
+});
 
-  $('inboxBody').disabled = false;
-  $('inboxSend').disabled = false;
-  $('inboxBody').focus();
+async function openThread(row) {
+  if (!row) return;
+  cvActive = row;
+  inboxPhone = row.contact_phone;
+  inboxName = row.contact_name || null;
+  renderInbox();
+  $('cvHead').innerHTML = `<div style="min-width:0">
+      <div class="da-drawer-title">${esc(row.contact_name || row.contact_phone)}</div>
+      <div class="hint" style="margin:2px 0 0"><span class="mono">${esc(row.contact_phone)}</span>
+        ${row.campaign_name ? ' · ' + esc(row.campaign_name) : ''}
+        ${(row.reps || []).length ? ' · worked by ' + esc(row.reps.join(', ')) : ''}</div>
+    </div>
+    <div class="btn-row">
+      ${row.on_dnc ? '<span class="chip bad">Do not call</span>' : ''}
+      ${row.contact_id ? '<button class="sm" id="cvProfile">Contact profile</button>' : '<span class="chip">Not a dialer contact</span>'}
+    </div>`;
+  if ($('cvProfile')) $('cvProfile').onclick = () => openContactDrawer(row.contact_id);
+  show($('cvTabs'), true);
+  $('inboxThread').innerHTML = '<div class="da-empty">Loading…</div>';
+  try {
+    cvItems = await fetchTimeline(row.contact_id, row.contact_phone);
+  } catch (e) {
+    $('inboxThread').innerHTML = `<div class="da-empty">${esc(e.message)}</div>`;
+    return;
+  }
+  if (cvActive !== row) return;          // they clicked on while it loaded
+  renderThread();
+  // Opening a thread is reading it.
+  if (Number(row.unread) > 0) {
+    sb.rpc('dialer_mark_thread_read', { p_phone: row.contact_phone }).then(() => {
+      row.unread = 0; updateInboxBadge(); renderInbox();
+    });
+  }
+  const canSend = canManage && !row.on_dnc;
+  $('inboxBody').disabled = !canSend;
+  $('inboxSend').disabled = !canSend;
+  $('inboxBody').placeholder = row.on_dnc ? 'This number is on do-not-call and cannot be texted.'
+    : canManage ? 'Reply by SMS…' : 'View only — your role cannot send from here.';
 }
 
 $('inboxBody').addEventListener('input', () => {
   const t = $('inboxBody').value;
   const seg = smsSegments(t);
   $('inboxLen').textContent = t
-    ? `${t.length} characters \u00b7 ${seg} segment${seg === 1 ? '' : 's'}`
-      + (/[^\u0000-\u007F]/.test(t) ? ' (non-ASCII \u2014 70 chars per segment)' : '')
+    ? `${t.length} characters · ${seg} segment${seg === 1 ? '' : 's'}`
+      + (/[^\u0000-\u007F]/.test(t) ? ' (non-ASCII — 70 chars per segment)' : '')
     : '';
 });
 
 $('inboxSend').onclick = async () => {
   const text = $('inboxBody').value.trim();
-  if (!inboxPhone || !text) return;
+  if (!inboxPhone || !text || !canManage) return;
   $('inboxSend').disabled = true;
   const r = await callFn('dialer-sms', {
     action: 'send', to: inboxPhone, body: text, name: inboxName || undefined,
   });
   $('inboxSend').disabled = false;
-  if (!r?.ok) { say($('inboxMsg'), r?.error || 'Send failed', 'err'); return; }
-  if (!r.sent) { say($('inboxMsg'), r.detail || 'Not sent.', 'warn'); return; }
+  if (!r?.ok) { $('inboxLen').textContent = r?.error || 'Send failed'; return; }
+  if (!r.sent) { $('inboxLen').textContent = r.detail || 'Not sent.'; return; }
   $('inboxBody').value = '';
   $('inboxLen').textContent = '';
   // Re-read rather than appending optimistically: dialer-sms writes the row
-  // into dialer_sms_messages itself, so the thread is the source of truth and an
-  // optimistic bubble could disagree with it.
-  await openThread(inboxPhone, inboxName);
-  loadInbox();
+  // itself, so the thread is the source of truth.
+  const row = cvActive;
+  await loadInbox();
+  openThread(cvRows.find((x) => x.phone_key === row.phone_key) || row);
 };
 
-$('inboxRefresh').onclick = () => {
-  loadInbox();
-  if (inboxPhone) openThread(inboxPhone, inboxName);
+$('inboxRefresh').onclick = async () => {
+  const k = cvActive && cvActive.phone_key;
+  await loadInbox();
+  if (k) openThread(cvRows.find((x) => x.phone_key === k));
+};
+
+// --------------------------------------------------------------- contacts --
+// v676. Server-side search and paging: the table is every contact on every
+// list, which is fine at hundreds and would not be at hundreds of thousands.
+const CT_PAGE = 50;
+let ctOffset = 0;
+let ctTotal = 0;
+let ctPageRows = [];
+let ctLists = [];
+let ctDispo = {};
+let ctInit = false;
+const ctSelected = new Set();
+let ctSearchTimer = null;
+
+async function initContacts() {
+  if (!ctInit) {
+    ctInit = true;
+    const [lists, dispos] = await Promise.all([
+      sb.from('dialer_lists').select('id, name, campaign_id').order('created_at', { ascending: false }).limit(500),
+      sb.from('dialer_dispositions').select('code, label'),
+    ]);
+    ctLists = lists.data || [];
+    (dispos.data || []).forEach((d) => { ctDispo[d.code] = d.label; });
+    const campOpts = campaigns.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    $('ctCampaign').innerHTML = '<option value="">All campaigns</option>' + campOpts;
+    $('ctACampaign').innerHTML = '<option value="">No campaign</option>' + campOpts;
+    fillCtLists();
+  }
+  loadContacts();
+}
+function fillCtLists() {
+  const camp = $('ctCampaign').value;
+  $('ctList').innerHTML = '<option value="">All lists</option>' + ctLists
+    .filter((l) => !camp || l.campaign_id === camp)
+    .map((l) => `<option value="${l.id}">${esc(l.name)}</option>`).join('');
+}
+
+function contactsQuery(select, opts) {
+  let q = sb.from('dialer_contacts').select(select, opts);
+  const term = $('ctSearch').value.trim().replace(/[,()*%\\]/g, ' ').trim();
+  if (term) {
+    const digits = term.replace(/\D/g, '');
+    const parts = [`contact_name.ilike.*${term}*`, `address.ilike.*${term}*`, `email.ilike.*${term}*`, `city.ilike.*${term}*`];
+    if (digits.length >= 3) parts.push(`phone_e164.ilike.*${digits}*`);
+    q = q.or(parts.join(','));
+  }
+  if ($('ctCampaign').value) q = q.eq('campaign_id', $('ctCampaign').value);
+  if ($('ctList').value) q = q.eq('list_id', $('ctList').value);
+  if ($('ctStatus').value) q = q.eq('status', $('ctStatus').value);
+  return q;
+}
+
+const ctName = (c) => c.contact_name || [c.first_name, c.last_name].filter(Boolean).join(' ') || '—';
+const ctWhen = (t) => (t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
+const ctPhone = (p) => {
+  const d = String(p || '').replace(/\D/g, '').slice(-10);
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : (p || '—');
+};
+const ctStatusTag = (c) => {
+  const cls = c.status === 'retired' || c.status === 'suppressed' || c.status === 'invalid' ? 't-retired'
+    : c.status === 'queued' ? 't-resting' : 't-active';
+  return `<span class="tag ${cls}">${esc(c.status)}${c.retired_reason ? ' · ' + esc(c.retired_reason.replace(/_/g, ' ')) : ''}</span>`;
+};
+
+async function loadContacts() {
+  $('ctRows').innerHTML = '<tr><td colspan="9">Loading…</td></tr>';
+  const { data, error, count } = await contactsQuery(
+    'id, contact_name, first_name, last_name, phone_e164, address, city, state, status, retired_reason, attempt_count, last_outcome, next_attempt_at, campaign_id, list_id',
+    { count: 'exact' })
+    .order('updated_at', { ascending: false })
+    .range(ctOffset, ctOffset + CT_PAGE - 1);
+  if (error) { $('ctRows').innerHTML = `<tr><td colspan="9">${esc(error.message)}</td></tr>`; return; }
+  ctPageRows = data || [];
+  ctTotal = count || 0;
+  const campName = {}; campaigns.forEach((c) => { campName[c.id] = c.name; });
+  const listName = {}; ctLists.forEach((l) => { listName[l.id] = l.name; });
+  $('ctCount').textContent = `${ctTotal.toLocaleString()} contact${ctTotal === 1 ? '' : 's'}`;
+  $('ctRows').innerHTML = ctPageRows.length ? ctPageRows.map((c) => `<tr class="ct-row" data-id="${c.id}">
+      <td data-nosel><input type="checkbox" data-sel="${c.id}"${ctSelected.has(c.id) ? ' checked' : ''} aria-label="Select"></td>
+      <td><b>${esc(ctName(c))}</b></td>
+      <td class="mono">${esc(ctPhone(c.phone_e164))}</td>
+      <td>${esc([c.address, c.city, c.state].filter(Boolean).join(', ') || '—')}</td>
+      <td>${esc(campName[c.campaign_id] || '—')}${c.list_id && listName[c.list_id] ? `<div class="hint" style="margin:0">${esc(listName[c.list_id])}</div>` : ''}</td>
+      <td>${ctStatusTag(c)}</td>
+      <td class="num">${c.attempt_count || 0}</td>
+      <td>${esc(ctDispo[c.last_outcome] || (c.last_outcome || '—').replace(/_/g, ' '))}</td>
+      <td>${c.status === 'retired' ? '—' : ctWhen(c.next_attempt_at)}</td>
+    </tr>`).join('') : '<tr><td colspan="9">No contacts match.</td></tr>';
+  $('ctRows').querySelectorAll('tr.ct-row').forEach((tr) => {
+    tr.onclick = (e) => {
+      if (e.target.closest('[data-nosel]')) return;
+      openContactDrawer(tr.dataset.id);
+    };
+  });
+  $('ctRows').querySelectorAll('[data-sel]').forEach((cb) => {
+    cb.onchange = () => { cb.checked ? ctSelected.add(cb.dataset.sel) : ctSelected.delete(cb.dataset.sel); ctSelChanged(); };
+  });
+  $('ctAll').checked = ctPageRows.length > 0 && ctPageRows.every((c) => ctSelected.has(c.id));
+  const last = Math.min(ctOffset + CT_PAGE, ctTotal);
+  $('ctPage').textContent = ctTotal ? `${ctOffset + 1}–${last} of ${ctTotal.toLocaleString()}` : '';
+  $('ctPrev').disabled = ctOffset === 0;
+  $('ctNext').disabled = last >= ctTotal;
+  ctSelChanged();
+}
+function ctSelChanged() {
+  $('ctRequeueSel').textContent = ctSelected.size ? `Requeue selected (${ctSelected.size})` : 'Requeue selected';
+  $('ctRequeueSel').disabled = !canManage || !ctSelected.size;
+}
+function ctReload() { ctOffset = 0; loadContacts(); }
+$('ctSearch').addEventListener('input', () => { clearTimeout(ctSearchTimer); ctSearchTimer = setTimeout(ctReload, 300); });
+$('ctCampaign').addEventListener('change', () => { fillCtLists(); ctReload(); });
+$('ctList').addEventListener('change', ctReload);
+$('ctStatus').addEventListener('change', ctReload);
+$('ctPrev').onclick = () => { ctOffset = Math.max(0, ctOffset - CT_PAGE); loadContacts(); };
+$('ctNext').onclick = () => { ctOffset += CT_PAGE; loadContacts(); };
+$('ctAll').onchange = () => {
+  ctPageRows.forEach((c) => ($('ctAll').checked ? ctSelected.add(c.id) : ctSelected.delete(c.id)));
+  loadContacts();
+};
+
+$('ctRequeueSel').onclick = async () => {
+  if (!canManage || !ctSelected.size) return;
+  if (!confirm(`Put ${ctSelected.size} contact${ctSelected.size === 1 ? '' : 's'} back in the queue as new? Their retry cadence starts over. Numbers on do-not-call are skipped.`)) return;
+  const { data, error } = await sb.rpc('dialer_admin_requeue', { p_contacts: [...ctSelected] });
+  if (error) { $('ctMsg').textContent = error.message; return; }
+  const r = (data || [])[0] || {};
+  $('ctMsg').textContent = `Requeued ${r.requeued || 0}${r.skipped_dnc ? ` · ${r.skipped_dnc} skipped (do-not-call)` : ''}.`;
+  ctSelected.clear();
+  loadContacts();
+};
+
+$('ctExport').onclick = async () => {
+  $('ctMsg').textContent = 'Preparing export…';
+  const { data, error } = await contactsQuery(
+    'contact_name, first_name, last_name, phone_e164, email, address, city, state, zip, status, retired_reason, attempt_count, last_outcome, last_attempt_at, next_attempt_at, campaign_id, list_id, created_at')
+    .order('updated_at', { ascending: false }).limit(10000);
+  if (error) { $('ctMsg').textContent = error.message; return; }
+  const campName = {}; campaigns.forEach((c) => { campName[c.id] = c.name; });
+  const listName = {}; ctLists.forEach((l) => { listName[l.id] = l.name; });
+  const cols = ['Name', 'Phone', 'Email', 'Address', 'City', 'State', 'Zip', 'Campaign', 'List', 'Status',
+    'Retired reason', 'Attempts', 'Last outcome', 'Last attempt', 'Next attempt', 'Created'];
+  const cell = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  const lines = [cols.join(',')].concat((data || []).map((c) => [ctName(c), c.phone_e164, c.email, c.address, c.city, c.state, c.zip,
+    campName[c.campaign_id] || '', listName[c.list_id] || '', c.status, c.retired_reason,
+    c.attempt_count, ctDispo[c.last_outcome] || c.last_outcome, c.last_attempt_at, c.next_attempt_at, c.created_at].map(cell).join(',')));
+  const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `dialer-contacts-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  $('ctMsg').textContent = `Exported ${(data || []).length.toLocaleString()} contacts.`;
+};
+
+$('ctAdd').onclick = () => show($('ctAddWrap'), $('ctAddWrap').classList.contains('hide'));
+$('ctASave').onclick = async () => {
+  if (!canManage) return;
+  const first = $('ctAFirst').value.trim();
+  const last = $('ctALast').value.trim();
+  const phone = toE164($('ctAPhone').value);
+  if (!first && !last) { $('ctMsg').textContent = 'A name is required.'; return; }
+  if (!phone) { $('ctMsg').textContent = 'A valid phone is required — 10 digits for US, or with the country code.'; return; }
+  const { data: existing } = await sb.from('dialer_contacts').select('id, contact_name').eq('phone_e164', phone).limit(1);
+  if (existing && existing.length) {
+    $('ctMsg').textContent = `That number is already ${existing[0].contact_name || 'on another contact'}.`;
+    openContactDrawer(existing[0].id);
+    return;
+  }
+  $('ctASave').disabled = true;
+  const { data, error } = await sb.from('dialer_contacts').insert({
+    first_name: first || null, last_name: last || null,
+    contact_name: [first, last].filter(Boolean).join(' '),
+    phone_e164: phone,
+    email: $('ctAEmail').value.trim() || null,
+    address: $('ctAAddr').value.trim() || null,
+    city: $('ctACity').value.trim() || null,
+    state: $('ctAState').value.trim().toUpperCase() || null,
+    zip: $('ctAZip').value.trim() || null,
+    campaign_id: $('ctACampaign').value || null,
+    created_by: meId, status: 'new',
+  }).select('id').maybeSingle();
+  $('ctASave').disabled = false;
+  if (error) { $('ctMsg').textContent = error.code === '42501' ? 'Your role cannot add contacts.' : 'Could not add it: ' + error.message; return; }
+  ['ctAFirst', 'ctALast', 'ctAPhone', 'ctAEmail', 'ctAAddr', 'ctACity', 'ctAState', 'ctAZip'].forEach((id) => { $(id).value = ''; });
+  show($('ctAddWrap'), false);
+  $('ctMsg').textContent = 'Contact added.';
+  ctReload();
+  if (data?.id) openContactDrawer(data.id);
+};
+
+// ---------------------------------------------------- contact drawer --
+let cdContact = null;
+function closeContactDrawer() { show($('ctDrawer'), false); cdContact = null; }
+$('cdClose').onclick = closeContactDrawer;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && cdContact) closeContactDrawer(); });
+
+async function openContactDrawer(id) {
+  if (!id) return;
+  show($('ctDrawer'), true);
+  $('cdName').textContent = 'Loading…';
+  $('cdSub').textContent = '';
+  $('cdFacts').innerHTML = ''; $('cdPhones').innerHTML = ''; $('cdTimeline').innerHTML = ''; $('cdActMsg').textContent = '';
+  const [c, phones, items] = await Promise.all([
+    sb.from('dialer_contacts').select('*').eq('id', id).maybeSingle(),
+    sb.from('dialer_contact_phones').select('rank, label, phone_e164, status, attempt_count, last_outcome, phone_line_type').eq('contact_id', id).order('rank'),
+    fetchTimeline(id, null).catch((e) => ({ error: e })),
+  ]);
+  if (c.error || !c.data) { $('cdName').textContent = c.error ? c.error.message : 'Contact not found.'; return; }
+  cdContact = c.data;
+  const k = cdContact;
+  if (!ctInit) {
+    const d = await sb.from('dialer_dispositions').select('code, label');
+    (d.data || []).forEach((x) => { ctDispo[x.code] = x.label; });
+  }
+  const camp = campaigns.find((x) => x.id === k.campaign_id);
+  $('cdName').textContent = ctName(k);
+  $('cdSub').innerHTML = `<span class="mono">${esc(ctPhone(k.phone_e164))}</span>${camp ? ' · ' + esc(camp.name) : ''}`;
+  const fact = (label, v) => `<div><span>${label}</span>${v}</div>`;
+  $('cdFacts').innerHTML = [
+    fact('Status', ctStatusTag(k)),
+    fact('Attempts', esc(k.attempt_count || 0)),
+    fact('Last outcome', esc(ctDispo[k.last_outcome] || (k.last_outcome || '—').replace(/_/g, ' '))),
+    fact('Last call', esc(ctWhen(k.last_attempt_at))),
+    fact('Next attempt', esc(k.status === 'retired' ? '—' : ctWhen(k.next_attempt_at))),
+    fact('Email', esc(k.email || '—')),
+    fact('Property', esc([k.address, k.city, k.state, k.zip].filter(Boolean).join(', ') || '—')),
+    fact('Added', esc(ctWhen(k.created_at))),
+  ].join('');
+  const ph = phones.data || [];
+  $('cdPhones').innerHTML = ph.length ? `<div class="tbl-wrap"><table>
+      <thead><tr><th>#</th><th>Number</th><th>Type</th><th>Status</th><th class="num">Tries</th><th>Last</th></tr></thead>
+      <tbody>${ph.map((p) => `<tr><td>${p.rank ?? ''}</td><td class="mono">${esc(ctPhone(p.phone_e164))}</td>
+        <td>${esc(p.phone_line_type || p.label || '—')}</td><td>${esc(p.status || '—')}</td>
+        <td class="num">${p.attempt_count || 0}</td><td>${esc(ctDispo[p.last_outcome] || p.last_outcome || '—')}</td></tr>`).join('')}</tbody>
+    </table></div>` : `<div class="hint" style="margin:0">Only the main number: <span class="mono">${esc(ctPhone(k.phone_e164))}</span></div>`;
+  if (items && items.error) {
+    $('cdTimeline').innerHTML = `<div class="da-empty">${esc(items.error.message)}</div>`;
+  } else {
+    $('cdTimeline').innerHTML = timelineHtml(items, 'all', true);
+    wireRecordings($('cdTimeline'));
+  }
+  $('cdRequeue').disabled = !canManage;
+  $('cdRetire').disabled = !canManage || k.status === 'retired';
+  $('cdNoteSave').disabled = !canManage;
+  $('cdNote').disabled = !canManage;
+  const convo = cvRows.find((r) => r.contact_id === k.id)
+    || cvRows.find((r) => r.phone_key === String(k.phone_e164 || '').replace(/\D/g, '').slice(-10));
+  show($('cdOpenConvo'), !!convo && daPane !== 'inbox');
+  $('cdOpenConvo').onclick = async () => {
+    closeContactDrawer();
+    await showSection('conversations/inbox');
+    const row = cvRows.find((r) => r.phone_key === convo.phone_key);
+    if (row) openThread(row);
+  };
+}
+
+$('cdRequeue').onclick = async () => {
+  if (!cdContact || !canManage) return;
+  const { data, error } = await sb.rpc('dialer_admin_requeue', { p_contacts: [cdContact.id] });
+  if (error) { $('cdActMsg').textContent = error.message; return; }
+  const r = (data || [])[0] || {};
+  const id = cdContact.id;
+  await openContactDrawer(id);
+  $('cdActMsg').textContent = r.requeued ? 'Back in the queue as new.' : 'Not requeued: the number is on do-not-call.';
+  if (daPane === 'contacts') loadContacts();
+};
+$('cdRetire').onclick = async () => {
+  if (!cdContact || !canManage) return;
+  if (!confirm('Retire this contact? The dialer stops serving it until someone requeues it.')) return;
+  const { error } = await sb.from('dialer_contacts')
+    .update({ status: 'retired', retired_reason: 'retired_by_manager', next_attempt_at: null, claimed_by: null, claimed_at: null })
+    .eq('id', cdContact.id);
+  if (error) { $('cdActMsg').textContent = error.message; return; }
+  const id = cdContact.id;
+  await openContactDrawer(id);
+  $('cdActMsg').textContent = 'Retired.';
+  if (daPane === 'contacts') loadContacts();
+};
+$('cdNoteSave').onclick = async () => {
+  const body = $('cdNote').value.trim();
+  if (!cdContact || !body || !canManage) return;
+  $('cdNoteSave').disabled = true;
+  const { error } = await sb.from('dialer_contact_notes').insert({ contact_id: cdContact.id, author_id: meId, body });
+  $('cdNoteSave').disabled = false;
+  if (error) { $('cdActMsg').textContent = error.message; return; }
+  $('cdNote').value = '';
+  const id = cdContact.id;
+  await openContactDrawer(id);
+  $('cdActMsg').textContent = 'Note added.';
 };
 
 
