@@ -2539,6 +2539,13 @@
   :focus-visible{ outline:2px solid var(--gold); outline-offset:2px; }
   ::selection{ background:var(--focus-dim); color:var(--text); }
 
+  /* v695: Desouky's floating mascot -- new art (viewBox 160x180) a touch
+     larger, and one layer ABOVE the chat panel (z-index 300) so nothing can
+     cover it again. positionDesoukyMascot() places it beside the panel. */
+  #desoukyMascotWrap{ z-index:301; }
+  .desouky-mascot-svg{ width:104px; }
+  .desouky-mascot-svg .bot-mascot-eyes{ transform-box:fill-box; }
+
 </style>
 </head>
 <body>
@@ -7930,89 +7937,87 @@
     <button type="button" class="desouky-teaser-close" id="desoukyTeaserCloseBtn" title="Dismiss">&times;</button>
   </div>
   <button id="desoukyMascotBtn" class="desouky-mascot-btn" title="Chat with Desouky">
-    <svg class="desouky-mascot-svg" viewBox="0 0 140 175" xmlns="http://www.w3.org/2000/svg">
+    <svg class="desouky-mascot-svg" viewBox="0 0 160 180" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <!-- v695: Desouky redrawn from the owner's reference -- the Aura-One
+           kit's "Waving Hello" (design-mascot-main): round slate helmet with
+           a gold crown band, a wide amber visor with a happy face, gold ear
+           rings and collar, a glowing gear badge, a waving right hand and
+           sound waves. Same animation classes as before:
+           bot-mascot-body-group (bob), bot-mascot-wave-arm (wave),
+           bot-mascot-eyes (blink), bot-mascot-antenna-tip (glow, on the
+           sound waves). -->
       <defs>
-        <linearGradient id="auraGold" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#F3E3C3"/><stop offset="50%" stop-color="#E2B774"/><stop offset="100%" stop-color="#C59B4E"/></linearGradient>
-        <linearGradient id="auraSlate" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#2A384F"/><stop offset="100%" stop-color="#1E293B"/></linearGradient>
-        <linearGradient id="auraVisor" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#0B111D"/><stop offset="100%" stop-color="#0F172A"/></linearGradient>
-        <filter id="auraGlow" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="3.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-        
-        <filter id="desoukyMascotShadow2" x="-50%" y="-50%" width="200%" height="200%">
-          <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#000000" flood-opacity="0.35"/>
-        </filter>
-        <linearGradient id="desoukyMascotMetal" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#2B313D"/>
-          <stop offset="55%" stop-color="#171B23"/>
-          <stop offset="100%" stop-color="#0C0F14"/>
-        </linearGradient>
-        <linearGradient id="desoukyMascotMetalLight" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#3A424F"/>
-          <stop offset="100%" stop-color="#1D222C"/>
-        </linearGradient>
-        <radialGradient id="desoukyMascotLens" cx="35%" cy="30%" r="75%">
-          <stop offset="0%" stop-color="#FFFFFF"/>
-          <stop offset="100%" stop-color="#D9DEE6"/>
-        </radialGradient>
+        <linearGradient id="dskSlate" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#4A5468"/><stop offset="100%" stop-color="#333B4C"/></linearGradient>
+        <linearGradient id="dskSlateDark" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#2F3646"/><stop offset="100%" stop-color="#202632"/></linearGradient>
+        <linearGradient id="dskGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#F6DFAE"/><stop offset="55%" stop-color="#E2B774"/><stop offset="100%" stop-color="#C79A4F"/></linearGradient>
+        <radialGradient id="dskVisor" cx="50%" cy="45%" r="65%"><stop offset="0%" stop-color="#8C5A1C"/><stop offset="70%" stop-color="#4E3112"/><stop offset="100%" stop-color="#2A1A0A"/></radialGradient>
+        <radialGradient id="dskBadge" cx="50%" cy="50%" r="50%"><stop offset="0%" stop-color="#6B4A1E"/><stop offset="100%" stop-color="#2A2230"/></radialGradient>
+        <filter id="dskGlow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="1.6" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        <filter id="dskShadow" x="-30%" y="-30%" width="160%" height="160%"><feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="#000000" flood-opacity="0.35"/></filter>
       </defs>
-      <ellipse cx="70" cy="168" rx="26" ry="5" fill="#000000" opacity="0.25" class="bot-mascot-shadow"/>
-      <g class="bot-mascot-body-group" filter="url(#desoukyMascotShadow2)">
-        <!-- v633: Aura-One head, ported from the mascot design reference
-             (VisorExpressionSimulator.tsx, viewBox 260). Scaled 1/3 and
-             translated so the antenna tip lands where the old head's did --
-             see the v633 note in the generator for the arithmetic. -->
-        <g class="aura-head" transform="translate(26.667,0) scale(0.333333)">
-          <rect x="127" y="18" width="6" height="28" rx="3" fill="url(#auraGold)"/>
-          <circle cx="130" cy="16" r="7" fill="url(#auraGold)"/>
-          <circle class="aura-beacon" cx="130" cy="16" r="4" fill="#38BDF8" filter="url(#auraGlow)"/>
-          <rect x="22" y="106" width="16" height="48" rx="8" fill="url(#auraGold)"/>
-          <rect x="222" y="106" width="16" height="48" rx="8" fill="url(#auraGold)"/>
-          <circle cx="30" cy="130" r="3.5" fill="#1E293B"/>
-          <circle cx="230" cy="130" r="3.5" fill="#1E293B"/>
-          <rect x="34" y="42" width="192" height="176" rx="68" fill="url(#auraSlate)" stroke="#334155" stroke-width="2.5"/>
-          <path d="M 72 70 Q 130 63 188 70" fill="none" stroke="url(#auraGold)" stroke-width="3.5" stroke-linecap="round"/>
-          <rect x="48" y="78" width="164" height="104" rx="42" fill="url(#auraVisor)" stroke="#1E293B" stroke-width="2"/>
-          <path d="M 64 88 Q 130 84 196 92" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-opacity="0.15" stroke-linecap="round"/>
-          <g class="aura-face" filter="url(#auraGlow)">
-            <path d="M 80 132 Q 98 110 116 132" fill="none" stroke="#38BDF8" stroke-width="6" stroke-linecap="round"/>
-            <path d="M 144 132 Q 162 110 180 132" fill="none" stroke="#38BDF8" stroke-width="6" stroke-linecap="round"/>
-            <path d="M 120 148 Q 130 156 140 148" fill="none" stroke="#38BDF8" stroke-width="3.5" stroke-linecap="round"/>
-            <circle cx="74" cy="144" r="4.5" fill="#E2B774" opacity="0.8"/>
-            <circle cx="186" cy="144" r="4.5" fill="#E2B774" opacity="0.8"/>
+      <ellipse class="bot-mascot-shadow" cx="80" cy="172" rx="44" ry="5.5" fill="#E8C48A" opacity="0.55"/>
+      <g class="bot-mascot-body-group" filter="url(#dskShadow)">
+        <g class="bot-mascot-antenna-tip" fill="none" stroke="url(#dskGold)" stroke-linecap="round">
+          <path d="M37 94 Q32 86 37 78" stroke-width="2.6"/>
+          <path d="M30 97 Q23 86 30 74" stroke-width="2.4" opacity="0.75"/>
+          <path d="M23 100 Q14 86 23 70" stroke-width="2.2" opacity="0.5"/>
+        </g>
+        <rect x="58" y="128" width="19" height="34" rx="9" fill="url(#dskSlate)" stroke="#232A37" stroke-width="1.3"/>
+        <rect x="83" y="128" width="19" height="34" rx="9" fill="url(#dskSlate)" stroke="#232A37" stroke-width="1.3"/>
+        <path d="M63 134 V154 M88 134 V154" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="2.4" stroke-linecap="round"/>
+        <rect x="51" y="155" width="28" height="12" rx="6" fill="url(#dskSlateDark)" stroke="#1C212C" stroke-width="1"/>
+        <rect x="81" y="155" width="28" height="12" rx="6" fill="url(#dskSlateDark)" stroke="#1C212C" stroke-width="1"/>
+        <ellipse cx="60" cy="158" rx="4" ry="1.4" fill="#FFFFFF" opacity="0.18"/>
+        <ellipse cx="90" cy="158" rx="4" ry="1.4" fill="#FFFFFF" opacity="0.18"/>
+        <path d="M51 98 L45 116 L47 128" fill="none" stroke="#232A37" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M51 98 L45 116 L47 128" fill="none" stroke="#434C60" stroke-width="12.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M39 116.5 L51.5 118.5" stroke="url(#dskGold)" stroke-width="3" stroke-linecap="round"/>
+        <ellipse cx="47" cy="132" rx="6.5" ry="6" fill="#232A37"/>
+        <ellipse cx="53" cy="130" rx="2.5" ry="3.5" fill="#232A37"/>
+        <path d="M50 97 Q50 88 59 86 H101 Q110 88 110 97 L108 121 Q106 136 92 138 H68 Q54 136 52 121 Z" fill="url(#dskSlate)" stroke="#232A37" stroke-width="1.4"/>
+        <path d="M59 87 Q80 99 101 87" fill="none" stroke="url(#dskGold)" stroke-width="3.2" stroke-linecap="round"/>
+        <path d="M53 124 Q64 132 69 137 M107 124 Q96 132 91 137" fill="none" stroke="url(#dskGold)" stroke-width="3" stroke-linecap="round"/>
+        <path d="M60 98 H67 M60 101.5 H65" stroke="#8A93A6" stroke-width="1.4" stroke-linecap="round"/>
+        <path d="M58 116 H65 M58 119 H63 M95 116 H102 M97 119 H102" stroke="url(#dskGold)" stroke-width="1.6" stroke-linecap="round"/>
+        <circle cx="80" cy="109" r="11.5" fill="url(#dskBadge)" stroke="url(#dskGold)" stroke-width="2.2" filter="url(#dskGlow)"/>
+        <circle cx="80" cy="109" r="6.2" fill="none" stroke="#F4C77A" stroke-width="2.6" stroke-dasharray="2.3 2.6"/>
+        <circle cx="80" cy="109" r="4.6" fill="#F4C77A"/>
+        <path d="M80 106.2 l0.9 1.9 2.1 0.3 -1.5 1.4 0.4 2.1 -1.9 -1 -1.9 1 0.4 -2.1 -1.5 -1.4 2.1 -0.3 Z" fill="#7A5620"/>
+        <path d="M97 97 l1.1 2.5 2.5 1.1 -2.5 1.1 -1.1 2.5 -1.1 -2.5 -2.5 -1.1 2.5 -1.1 Z" fill="#F4C77A" filter="url(#dskGlow)"/>
+        <rect x="74" y="127" width="12" height="2.6" rx="1.3" fill="url(#dskGold)"/>
+        <circle cx="52" cy="95" r="9.5" fill="url(#dskSlate)" stroke="#232A37" stroke-width="1.3"/>
+        <circle cx="52" cy="95" r="5.2" fill="url(#dskGold)"/>
+        <circle cx="108" cy="95" r="9" fill="url(#dskSlate)" stroke="url(#dskGold)" stroke-width="2"/>
+        <g class="bot-mascot-wave-arm" style="transform-origin:108px 95px;">
+          <path d="M110 95 L127 84 L134 62" fill="none" stroke="#232A37" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M110 95 L127 84 L134 62" fill="none" stroke="#434C60" stroke-width="12.5" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M126.5 66.2 L137.9 69.8" stroke="url(#dskGold)" stroke-width="3" stroke-linecap="round"/>
+          <ellipse cx="136" cy="55" rx="7.5" ry="7" fill="#232A37"/>
+          <g stroke="#232A37" stroke-width="4.2" stroke-linecap="round">
+            <path d="M130.5 51 L127.5 42.5"/>
+            <path d="M134.5 49 L133.5 39.5"/>
+            <path d="M138.5 49 L140 40.5"/>
+            <path d="M142 51.5 L145.5 45"/>
+            <path d="M130 57 L124.5 54.5"/>
           </g>
-          <g class="aura-blink" filter="url(#auraGlow)">
-            <line x1="82" y1="130" x2="114" y2="130" stroke="#38BDF8" stroke-width="4" stroke-linecap="round"/>
-            <line x1="146" y1="130" x2="178" y2="130" stroke="#38BDF8" stroke-width="4" stroke-linecap="round"/>
+        </g>
+        <rect x="69" y="78" width="22" height="10" rx="3" fill="#1E2430"/>
+        <rect x="34.5" y="37" width="11" height="25" rx="5.5" fill="url(#dskSlate)" stroke="url(#dskGold)" stroke-width="2.2"/>
+        <rect x="114.5" y="37" width="11" height="25" rx="5.5" fill="url(#dskSlate)" stroke="url(#dskGold)" stroke-width="2.2"/>
+        <rect x="41" y="9" width="78" height="74" rx="37" fill="url(#dskSlate)" stroke="#232A37" stroke-width="1.6"/>
+        <path d="M62 13.5 Q80 7.5 98 13.5 L96.5 20 Q80 15.5 63.5 20 Z" fill="url(#dskGold)"/>
+        <path d="M49 34 Q52 22 61 16" fill="none" stroke="#FFFFFF" stroke-opacity="0.22" stroke-width="3" stroke-linecap="round"/>
+        <rect x="49" y="24" width="62" height="47" rx="19" fill="url(#dskVisor)" stroke="url(#dskGold)" stroke-width="2.6"/>
+        <path d="M57 31 Q70 27 86 28" fill="none" stroke="#FFFFFF" stroke-opacity="0.16" stroke-width="2.2" stroke-linecap="round"/>
+        <g filter="url(#dskGlow)">
+          <path d="M60 34 Q65 31 70 34 M90 34 Q95 31 100 34" fill="none" stroke="#FFD38A" stroke-width="2.2" stroke-linecap="round"/>
+          <g class="bot-mascot-eyes" style="transform-box:fill-box; transform-origin:center;">
+            <path d="M60 45 Q65 38.5 70 45 M90 45 Q95 38.5 100 45" fill="none" stroke="#FFD38A" stroke-width="3.4" stroke-linecap="round"/>
           </g>
+          <circle cx="60.5" cy="53" r="4.2" fill="#F59A55" opacity="0.8"/>
+          <circle cx="99.5" cy="53" r="4.2" fill="#F59A55" opacity="0.8"/>
+          <path d="M69.5 52.5 Q80 67 90.5 52.5 Z" fill="#FFD38A"/>
         </g>
-        <rect x="63" y="60" width="14" height="8" fill="#0C0F14"/>
-        <rect x="63" y="60" width="14" height="3" fill="#FFFFFF" opacity="0.06"/>
-        <g transform="rotate(24 28 88)">
-          <rect x="22" y="88" width="12" height="34" rx="6" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2"/>
-          <rect x="22" y="102" width="12" height="3" fill="#000000" opacity="0.35"/>
-          <circle cx="28" cy="122" r="8" fill="#E2B774"/>
-        </g>
-        <circle cx="28" cy="88" r="9" fill="url(#desoukyMascotMetalLight)" stroke="#E2B774" stroke-width="2"/>
-        <g class="bot-mascot-wave-arm" style="transform-origin:112px 88px;">
-          <rect x="106" y="54" width="12" height="34" rx="6" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2"/>
-          <rect x="106" y="68" width="12" height="3" fill="#000000" opacity="0.35"/>
-          <circle cx="112" cy="54" r="8" fill="#E2B774"/>
-        </g>
-        <circle cx="112" cy="88" r="9" fill="url(#desoukyMascotMetalLight)" stroke="#E2B774" stroke-width="2"/>
-        <rect x="28" y="72" width="84" height="66" rx="26" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2.5"/>
-        <path d="M32 78a30 40 0 000 52" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="4" fill="none" stroke-linecap="round"/>
-        <rect x="28" y="72" width="84" height="10" rx="10" fill="#FFFFFF" opacity="0.05"/>
-        <circle cx="70" cy="104" r="17" fill="url(#desoukyMascotLens)"/>
-        <ellipse cx="64" cy="97" rx="7" ry="4" fill="#FFFFFF" opacity="0.65" transform="rotate(-25 64 97)"/>
-        <circle cx="70" cy="104" r="17" fill="none" stroke="#E2B774" stroke-width="1.5"/>
-        <image href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAHAAAAB7CAYAAACsJwSIAAAFnElEQVR4AeyZDXLcMAiFt+lNc7DctNPOmx0arWOtECABNp0h8o+Ap/fZalp/PG7258/n519uZLDmNgAJ2gwUysE4k7dz7qUBwngKralWdbQ6jvmXBQjDj4u1OF9VV6rtkgBXm7y6/gzMywHcZe6uPiOYlwK429Td/c5gXgrg2QJXX/OGeBmA3kauflB69YUAe+V8rnvD8+x/CYA+j02Mrh/apyd7vhUGqQ/SPNL98fvr6xedSEbvfInmSDla/2oLjURToKUACkzrpWi3w17dd9dTA/Qw7J2ZHvdSA/QwLFrPAhiNyKSevQAnxdX0sQMFcOxR6BkFMDSesbgCOPYo9IwCaIhH+78qEilpAda/AZ+40wJ8yq+fBdDoGfDYPiE9JcDaPoHuGSm+Bz6lxv2pefu0D2O674HaBUd7DDTwsZaUWyiERwktAO06UgGM9vZ5wwP8NAALHnD9jBQAI8HDW4f4aaXPlfAAo8HzwdTvGhpgFHh44xB9G/3uhAQIcAg/Wx4PAKPw1DHqHQ6gIbjR2l8gESwah8lBJoQACGgUK30hODSu7LWr9naABKodVy6WYGFc2cer9jKALaD2eNdCAQyxq59XH1OAHqDOjLsDOFq3CUACR0U9xzvBg89qgICHQt4BcAhvHbv7i78HAhxit2Drfto1eOeLvgdqRVtD0Lx5mlyswzt/egu9EjwA+Bm5rkwDzLW866udAlhvX7wHgg0wGrx4VvooYgP0kdfvqv3loV851520AHPZvE4tC2Btn+sAaCuzAGqbWOfX9vntaEqA3/LraAiwtk/mQ+I0bQjQSVe1ZTpQAJlGRZ1WAKOSYeoqgEyjok4Tfw+MsiDtL1nZ84ffA6P/m0urL3t+baFRthKhjpQAtdue0KuQaSkBhnRSKEqbxgKo/XtCK7Ly+w6wAPbT/e7UNvr0ng2w3sKnYdF+sgFCeDSI9RY+HlMAAbEilgPTAOstTA4Q8gsiXIgR028gyS6I5ITvKAYI2YCIwHGEuNEvNf/tVgGkKoCIoHPP8W4QTQASMEBE0LnXeCeI6u+BZ2YB4rvYARa6EKNenDnvanjnD78HvhOPewCFcSaQc4yZ/Jm5MJjiLA86zq5zr3nnm26h3EWfzdMacVbzeI1AYjzey3q+DCBMGsXRNEBEHK+vOJ/VtkKDRU1TgK0pHHG9+YCI4NRYNaenbVU/aV0TgLRYqQjkndXwhghdiDNtuB4h1ACxOMuFHOsBIsKyh7TWUZu0jmXeHMCmMxaDaC6ZHaIuwqygYSHoQhiWVJUSAdy1gLZPlLeQ3G610TWPUQTQQyh6FkS48BrTAHc/ebv7vdozPvPWNwXQS2zbN9pbOEa8dgYbYGviWkn5qnt6wwbobWtrUr2F3zRYAFvzvlPrqHXAyyMWwFao53FrUr2FTxLq74HPMu9/1t2+A+1D2Z/Vv6P+Htgvfb87EhjanWS4hUpE3Q+d34qHAP2knXeuB+rVl3QAX+XXWQFM/gwUwAKY3IHk8odvoPbXXGt/Wj3tsXWfLPWGAB0Xkq61xwNVANM9Jq+C0wP0eOpfLfQ9YwGMYlIUHWfIvLSxAJ4JrmsxHGAD9HrCyKZ3/d/do/yVo2d/NkAY4CWU05czB2u4WqT/Hpj9P7e1+qe/B+5+0kf92vvt8Y43Df0Qml7a/KktlIRqm1Kd0Sjp8/vr69eorsV9iTaLvscaIoAosnIBqI1AH0locjn9VtfnaKA5YoAogIUgcGwVVvWs6hzXtarusQ/3XAWQmmBRCDqXjMhHSHJ7OahH0ZvDvW5Vh9uPO88EIDWbXSTNx0g1Vo3ogZipj/kUM3k755oCJOG06NFI83eOI03t/Z26pL2WAJSKqbx5BwrgvGehMgpgKBzzYgogeZZ0LIBJwZHsAkhOJB0LYFJwJLsAkhNJx38AAAD//1zmJlMAAAAGSURBVAMARPbNFQDU5o4AAAAASUVORK5CYII=" x="55.5" y="88.35" width="29" height="31.3"/>
-        <rect x="40" y="132" width="17" height="26" rx="8" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2"/>
-        <rect x="83" y="132" width="17" height="26" rx="8" fill="url(#desoukyMascotMetal)" stroke="#E2B774" stroke-width="2"/>
-        <rect x="40" y="144" width="17" height="3" fill="#000000" opacity="0.3"/>
-        <rect x="83" y="144" width="17" height="3" fill="#000000" opacity="0.3"/>
-        <ellipse cx="48.5" cy="160" rx="11" ry="5" fill="#E2B774"/>
-        <ellipse cx="91.5" cy="160" rx="11" ry="5" fill="#E2B774"/>
-        <ellipse cx="46" cy="158" rx="4" ry="1.6" fill="#FFFFFF" opacity="0.35"/>
-        <ellipse cx="89" cy="158" rx="4" ry="1.6" fill="#FFFFFF" opacity="0.35"/>
       </g>
     </svg>
     <span class="desouky-mascot-label">Ask Desouky</span>
@@ -10080,12 +10085,14 @@ function chatAvatarHtml(userId, name, sizePx, showStatus){
 // as its avatar circle instead of an initial-letter circle.
 function chatBotAvatarIconHtml(sizePx){
   return `<div class="chat-conv-avatar bot-avatar" style="width:${sizePx}px; height:${sizePx}px;">
-    <svg viewBox="0 0 24 24" width="${Math.round(sizePx * 0.62)}" height="${Math.round(sizePx * 0.62)}" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <rect x="5" y="7" width="14" height="10" rx="4" fill="#0C0F14" stroke="#E2B774" stroke-width="1.4"/>
-      <circle cx="9.5" cy="12" r="1.4" fill="#E2B774"/>
-      <circle cx="14.5" cy="12" r="1.4" fill="#E2B774"/>
-      <line x1="12" y1="7" x2="12" y2="4.2" stroke="#E2B774" stroke-width="1.4" stroke-linecap="round"/>
-      <circle cx="12" cy="3.6" r="1.1" fill="#E2B774"/>
+    <svg viewBox="0 0 24 24" width="${Math.round(sizePx * 0.8)}" height="${Math.round(sizePx * 0.8)}" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="1.6" y="9" width="3.2" height="6.4" rx="1.6" fill="#E2B774"/>
+      <rect x="19.2" y="9" width="3.2" height="6.4" rx="1.6" fill="#E2B774"/>
+      <circle cx="12" cy="12" r="9" fill="#434C60" stroke="#232A37" stroke-width="0.8"/>
+      <path d="M8.6 4.3 Q12 3 15.4 4.3" stroke="#E2B774" stroke-width="1.5" stroke-linecap="round"/>
+      <rect x="5.4" y="6.8" width="13.2" height="10.2" rx="4.2" fill="#5A3A14" stroke="#E2B774" stroke-width="0.9"/>
+      <path d="M8 11.2 Q9.2 9.8 10.4 11.2 M13.6 11.2 Q14.8 9.8 16 11.2" stroke="#FFD38A" stroke-width="1.1" stroke-linecap="round"/>
+      <path d="M10.1 13.1 Q12 15.4 13.9 13.1 Z" fill="#FFD38A"/>
     </svg>
   </div>`;
 }
@@ -12237,6 +12244,7 @@ async function openChatThread(key){
   // panel — see the chatCloseBtn handler below).
   if($('desoukyMascotWrap')){
     $('desoukyMascotWrap').style.display = (AI_ASSISTANT_BOT_ID && key === AI_ASSISTANT_BOT_ID) ? 'flex' : 'none';
+    if(typeof positionDesoukyMascot === 'function'){ positionDesoukyMascot(); setTimeout(positionDesoukyMascot, 300); } // v695
   }
   if(chatOfflineHint && chatOfflineHint.key !== key) chatOfflineHint = null;
   chatClearPendingFile();
@@ -15286,6 +15294,37 @@ $('chatFabBtn').addEventListener('click', () => {
     }
   }
 });
+
+// v695: Desouky's mascot stands BESIDE the open chat panel, placed by
+// measuring the panel instead of the fixed right:380px it had. That offset
+// was worked out for the v376 panel (340px wide); v625 widened the panel to
+// 440px, so ~84px of the mascot sat behind it -- the owner's "not fully
+// visible". Left of the panel when there is room, bottom-aligned with it;
+// above it when there is not; and hidden only when neither fits (a phone),
+// rather than covering the panel's own controls. Called when his thread
+// opens, again after the panel's 250ms open animation (its transform skews a
+// measurement taken mid-animation), and on every resize.
+function positionDesoukyMascot(){
+  const wrap = $('desoukyMascotWrap'), panel = $('chatPanel');
+  if(!wrap || !panel || wrap.style.display === 'none' || panel.style.display === 'none') return;
+  const pr = panel.getBoundingClientRect();
+  const ww = wrap.offsetWidth, wh = wrap.offsetHeight, gap = 16, pad = 8;
+  let left = pr.left - ww - gap;
+  let top = pr.bottom - wh;
+  let fits = left >= pad;
+  if(!fits){
+    left = Math.min(Math.max(pad, pr.right - ww), window.innerWidth - ww - pad);
+    top = pr.top - wh - gap;
+    fits = top >= pad;
+  }
+  top = Math.max(pad, Math.min(top, window.innerHeight - wh - pad));
+  wrap.style.left = Math.round(left) + 'px';
+  wrap.style.top = Math.round(top) + 'px';
+  wrap.style.right = 'auto';
+  wrap.style.bottom = 'auto';
+  wrap.style.visibility = fits ? 'visible' : 'hidden';
+}
+window.addEventListener('resize', positionDesoukyMascot);
 
 // v122: Desouky's floating mascot — teaser pop-up shown once per browser
 // session a couple seconds after the chat widget loads (sessionStorage,
