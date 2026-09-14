@@ -2450,6 +2450,189 @@
      has no such global rule, which is why its underline is straight -- this
      makes the two portals match. */
   .nc-tab{ border-radius:0; }
+
+  /* =========================================================================
+     v701: CLIENT INBOX -- client chat as a page (Telnyx / DealMachine /
+     BatchLeads shape): conversations | the chat | the client. Colours come
+     from the theme tokens, so it follows light and dark like everything else.
+     ========================================================================= */
+  .ci-hide{ display:none !important; }
+  .ci-wrap{
+    position:relative; display:grid; grid-template-columns:300px minmax(0,1fr) 290px;
+    height:calc(100vh - 140px); min-height:540px;
+    border:1px solid var(--border); border-radius:14px; overflow:hidden; background:var(--card);
+  }
+  .ci-list{ display:flex; flex-direction:column; min-height:0; border-right:1px solid var(--border); }
+  .ci-list-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:14px 14px 10px; }
+  .ci-title{ font-size:15px; font-weight:800; color:var(--text); }
+  .ci-search{ margin:0 14px 10px; width:calc(100% - 28px); }
+  .ci-filters{ display:flex; gap:6px; flex-wrap:wrap; padding:0 14px 10px; border-bottom:1px solid var(--border); }
+  .ci-filter{
+    padding:5px 11px; margin:0; font-size:11.5px; font-weight:600;
+    background:var(--inset); color:var(--text-2); border:1px solid var(--border-light);
+  }
+  .ci-filter.active{ background:var(--focus-dim); color:var(--text); border-color:var(--focus); }
+  .ci-filter span{ font-family:var(--mono); font-size:10.5px; margin-left:4px; color:var(--text-dim); }
+  .ci-filter span:empty{ display:none; }
+  .ci-rows{ flex:1; overflow-y:auto; }
+  .ci-list-empty{ padding:24px 16px; text-align:center; font-size:12.5px; color:var(--text-dim); line-height:1.5; }
+  .ci-row{ display:flex; gap:10px; padding:12px 14px; cursor:pointer; border-bottom:1px solid var(--border); }
+  .ci-row:hover{ background:var(--card-hover); }
+  .ci-row.active{ background:var(--focus-dim); box-shadow:inset 3px 0 0 var(--focus); }
+  .ci-av{
+    width:36px; height:36px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+    font-weight:700; font-size:13px; color:#10131A;
+  }
+  .ci-av.big{ width:54px; height:54px; font-size:19px; margin:0 auto 8px; }
+  .ci-row-main{ flex:1; min-width:0; }
+  .ci-row-top, .ci-row-bottom{ display:flex; gap:8px; align-items:center; }
+  .ci-row-name{ flex:1; min-width:0; font-weight:700; font-size:13px; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ci-row-time{ font-family:var(--mono); font-size:10.5px; color:var(--text-dim); flex-shrink:0; }
+  .ci-row-co{ font-size:11px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ci-row-prev{ flex:1; min-width:0; font-size:12px; color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px; }
+  .ci-row.unread .ci-row-prev, .ci-row.unread .ci-row-name{ color:var(--text); font-weight:700; }
+  .ci-row-prev.typing{ color:var(--focus); font-style:italic; }
+  .ci-row-tags{ display:flex; gap:5px; margin-top:6px; flex-wrap:wrap; }
+  .ci-tag{
+    display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:999px;
+    background:var(--inset); color:var(--text-2); border:1px solid var(--border-light); line-height:1.4;
+  }
+  .ci-tag.wait{ background:var(--away-dim); color:var(--away); border-color:transparent; }
+  .ci-tag.ai{ background:var(--violet-dim); color:var(--violet); border-color:transparent; }
+  .ci-tag.me{ background:var(--focus-dim); color:var(--focus); border-color:transparent; }
+  .ci-tag.bad{ background:var(--danger-dim, rgba(229,72,77,.15)); color:var(--danger); border-color:transparent; }
+  .ci-unread{
+    min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--danger); color:#fff;
+    font-family:var(--mono); font-size:10px; font-weight:700; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .ci-thread{ display:flex; flex-direction:column; min-width:0; min-height:0; }
+  .ci-empty{ margin:auto; padding:24px; text-align:center; color:var(--text-dim); font-size:13px; line-height:1.6; }
+  .ci-empty b{ display:block; font-size:15px; color:var(--text-2); margin-bottom:4px; }
+  .ci-thread-inner{ display:flex; flex-direction:column; min-height:0; flex:1; }
+  .ci-thread-head{ display:flex; align-items:center; gap:10px; padding:12px 16px; border-bottom:1px solid var(--border); }
+  .ci-thread-who{ flex:1; min-width:0; }
+  .ci-thread-name{ font-size:14.5px; font-weight:800; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ci-thread-sub{ font-size:11.5px; color:var(--text-dim); margin-top:1px; }
+  .ci-thread-actions{ display:flex; gap:6px; }
+  .ci-btn{
+    padding:7px 13px; margin:0; font-size:12px; font-weight:600; width:auto;
+    background:var(--inset); color:var(--text); border:1px solid var(--border-light);
+  }
+  .ci-btn:hover{ border-color:var(--focus); }
+  .ci-btn.primary{ background:var(--focus); color:#1A1206; border-color:transparent; }
+  .ci-btn.danger{ background:transparent; color:var(--danger); border-color:var(--danger); margin-top:10px; width:100%; }
+  .ci-btn:disabled{ opacity:.55; cursor:default; }
+  .ci-icon-btn{
+    width:32px; height:32px; padding:0; margin:0; flex-shrink:0; display:inline-flex; align-items:center; justify-content:center;
+    background:var(--inset); color:var(--text-2); border:1px solid var(--border-light); font-size:15px;
+  }
+  .ci-icon-btn:hover{ color:var(--focus); border-color:var(--focus); }
+  .ci-back{ display:none; }
+  .ci-claim{
+    display:flex; align-items:center; gap:10px; justify-content:space-between; padding:10px 16px;
+    background:var(--away-dim); color:var(--text); font-size:12.5px; border-bottom:1px solid var(--border);
+  }
+  .ci-msgs{ flex:1; overflow-y:auto; padding:14px 18px; display:flex; flex-direction:column; gap:6px; }
+  .ci-msgs .chat-msg-row{ max-width:72%; }
+  .ci-msgs .chat-msg-head{ display:flex; align-items:center; gap:6px; margin:0 4px 3px; font-size:11px; }
+  .ci-msgs .chat-msg-head-name{ font-weight:700; color:var(--text-2); }
+  .ci-msgs .chat-msg-bubble{
+    padding:9px 12px; border-radius:14px; font-size:13px; line-height:1.5; white-space:pre-wrap; overflow-wrap:anywhere;
+    background:var(--inset); color:var(--text); border:1px solid var(--border-light); box-shadow:none;
+  }
+  .ci-msgs .chat-msg-row.theirs .chat-msg-bubble{ border-bottom-left-radius:4px; }
+  .ci-msgs .chat-msg-row.from-ai .chat-msg-bubble{ border-color:var(--violet); }
+  .ci-msgs .chat-msg-row.mine .chat-msg-bubble{
+    background:linear-gradient(to top right, var(--chat-accent-1), var(--chat-accent-2));
+    color:#1A1206; border-color:transparent; border-bottom-right-radius:4px;
+  }
+  .ci-msgs .chat-msg-row.mine .chat-msg-bubble a{ color:#1A1206; }
+  .ci-msgs .chat-msg-meta{ font-family:var(--mono); font-size:9.5px; color:var(--text-dim); margin:3px 4px 0; }
+  .ci-msgs .chat-msg-attachment img{ max-width:260px; max-height:240px; border-radius:10px; display:block; cursor:pointer; }
+  .ci-day{ align-self:stretch; display:flex; align-items:center; gap:10px; margin:12px 0 6px; }
+  .ci-day::before, .ci-day::after{ content:''; flex:1; height:1px; background:var(--border); }
+  .ci-day span{ font-size:10.5px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim); }
+  .ci-attach{ display:flex; align-items:center; gap:8px; margin:0 12px; padding:6px 10px; border-radius:10px; background:var(--inset); font-size:12px; color:var(--text); }
+  .ci-attach span{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ci-attach button{ padding:0 6px; margin:0; background:none; border:none; color:var(--text-dim); font-size:13px; }
+  .ci-composer{ display:flex; gap:8px; align-items:flex-end; padding:10px 12px; border-top:1px solid var(--border); }
+  .ci-composer textarea{ flex:1; min-height:38px; max-height:140px; resize:none; margin:0; font-size:13px; line-height:1.45; }
+  .ci-qr-wrap{ position:relative; }
+  .ci-qr-menu{
+    position:absolute; bottom:calc(100% + 8px); left:0; z-index:30; width:340px; max-height:320px; overflow-y:auto;
+    background:var(--card); border:1px solid var(--border-light); border-radius:12px; box-shadow:0 18px 40px -10px rgba(0,0,0,.6); padding:6px;
+  }
+  .ci-qr-item{
+    display:block; width:100%; text-align:left; margin:0; padding:8px 10px; border:none; border-radius:9px;
+    background:none; color:var(--text); cursor:pointer;
+  }
+  .ci-qr-item:hover{ background:var(--card-hover); }
+  .ci-qr-title{ display:block; font-size:12.5px; font-weight:700; }
+  .ci-qr-body{ display:block; font-size:11.5px; color:var(--text-dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:2px; }
+  .ci-qr-manage{
+    display:block; width:100%; margin:4px 0 0; padding:8px 10px; border:none; border-top:1px solid var(--border);
+    border-radius:0 0 9px 9px; background:none; color:var(--focus); font-size:12px; font-weight:700; text-align:left;
+  }
+  .ci-details{ border-left:1px solid var(--border); overflow-y:auto; padding:18px 16px; background:var(--card); }
+  .ci-d-head{ text-align:center; padding-bottom:14px; border-bottom:1px solid var(--border); }
+  .ci-d-name{ font-size:15px; font-weight:800; color:var(--text); }
+  .ci-d-co{ font-size:12px; color:var(--text-2); margin-top:2px; }
+  .ci-d-sec{ padding:12px 0; border-bottom:1px solid var(--border); }
+  .ci-d-sec:last-child{ border-bottom:none; }
+  .ci-d-label{ font-size:10.5px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--text-dim); margin-bottom:7px; }
+  .ci-d-line{ display:block; font-size:12.5px; color:var(--text); text-decoration:none; margin:3px 0; overflow-wrap:anywhere; }
+  a.ci-d-line:hover{ color:var(--focus); }
+  .ci-d-line.dim, .ci-d-none{ font-size:11.5px; color:var(--text-dim); }
+  .ci-d-item{ margin:0 0 8px; }
+  .ci-d-item-name{ font-size:12.5px; font-weight:700; color:var(--text); }
+  .ci-d-item-sub{ font-size:11.5px; color:var(--text-2); margin-top:2px; line-height:1.5; }
+  .ci-transfer{ display:flex; gap:6px; margin-top:10px; }
+  .ci-transfer select{ flex:1; min-width:0; margin:0; font-size:12px; }
+  .ci-d-msg{ font-size:11.5px; margin-top:6px; color:var(--text-dim); }
+  .ci-d-msg.err{ color:var(--danger); }
+  .ci-d-msg.ok{ color:var(--good); }
+  .ci-modal{ position:fixed; inset:0; z-index:500; display:flex; align-items:center; justify-content:center; background:rgba(6,7,10,.55); padding:16px; }
+  .ci-modal-card{
+    width:min(520px, 100%); max-height:calc(100vh - 32px); overflow-y:auto; background:var(--card);
+    border:1px solid var(--border-light); border-radius:16px; box-shadow:0 30px 70px -20px rgba(0,0,0,.7); padding:18px;
+  }
+  .ci-modal-head{ display:flex; align-items:center; justify-content:space-between; font-size:15px; font-weight:800; color:var(--text); margin-bottom:8px; }
+  .ci-modal-note{ font-size:11.5px; color:var(--text-dim); margin-bottom:12px; line-height:1.5; }
+  .ci-qr-manage-list{ display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+  .ci-qr-manage-row{ display:flex; gap:8px; align-items:flex-start; padding:9px 10px; border:1px solid var(--border); border-radius:10px; }
+  .ci-qr-manage-row div{ flex:1; min-width:0; }
+  .ci-qr-manage-row b{ display:block; font-size:12.5px; color:var(--text); }
+  .ci-qr-manage-row span{ display:block; font-size:11.5px; color:var(--text-dim); white-space:pre-wrap; overflow-wrap:anywhere; }
+  .ci-qr-form{ display:flex; flex-direction:column; gap:8px; }
+  .ci-qr-form input, .ci-qr-form textarea{ margin:0; }
+  .ci-qr-form-actions{ display:flex; gap:8px; align-items:center; justify-content:flex-end; }
+  .ci-qr-form-actions .ci-d-msg{ flex:1; margin:0; }
+  .ci-new-list{ max-height:360px; overflow-y:auto; margin-top:10px; border:1px solid var(--border); border-radius:10px; }
+  .ci-new-row{ display:flex; gap:10px; align-items:center; padding:9px 12px; cursor:pointer; border-bottom:1px solid var(--border); }
+  .ci-new-row:last-child{ border-bottom:none; }
+  .ci-new-row:hover{ background:var(--card-hover); }
+  .ci-new-row .ci-av{ width:30px; height:30px; font-size:11px; }
+  .ci-nav-badge{
+    margin-left:auto; min-width:18px; height:18px; padding:0 5px; border-radius:9px; background:var(--danger); color:#fff;
+    font-family:var(--mono); font-size:10px; font-weight:700; display:inline-flex; align-items:center; justify-content:center;
+  }
+  @media (min-width:1181px){ #ciDetailsBtn{ display:none; } }
+  @media (max-width:1180px){
+    .ci-wrap{ grid-template-columns:280px minmax(0,1fr); }
+    .ci-details{ display:none; }
+    .ci-wrap.show-details .ci-details{
+      display:block; position:absolute; right:0; top:0; bottom:0; width:min(300px, 90%); z-index:20;
+      box-shadow:-14px 0 34px rgba(0,0,0,.4);
+    }
+  }
+  @media (max-width:760px){
+    .ci-wrap{ grid-template-columns:minmax(0,1fr); height:calc(100vh - 110px); }
+    .ci-wrap.show-thread .ci-list{ display:none; }
+    .ci-wrap:not(.show-thread) .ci-thread{ display:none; }
+    .ci-back{ display:inline-flex; }
+    .ci-msgs .chat-msg-row{ max-width:88%; }
+    .ci-qr-menu{ width:min(320px, calc(100vw - 40px)); }
+  }
   .notif-center-list{ padding:10px 12px 12px; max-height:none; flex:1; overflow-y:auto; }
   .notif-center-empty{ padding:26px 14px; text-align:center; font-size:12px; color:var(--text-dim); }
 
@@ -2877,6 +3060,9 @@
       </div>
     </div>
     <div class="side-nav-group">
+      <!-- v701: client chat as a page. Shown by applyRolePermissionsToNav()
+           to whoever may take client chats (ciCanUseInbox). -->
+      <button class="tab-btn" data-tab="client_chat" title="Client Inbox"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M3.5 5.5a2 2 0 012-2h9a2 2 0 012 2v6a2 2 0 01-2 2H9l-3.5 3v-3h0a2 2 0 01-2-2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M7 7.5h6M7 10h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Client Inbox</span><span class="ci-nav-badge" id="ciNavBadge" style="display:none;">0</span></button>
       <button class="tab-btn" data-tab="leads" title="Leads"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="0.8" fill="currentColor"/></svg><span>Leads</span></button>
       <div class="tab-nav side-subnav" id="leadsSubNav">
       <button class="leads-subtab-btn active" data-leads-section="dashboard"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V9M10 16V4M16 16v-6"/></svg>Leads Dashboard</button>
@@ -5730,6 +5916,71 @@
     </div>
   </div>
 
+
+  <!-- v701: CLIENT INBOX. See the v701 block in the script for how it works. -->
+  <div class="tab-panel" id="tab-client_chat">
+    <div class="ci-wrap" id="ciWrap">
+      <aside class="ci-list">
+        <div class="ci-list-head">
+          <span class="ci-title">Client Inbox</span>
+          <button type="button" class="ci-icon-btn ci-hide" id="ciNewBtn" title="Start a conversation with a client">&#65291;</button>
+        </div>
+        <input type="search" class="ci-search" id="ciSearch" placeholder="Search clients or messages&hellip;">
+        <div class="ci-filters" id="ciFilters">
+          <button type="button" class="ci-filter" data-f="unassigned">Waiting <span></span></button>
+          <button type="button" class="ci-filter" data-f="mine">Mine <span></span></button>
+          <button type="button" class="ci-filter" data-f="all">All open <span></span></button>
+          <button type="button" class="ci-filter" data-f="closed">Closed <span></span></button>
+        </div>
+        <div class="ci-rows" id="ciRows"></div>
+      </aside>
+      <section class="ci-thread">
+        <div class="ci-empty" id="ciEmpty"><b>No conversation open</b>Pick one on the left. New requests from clients arrive under Waiting.</div>
+        <div class="ci-thread-inner ci-hide" id="ciThread">
+          <header class="ci-thread-head">
+            <button type="button" class="ci-icon-btn ci-back" id="ciBackBtn" title="Back to conversations">&larr;</button>
+            <div class="ci-thread-who"><div class="ci-thread-name" id="ciThreadName"></div><div class="ci-thread-sub" id="ciThreadSub"></div></div>
+            <div class="ci-thread-actions">
+              <button type="button" class="ci-btn" id="ciCallBtn" title="Call this client in the portal">&#9742; Call</button>
+              <button type="button" class="ci-btn" id="ciDetailsBtn">Details</button>
+            </div>
+          </header>
+          <div class="ci-claim ci-hide" id="ciClaimBar"><span id="ciClaimText"></span><button type="button" class="ci-btn primary" id="ciClaimBtn">Accept</button></div>
+          <div class="ci-msgs" id="ciMsgs"></div>
+          <div class="ci-attach ci-hide" id="ciAttachPreview"><span id="ciAttachName"></span><button type="button" id="ciAttachRemove" title="Remove the attachment">&#10005;</button></div>
+          <footer class="ci-composer" id="ciComposer">
+            <div class="ci-qr-wrap">
+              <button type="button" class="ci-btn" id="ciQrBtn" title="Insert a saved reply">Quick replies &#9662;</button>
+              <div class="ci-qr-menu ci-hide" id="ciQrMenu"></div>
+            </div>
+            <textarea id="ciInput" rows="1" placeholder="Type a reply&hellip;  Enter sends, Shift+Enter adds a line"></textarea>
+            <input type="file" id="ciFile" class="ci-hide" accept="image/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt">
+            <button type="button" class="ci-icon-btn" id="ciAttachBtn" title="Attach a file">&#128206;</button>
+            <button type="button" class="ci-btn primary" id="ciSendBtn">Send</button>
+          </footer>
+        </div>
+      </section>
+      <aside class="ci-details" id="ciDetails"></aside>
+    </div>
+
+    <div class="ci-modal ci-hide" id="ciQrModal"><div class="ci-modal-card">
+      <div class="ci-modal-head"><span>Quick replies</span><button type="button" class="ci-icon-btn" id="ciQrModalClose" title="Close">&#10005;</button></div>
+      <div class="ci-modal-note">Saved answers for everyone who takes client chats. Placeholders fill in when used: {client_name} (their first name), {company}, {my_name}.</div>
+      <div class="ci-qr-manage-list" id="ciQrManageList"></div>
+      <div class="ci-qr-form">
+        <input type="text" id="ciQrTitle" maxlength="80" placeholder="Title, e.g. Greeting">
+        <textarea id="ciQrBody" rows="4" maxlength="2000" placeholder="The reply&hellip;"></textarea>
+        <div class="ci-qr-form-actions"><span class="ci-d-msg" id="ciQrMsg"></span><button type="button" class="ci-btn" id="ciQrClear">Clear</button><button type="button" class="ci-btn primary" id="ciQrSave">Add reply</button></div>
+      </div>
+    </div></div>
+
+    <div class="ci-modal ci-hide" id="ciNewModal"><div class="ci-modal-card">
+      <div class="ci-modal-head"><span>Start a conversation</span><button type="button" class="ci-icon-btn" id="ciNewClose" title="Close">&#10005;</button></div>
+      <input type="search" id="ciNewSearch" placeholder="Search clients&hellip;">
+      <div class="ci-new-list" id="ciNewList"></div>
+      <div class="ci-d-msg" id="ciNewMsg"></div>
+    </div></div>
+  </div>
 
   <div class="tab-panel" id="tab-call_activity">
     
@@ -9711,6 +9962,11 @@ function applyRolePermissionsToNav(){
     const visible = myIsOwner || myPermissions.allowedTabs.includes(key);
     btn.style.display = visible ? '' : 'none';
   });
+  // v701: the Client Inbox follows who may take client chats
+  // (staff_can_handle_client_chat): owner/admin, Sales, or a role granted the
+  // 'client_chat' key -- not the key alone, which admin rows may lack.
+  const _ciBtn = document.querySelector('.tab-btn[data-tab="client_chat"]');
+  if(_ciBtn) _ciBtn.style.display = ciCanUseInbox() ? '' : 'none';
   // v623: the Dialer Management parent has no grant of its own -- it is a
   // disclosure control for the two real keys underneath. Show it when the
   // role can see either child, hide it when it can see neither, so nobody
@@ -9806,6 +10062,7 @@ function activateTab(tabKey){
   if(tabKey === 'time_management') initTimeManagementTab();
   if(tabKey === 'leads') initLeadsTab();
   if(tabKey === 'call_activity') initActivityTab();
+  if(tabKey === 'client_chat') ciInitTab();   // v701
   if(tabKey === 'client_submissions') initClientSubmissionsTab();
   if(tabKey === 'activity') initAuditLogTab();
   if(tabKey === 'usermanagement') initUserManagementTab();
@@ -9981,6 +10238,10 @@ function chatIsPeerTyping(key){
   return !!(chatPeerTypingUntil[key] && chatPeerTypingUntil[key] > Date.now());
 }
 function chatOnPeerTypingChanged(key){
+  if(key.startsWith('client:') && typeof ciIsViewing === 'function'){   // v701
+    if(ciIsViewing(key)) ciRenderMsgs(false);
+    if(ciTabActive()) ciRenderList();
+  }
   if(chatActiveConv === key){
     if(key.startsWith('client:')) renderClientChatMessages(key.slice(7));
     else renderChatThread();
@@ -11195,11 +11456,11 @@ function staffNotifKindAllowed(kind){
 // dialer follow-up coming due is the first -- so unread ones load at sign-in
 // and new ones arrive over realtime. Opening or clearing one marks it read,
 // so it does not come back at the next sign-in.
-const STAFF_NOTIF_KIND_ICONS = { dialer_follow_up: '📞', missed_call: '📞', dialer_handoff: '🤝', dialer_appointment: '📅', dialer_task: '✅' };
+const STAFF_NOTIF_KIND_ICONS = { dialer_follow_up: '📞', missed_call: '📞', dialer_handoff: '🤝', dialer_appointment: '📅', dialer_task: '✅', client_chat_queue: '💬' };
 // v700: the kinds that need the person to act go to the Priority tab -- the
 // same set the dialer's bell uses (staff-shell.js KIND), plus a missed call
 // (written by the voice_calls_missed_notify trigger).
-const STAFF_NOTIF_PRIORITY_KINDS = new Set(['dialer_follow_up', 'dialer_handoff', 'dialer_appointment', 'dialer_task', 'missed_call']);
+const STAFF_NOTIF_PRIORITY_KINDS = new Set(['dialer_follow_up', 'dialer_handoff', 'dialer_appointment', 'dialer_task', 'missed_call', 'client_chat_queue']);
 const shownDurableNotifIds = new Set();
 function showDurableStaffNotification(row, silent){
   if(!row || shownDurableNotifIds.has(row.id)) return;
@@ -11214,6 +11475,10 @@ function showDurableStaffNotification(row, silent){
     silent,
     onClick: () => {
       markStaffNotificationsRead([row.id]);
+      // v701: a client waiting (or a chat handed to you) opens that
+      // conversation in the Client Inbox here -- not the portal again in a
+      // new tab.
+      if(row.kind === 'client_chat_queue' && row.ref_id && ciCanUseInbox()){ ciOpenFromElsewhere(row.ref_id); return; }
       // The dialer is its own origin, so a new tab rather than a tab switch.
       if(row.url) window.open(row.url, '_blank');
     },
@@ -11222,7 +11487,7 @@ function showDurableStaffNotification(row, silent){
 async function loadDurableStaffNotifications(){
   if(!myUserId) return;
   const { data, error } = await sb.from('staff_notifications')
-    .select('id, kind, title, body, url, created_at')
+    .select('id, kind, title, body, url, ref_id, created_at')   // v701: ref_id opens the client chat
     .eq('user_id', myUserId).is('read_at', null)
     .order('created_at', { ascending: true }).limit(STAFF_NOTIF_MAX);
   if(error){ console.error('staff_notifications load failed', error); return; }
@@ -11740,7 +12005,12 @@ function chatSetBadge(id, count){
 }
 
 function updateChatUnreadBadge(){
-  const total = Object.values(chatConversations).reduce((t, c) => t + c.unread, 0);
+  // v701: client conversations live in the Client Inbox; their unread count
+  // is that page's badge, not the floating chat's (unless the inbox is not
+  // available to this person, when they still show here as before).
+  const ciOn = typeof ciCanUseInbox === 'function' && ciCanUseInbox();
+  const total = Object.entries(chatConversations).reduce((t, [k, c]) => t + ((ciOn && k.startsWith('client:')) ? 0 : c.unread), 0);
+  if(typeof ciSetNavBadge === 'function') ciSetNavBadge(ciUnreadTotal());
   const badge = $('chatUnreadBadge');
   badge.textContent = total > 99 ? '99+' : String(total);
   badge.style.display = total > 0 ? 'flex' : 'none';
@@ -11780,7 +12050,9 @@ function renderChatConvList(filterText){
       const conv = chatConversations['group:' + g.id];
       items.push({ key: 'group:' + g.id, name: g.name, isTeam: false, isGroup: true, memberCount: g.members.length, last: lastOf(conv), unread: conv ? conv.unread : 0 });
     });
-  clientChatThreadsDirectory
+  // v701: client conversations moved to the Client Inbox page -- one row
+  // below links there instead (ciChatLinkRowHtml).
+  if(!ciCanUseInbox()) clientChatThreadsDirectory
     .filter(t => !search || chatClientThreadName(t.client_id).toLowerCase().includes(search))
     .forEach(t => {
       const key = 'client:' + t.client_id;
@@ -11797,7 +12069,7 @@ function renderChatConvList(filterText){
   });
   const sorted = [team, ...rest];
 
-  const convHtml = sorted.map(it => {
+  const convHtml = ciChatLinkRowHtml() + sorted.map(it => {
     let previewText;
     const typingNow = chatIsPeerTyping(it.key); // v316
     if(typingNow){
@@ -11838,6 +12110,7 @@ function renderChatConvList(filterText){
   convListEl.__lastHtml = convHtml;
   convListEl.innerHTML = convHtml;
   convListEl.querySelectorAll('.chat-conv-item').forEach(el => {
+    if(el.dataset.ciLink){ el.addEventListener('click', () => ciOpenFromElsewhere(null)); return; }   // v701
     el.addEventListener('click', () => openChatThread(el.dataset.key));
   });
 }
@@ -12402,6 +12675,14 @@ async function openChatThread(key){
   // staff member their conversation is routed to), so this gets its own
   // render path rather than trying to fold it into the branches below.
   if(key.startsWith('client:')){
+    // v701: a client conversation opens in the Client Inbox page.
+    if(ciCanUseInbox()){
+      chatActiveConv = null;
+      $('chatThreadView').style.display = 'none';
+      $('chatListView').style.display = 'flex';
+      ciOpenFromElsewhere(key.slice(7));
+      return;
+    }
     openClientChatThread(key.slice(7));
     return;
   }
@@ -13007,7 +13288,7 @@ async function acceptClientChatThread(clientId){
 // immediately via its own client_chat_threads UPDATE subscription and
 // offers a fresh "Connect me to..." choice.
 async function endClientChatThread(clientId){
-  if(!confirm('End this conversation? The client will see a note that it ended and can start a new one anytime.')) return;
+  if(!confirm('End this conversation? The client will see a note that it ended and can start a new one anytime.')) return false;   // v701: returns whether it closed
   const closingNote = `Chat ended by ${myFullName || 'our team'}. Send a new message anytime to start a fresh conversation.`;
   const { error: msgErr } = await sb.from('client_chat_messages')
     .insert({ client_id: clientId, sender: 'staff', staff_id: myUserId, body: closingNote });
@@ -13015,11 +13296,12 @@ async function endClientChatThread(clientId){
   const { error } = await sb.from('client_chat_threads')
     .update({ status: 'closed', assigned_staff_id: null, updated_at: new Date().toISOString() })
     .eq('client_id', clientId);
-  if(error){ alert('Failed to end chat: ' + error.message); return; }
+  if(error){ alert('Failed to end chat: ' + error.message); return false; }
   delete chatConversations['client:' + clientId];
   await loadClientChatOverview();
   renderChatConvList($('chatSearchInput').value);
   $('chatThreadBackBtn').click();
+  return true;
 }
 
 async function sendClientChatReply(clientId, body, attachmentFields){
@@ -13031,7 +13313,7 @@ async function sendClientChatReply(clientId, body, attachmentFields){
   if(error){
     console.error('Failed to send client chat reply', error);
     alert('Failed to send: ' + error.message);
-    return;
+    return null;   // v701: the inbox puts the text back
   }
   const key = 'client:' + clientId;
   if(!chatConversations[key]) chatConversations[key] = { key, messages: [], unread: 0, loadedOnce: true };
@@ -13058,6 +13340,7 @@ async function sendClientChatReply(clientId, body, attachmentFields){
       .eq('client_id', clientId);
     if(claimErr) console.error('Failed to claim client chat thread on reply', claimErr);
   }
+  return data;   // v701
 }
 
 // Wraps "@Full Name" (or "@everyone" in the team channel) in a styled
@@ -13631,7 +13914,7 @@ function subscribeChatRealtime(){
       const m = payload.new;
       const key = 'client:' + m.client_id;
       const known = clientChatThreadsDirectory.some(t => t.client_id === m.client_id);
-      if(!known){ await loadClientChatOverview(); if(!chatActiveConv) renderChatConvList($('chatSearchInput').value); return; }
+      if(!known){ await loadClientChatOverview(); if(!chatActiveConv) renderChatConvList($('chatSearchInput').value); ciRefresh(); return; }
       if(!chatConversations[key]) chatConversations[key] = { key, messages: [], unread: 0 };
       if(chatConversations[key].messages.some(x => x.id === m.id)) return; // de-dupe against our own optimistic insert
       chatConversations[key].messages.push(m);
@@ -13640,8 +13923,9 @@ function subscribeChatRealtime(){
       if(m.sender === 'client'){
         sb.rpc('mark_client_chat_delivered', { p_client_id: m.client_id }).then(({ error }) => { if(error) console.error('mark_client_chat_delivered failed', error); });
       }
-      if(chatActiveConv === key){
-        renderClientChatMessages(m.client_id);
+      const ciViewing = ciIsViewing(key);   // v701: open in the Client Inbox
+      if(chatActiveConv === key || ciViewing){
+        if(chatActiveConv === key) renderClientChatMessages(m.client_id);
         chatMarkRead(key);
         if(m.sender === 'client'){
           sb.rpc('mark_client_chat_read', { p_client_id: m.client_id }).then(({ error }) => { if(error) console.error('mark_client_chat_read failed', error); });
@@ -13651,6 +13935,7 @@ function subscribeChatRealtime(){
         chatPlayNotificationSound();
         renderChatConvList($('chatSearchInput').value);
       }
+      ciRefresh();   // v701
     })
     // v314: propagates an edit, or the client marking one of our messages
     // delivered/read, live.
@@ -13663,6 +13948,7 @@ function subscribeChatRealtime(){
         if(idx !== -1) conv.messages[idx] = m;
       }
       if(chatActiveConv === key) renderClientChatMessages(m.client_id);
+      ciRefresh();   // v701: ticks and edits
     })
     // A thread just got routed to me (or reassigned away from me) —
     // refresh the Client Chats list entirely rather than trying to patch
@@ -13679,6 +13965,7 @@ function subscribeChatRealtime(){
         await loadClientChatOverview();
         if(!chatActiveConv) renderChatConvList($('chatSearchInput').value);
         else if(chatActiveConv.startsWith('client:')) openClientChatThread(chatActiveConv.slice(7));
+        ciRefresh();   // v701
       }, 250);
     })
     // v393d: 'SUBSCRIBED' fires on the initial connect AND again on every
@@ -13713,6 +14000,677 @@ document.addEventListener('visibilitychange', () => {
     loadClientChatOverview();
   }
 });
+
+// ================================================================ v701 ===
+// CLIENT INBOX -- the staff side of client chat as a page, the way Telnyx,
+// DealMachine and BatchLeads do it: conversations on the left, the chat in
+// the middle, the client on the right.
+//
+// WHY. Client conversations lived inside the small floating chat, mixed in
+// with colleagues: no way to see who had which, hand one on, find one, or see
+// anything about the client while replying. The owner chose a full page with
+// assign/transfer, quick replies and a client details panel.
+//
+// It is a VIEW over data the chat widget already keeps live --
+// clientChatThreadsDirectory (which threads I may see: loadClientChatOverview)
+// and chatConversations['client:<id>'] (messages, unread), both maintained by
+// subscribeChatRealtime(), whose handlers now call ciRefresh(). Nothing is
+// fetched twice. New server-side (supabase/v701-client-inbox.sql):
+// client_chat_transfer(), client_chat_transfer_targets(),
+// client_inbox_client_summary() and the client_chat_quick_replies table.
+let ciInited = false;
+let ciInitPromise = null;
+let ciFilter = null;          // 'unassigned' | 'mine' | 'all' | 'closed'
+let ciOpenClientId = null;
+let ciQuickReplies = [];
+let ciTargets = null;         // { staff:[{id,name,title}], teams:[{key,label}] }
+const ciSummaryCache = {};    // clientId -> { at, data }
+let ciPendingFile = null;
+let ciTypingAt = 0;
+let ciTypingStopTimer = null;
+let ciQrEditingId = null;
+let ciNewDirectory = [];
+
+function ciIsAdmin(){ return myIsOwner || myRole === 'admin'; }
+// The same people staff_can_handle_client_chat() lets take a chat.
+function ciCanUseInbox(){
+  if(!myUserId) return false;
+  if(ciIsAdmin()) return true;
+  const allowed = (myPermissions && myPermissions.allowedTabs) || [];
+  if(allowed.includes('client_chat')) return true;
+  return String(myRole || '').toLowerCase().replace(/[\s_-]+/g, '') === 'sales';
+}
+function ciTabActive(){
+  const p = $('tab-client_chat');
+  return !!(p && p.classList.contains('active'));
+}
+function ciIsViewing(key){
+  return ciTabActive() && document.visibilityState === 'visible' && !!ciOpenClientId && key === 'client:' + ciOpenClientId;
+}
+function ciThread(clientId){ return clientChatThreadsDirectory.find(t => t.client_id === clientId) || null; }
+function ciConv(clientId){ return chatConversations['client:' + clientId] || { messages: [], unread: 0 }; }
+function ciLast(clientId){ const m = ciConv(clientId).messages; return m.length ? m[m.length - 1] : null; }
+function ciUnclaimed(t){ return !!t && t.status === 'routed' && !t.assigned_staff_id; }
+function ciStaffName(id){
+  if(!id) return '';
+  if(id === myUserId) return 'You';
+  const s = ciTargets && (ciTargets.staff || []).find(x => x.id === id);
+  return (s && s.name) || (typeof chatContactName === 'function' && chatContactName(id)) || 'a teammate';
+}
+function ciInFilter(t, f){
+  if(f === 'unassigned') return ciUnclaimed(t);
+  if(f === 'mine') return t.assigned_staff_id === myUserId && t.status !== 'closed';
+  if(f === 'closed') return t.status === 'closed';
+  return t.status !== 'closed';
+}
+function ciInitials(name){
+  const p = String(name || '?').trim().split(/\s+/).filter(Boolean);
+  if(!p.length) return '?';
+  return ((p[0][0] || '?') + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
+}
+const CI_AV_COLORS = ['#C9A66B', '#4EA8FF', '#B388FF', '#2DD4BF', '#F5A623', '#F28B82', '#3DD68C'];
+function ciAvColor(id){
+  let h = 0;
+  for(const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return CI_AV_COLORS[h % CI_AV_COLORS.length];
+}
+function ciTzOpt(){ const tz = nonAgentDisplayTz(); return tz ? { timeZone: tz } : {}; }
+function ciAgo(iso){
+  if(!iso) return '';
+  const d = new Date(iso);
+  const s = (Date.now() - d.getTime()) / 1000;
+  if(s < 60) return 'now';
+  if(s < 3600) return Math.floor(s / 60) + 'm';
+  if(s < 86400) return Math.floor(s / 3600) + 'h';
+  if(s < 7 * 86400) return d.toLocaleDateString([], { weekday: 'short', ...ciTzOpt() });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', ...ciTzOpt() });
+}
+function ciDate(iso){
+  return iso ? new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric', ...ciTzOpt() }) : '—';
+}
+function ciPreview(m){
+  if(!m) return '';
+  const who = m.sender === 'staff' ? (m.staff_id === myUserId ? 'You: ' : ciStaffName(m.staff_id) + ': ')
+    : (m.sender === 'ai' ? 'AI: ' : '');
+  const body = m.body || (m.attachment_mime && m.attachment_mime.startsWith('audio/') ? '\u{1F3A4} Voice message'
+    : (m.attachment_name ? '\u{1F4CE} ' + m.attachment_name : ''));
+  return who + body;
+}
+function ciStatusLine(t){
+  if(!t) return '';
+  if(t.status === 'closed') return 'Closed';
+  if(t.status === 'ai' || !t.status) return 'With the AI assistant';
+  const team = t.queue_key ? ' · ' + chatQueueLabel(t.queue_key) : '';
+  if(!t.assigned_staff_id) return 'Waiting to be accepted' + team;
+  return (t.assigned_staff_id === myUserId ? 'Assigned to you' : 'Assigned to ' + ciStaffName(t.assigned_staff_id)) + team;
+}
+
+// ---- badges -------------------------------------------------------------
+function ciUnreadTotal(){
+  let n = 0;
+  Object.entries(chatConversations).forEach(([k, c]) => { if(k.startsWith('client:')) n += c.unread || 0; });
+  return n;
+}
+function ciSetNavBadge(n){
+  const b = $('ciNavBadge');
+  if(!b) return;
+  b.textContent = n > 99 ? '99+' : String(n);
+  b.style.display = n > 0 ? '' : 'none';
+}
+// The one row the floating chat keeps for clients: it goes to this page.
+function ciChatLinkRowHtml(){
+  if(!ciCanUseInbox()) return '';
+  let waiting = 0;
+  clientChatThreadsDirectory.forEach(t => { if(ciUnclaimed(t)) waiting++; });
+  const unread = ciUnreadTotal();
+  const sub = unread ? `${unread} unread from clients` : (waiting ? `${waiting} waiting to be accepted` : 'Client conversations are on their own page now');
+  return `<div class="chat-conv-item ci-link-row" data-ci-link="1">
+      <div class="chat-conv-avatar" style="width:32px; height:32px;">\u{1F4AC}</div>
+      <div class="chat-conv-info"><div class="chat-conv-name">Client Inbox \u2192</div><div class="chat-conv-preview">${escapeHtml(sub)}</div></div>
+      ${unread ? `<div class="chat-conv-badge">${unread > 99 ? '99+' : unread}</div>` : ''}
+    </div>`;
+}
+
+// ---- lifecycle ----------------------------------------------------------
+function ciInitTab(){
+  if(!ciCanUseInbox()) return Promise.resolve();
+  if(ciInitPromise) return ciInitPromise;
+  ciInitPromise = (async () => {
+    if(!ciInited){ ciInited = true; ciWire(); }
+    if(!ciTargets) ciLoadTargets();
+    ciLoadQuickReplies();
+    await loadClientChatOverview();
+    if(!ciFilter){
+      ciFilter = clientChatThreadsDirectory.some(t => ciInFilter(t, 'unassigned')) ? 'unassigned'
+        : (clientChatThreadsDirectory.some(t => ciInFilter(t, 'mine')) ? 'mine' : 'all');
+    }
+    ciRefresh();
+  })().finally(() => { ciInitPromise = null; });
+  return ciInitPromise;
+}
+async function ciLoadTargets(){
+  const { data, error } = await sb.rpc('client_chat_transfer_targets');
+  if(error){ console.error('client_chat_transfer_targets failed', error); return; }
+  ciTargets = data || { staff: [], teams: [] };
+  if(ciOpenClientId){ $('ciDetails').__sig = null; ciRenderDetails(); }
+}
+async function ciLoadQuickReplies(){
+  const { data, error } = await sb.from('client_chat_quick_replies').select('id, title, body, sort').order('sort').order('title');
+  if(error){ console.error('quick replies load failed', error); return; }
+  ciQuickReplies = data || [];
+}
+// Called by the chat realtime handlers on every client-chat change.
+function ciRefresh(){
+  ciSetNavBadge(ciUnreadTotal());
+  if(!ciTabActive()) return;
+  ciRenderList();
+  if(ciOpenClientId){
+    // Handed on or closed by someone else, and no longer mine to see:
+    // close it rather than leave a dead conversation on screen.
+    if(!ciThread(ciOpenClientId)){ ciClose(); return; }
+    ciRenderHead();
+    ciRenderMsgs(false);
+    ciRenderDetails();
+  }
+}
+
+// ---- the list -----------------------------------------------------------
+function ciRenderList(){
+  const q = ($('ciSearch').value || '').trim().toLowerCase();
+  const counts = { unassigned: 0, mine: 0, all: 0, closed: 0 };
+  clientChatThreadsDirectory.forEach(t => { Object.keys(counts).forEach(f => { if(ciInFilter(t, f)) counts[f]++; }); });
+  document.querySelectorAll('#ciFilters .ci-filter').forEach(b => {
+    const f = b.dataset.f;
+    b.classList.toggle('active', f === ciFilter);
+    b.querySelector('span').textContent = counts[f] ? String(counts[f]) : '';
+    if(f === 'closed') b.style.display = ciIsAdmin() ? '' : 'none';
+  });
+  const rows = clientChatThreadsDirectory
+    .filter(t => ciInFilter(t, ciFilter))
+    .filter(t => !q || chatClientThreadName(t.client_id).toLowerCase().includes(q)
+      || ciConv(t.client_id).messages.some(m => (m.body || '').toLowerCase().includes(q)))
+    .map(t => ({ t, last: ciLast(t.client_id), unread: ciConv(t.client_id).unread || 0 }))
+    .sort((a, b) => (b.last ? new Date(b.last.created_at).getTime() : 0) - (a.last ? new Date(a.last.created_at).getTime() : 0));
+  const box = $('ciRows');
+  if(!rows.length){
+    const empty = { unassigned: 'Nobody is waiting. New requests from clients land here.', mine: 'Nothing assigned to you right now.',
+      all: 'No open client conversations.', closed: 'No closed conversations.' };
+    box.innerHTML = `<div class="ci-list-empty">${q ? 'No conversation matches that search.' : empty[ciFilter] || ''}</div>`;
+    return;
+  }
+  box.innerHTML = rows.map(({ t, last, unread }) => {
+    const name = t.full_name || 'Client';
+    let tag = '';
+    if(ciUnclaimed(t)) tag = `<span class="ci-tag wait">Waiting${t.queue_key ? ' · ' + escapeHtml(chatQueueLabel(t.queue_key)) : ''}</span>`;
+    else if(t.status === 'ai' || !t.status) tag = '<span class="ci-tag ai">AI assistant</span>';
+    else if(t.status === 'closed') tag = '<span class="ci-tag">Closed</span>';
+    else if(t.assigned_staff_id === myUserId) tag = '<span class="ci-tag me">Yours</span>';
+    else if(t.assigned_staff_id) tag = `<span class="ci-tag">${escapeHtml(ciStaffName(t.assigned_staff_id))}</span>`;
+    const typing = chatIsPeerTyping('client:' + t.client_id);
+    return `<div class="ci-row${t.client_id === ciOpenClientId ? ' active' : ''}${unread ? ' unread' : ''}" data-id="${escapeHtml(t.client_id)}">
+        <div class="ci-av" style="background:${ciAvColor(t.client_id)}">${escapeHtml(ciInitials(name))}</div>
+        <div class="ci-row-main">
+          <div class="ci-row-top"><span class="ci-row-name">${escapeHtml(name)}</span><span class="ci-row-time">${escapeHtml(ciAgo(last && last.created_at))}</span></div>
+          ${t.company_name ? `<div class="ci-row-co">${escapeHtml(t.company_name)}</div>` : ''}
+          <div class="ci-row-bottom"><span class="ci-row-prev${typing ? ' typing' : ''}">${escapeHtml(typing ? 'typing\u2026' : (ciPreview(last) || 'No messages yet'))}</span>${unread ? `<span class="ci-unread">${unread > 99 ? '99+' : unread}</span>` : ''}</div>
+          ${tag ? `<div class="ci-row-tags">${tag}</div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+// ---- one conversation ---------------------------------------------------
+function ciOpen(clientId){
+  const t = ciThread(clientId);
+  if(!t) return;
+  if(ciOpenClientId !== clientId){ ciClearAttachment(); $('ciDetails').__sig = null; }
+  ciOpenClientId = clientId;
+  chatOpenClientTypingChannel(clientId);
+  $('ciEmpty').classList.add('ci-hide');
+  $('ciThread').classList.remove('ci-hide');
+  $('ciWrap').classList.add('show-thread');
+  $('ciQrMenu').classList.add('ci-hide');
+  const key = 'client:' + clientId;
+  chatMarkRead(key);
+  sb.rpc('mark_client_chat_read', { p_client_id: clientId }).then(({ error }) => { if(error) console.error('mark_client_chat_read failed', error); });
+  ciRenderList(); ciRenderHead(); ciRenderMsgs(true); ciRenderDetails();
+  ciSetNavBadge(ciUnreadTotal());
+  renderChatConvList($('chatSearchInput') ? $('chatSearchInput').value : '');
+  if(!ciUnclaimed(t)) $('ciInput').focus();
+}
+function ciClose(){
+  ciOpenClientId = null;
+  ciClearAttachment();
+  $('ciThread').classList.add('ci-hide');
+  $('ciEmpty').classList.remove('ci-hide');
+  $('ciWrap').classList.remove('show-thread', 'show-details');
+  $('ciDetails').innerHTML = '';
+  $('ciDetails').__sig = null;
+  ciRenderList();
+}
+// From a notification, the floating chat or anywhere else: go to this page
+// and open that conversation (null = just the page).
+async function ciOpenFromElsewhere(clientId){
+  if(!ciCanUseInbox()) return;
+  activateTab('client_chat');
+  await ciInitTab();
+  if(!clientId) return;
+  if(!ciThread(clientId)) await loadClientChatOverview();
+  const t = ciThread(clientId);
+  if(!t){ alert("That conversation isn't available to you any more -- it may have been handed to someone else or closed."); return; }
+  if(!ciInFilter(t, ciFilter)) ciFilter = ['unassigned', 'mine', 'all', 'closed'].find(f => ciInFilter(t, f)) || 'all';
+  ciOpen(clientId);
+}
+function ciRenderHead(){
+  const t = ciThread(ciOpenClientId);
+  if(!t) return;
+  $('ciThreadName').textContent = chatClientThreadName(t.client_id);
+  $('ciThreadSub').textContent = ciStatusLine(t);
+  const unclaimed = ciUnclaimed(t);
+  $('ciClaimBar').classList.toggle('ci-hide', !unclaimed);
+  $('ciClaimText').textContent = 'Waiting to be accepted' + (t.queue_key ? ' \u2014 ' + chatQueueLabel(t.queue_key) : '') + '. Accept it to reply.';
+  $('ciComposer').classList.toggle('ci-hide', unclaimed);
+  $('ciCallBtn').classList.toggle('ci-hide', !(myPermissions.canTextClients && !unclaimed));
+}
+function ciDayLabel(d){
+  const key = (x) => x.toLocaleDateString('en-CA', ciTzOpt());
+  const k = key(d);
+  if(k === key(new Date())) return 'Today';
+  if(k === key(new Date(Date.now() - 86400000))) return 'Yesterday';
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', ...ciTzOpt() });
+}
+function ciRenderMsgs(forceBottom){
+  const clientId = ciOpenClientId;
+  if(!clientId) return;
+  const box = $('ciMsgs');
+  const msgs = ciConv(clientId).messages;
+  const typing = chatIsPeerTyping('client:' + clientId);
+  // Re-render only when something visible changed: a realtime tick for some
+  // OTHER client must not rebuild this thread (and reload its images).
+  const sig = clientId + '|' + typing + '|' + msgs.map(m => m.id + (m.read_at ? 'r' : m.delivered_at ? 'd' : '') + (m.edited_at || '')).join(',');
+  if(!forceBottom && box.__sig === sig) return;
+  box.__sig = sig;
+  const wasAtBottom = forceBottom || chatAtBottom(box);
+  const clientName = chatClientThreadName(clientId);
+  let prev = null, lastDay = null;
+  const html = msgs.map(m => {
+    const d = new Date(m.created_at);
+    const day = ciDayLabel(d);
+    let sep = '';
+    if(day !== lastDay){ sep = `<div class="ci-day"><span>${escapeHtml(day)}</span></div>`; prev = null; lastDay = day; }
+    const mine = m.sender === 'staff';
+    const role = m.sender === 'ai' ? 'ai' : (m.sender === 'client' ? 'client' : 'staff');
+    const at = d.getTime();
+    const senderKey = m.sender + ':' + (m.staff_id || '');
+    const seq = chatIsSequential(prev, senderKey, at);
+    prev = { key: senderKey, at };
+    let head = '';
+    if(!seq){
+      if(!mine) head = chatMsgHeadHtml(role === 'ai' ? 'AI Assistant' : clientName, role, null);
+      else if(m.staff_id && m.staff_id !== myUserId) head = `<div class="chat-msg-head"><span class="chat-msg-head-name">${escapeHtml(ciStaffName(m.staff_id))}</span></div>`;
+    }
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', ...ciTzOpt() });
+    const body = m.body ? `<div class="chat-msg-bubble">${chatLinkify(escapeHtml(m.body))}</div>` : '';
+    const att = m.attachment_path
+      ? `<div class="chat-msg-attachment" data-attachment-path="${escapeHtml(m.attachment_path)}" data-attachment-mime="${escapeHtml(m.attachment_mime || '')}" data-attachment-name="${escapeHtml(m.attachment_name || 'file')}">Loading attachment\u2026</div>`
+      : '';
+    const ticks = mine ? ' ' + chatTicksHtml(chatClientTickState(m)) : '';
+    const edited = m.edited_at ? ' <span class="chat-edited-label">(edited)</span>' : '';
+    return `${sep}<div class="chat-msg-row ${mine ? 'mine' : 'theirs'} from-${role}${seq ? ' seq' : ''}">${head}${body}${att}<div class="chat-msg-meta">${escapeHtml(time)}${edited}${ticks}</div></div>`;
+  }).join('');
+  box.innerHTML = (html || '<div class="ci-list-empty">No messages yet. Say hello.</div>') + (typing ? chatTypingBubbleHtml() : '');
+  if(wasAtBottom) chatPinToBottom(box);
+  Promise.resolve(clientChatResolveVisibleAttachments(box)).then(() => chatKeepPinned(box, wasAtBottom));
+}
+
+// ---- the client ---------------------------------------------------------
+async function ciRenderDetails(){
+  const clientId = ciOpenClientId;
+  if(!clientId) return;
+  const t = ciThread(clientId);
+  if(!t) return;
+  const box = $('ciDetails');
+  const cached = ciSummaryCache[clientId];
+  if(!cached || Date.now() - cached.at > 60000){
+    if(!cached) box.innerHTML = '<div class="ci-list-empty">Loading\u2026</div>';
+    const { data, error } = await sb.rpc('client_inbox_client_summary', { p_client_id: clientId });
+    if(error) console.error('client_inbox_client_summary failed', error);
+    ciSummaryCache[clientId] = { at: Date.now(), data: data || null };
+    if(ciOpenClientId !== clientId) return;
+  }
+  const s = (ciSummaryCache[clientId] && ciSummaryCache[clientId].data) || {};
+  // Rebuilding on every realtime tick would reset a half-chosen Transfer
+  // menu; only rebuild when what it shows has changed.
+  const sig = [clientId, t.status, t.assigned_staff_id, t.queue_key, ciSummaryCache[clientId].at, !!ciTargets].join('|');
+  if(box.__sig === sig) return;
+  box.__sig = sig;
+  const a = s.account || {};
+  const money = (c) => '$' + (Number(c || 0) / 100).toFixed(2);
+  const camps = (s.campaigns || []).map(c => `<div class="ci-d-item"><div class="ci-d-item-name">${escapeHtml(c.name || 'Campaign')}</div>
+      <div class="ci-d-item-sub"><span class="ci-tag ${c.status === 'active' ? 'me' : ''}">${escapeHtml(c.status || '\u2014')}</span>${c.complimentary ? ' <span class="ci-tag">Complimentary</span>' : ''}${c.unpaid ? ` <span class="ci-tag bad">Unpaid ${money(c.unpaid_cents)}</span>` : ''}${c.renews && c.status === 'active' ? ` renews ${escapeHtml(ciDate(c.renews))}` : ''}</div></div>`).join('')
+    || '<div class="ci-d-none">No campaigns yet.</div>';
+  const o = s.orders || {};
+  const orders = o.count
+    ? `${o.count} list order${o.count === 1 ? '' : 's'}` + (o.latest ? ` \u00b7 latest: ${escapeHtml(o.latest.type || 'order')} (${escapeHtml(o.latest.status || 'new')}), ${escapeHtml(ciDate(o.latest.created_at))}` : '')
+    : 'No list orders.';
+  const pays = (s.payments || []).map(p => `<div class="ci-d-item-sub">${escapeHtml(p.campaign || 'Campaign')} \u2014 ${escapeHtml(p.status || '\u2014')}${p.paid_at ? ', paid ' + escapeHtml(ciDate(p.paid_at)) : ''}</div>`).join('')
+    || '<div class="ci-d-none">No payment requests.</div>';
+  const canTransfer = ciIsAdmin() || t.assigned_staff_id === myUserId || ciUnclaimed(t);
+  const staffOpts = ((ciTargets && ciTargets.staff) || []).filter(x => x.id !== t.assigned_staff_id)
+    .map(x => `<option value="staff:${escapeHtml(x.id)}">${escapeHtml(x.id === myUserId ? 'Me (' + x.name + ')' : x.name)}${x.title ? ' \u2014 ' + escapeHtml(x.title) : ''}</option>`).join('');
+  const teamOpts = ((ciTargets && ciTargets.teams) || [])
+    .map(x => `<option value="team:${escapeHtml(x.key)}">${escapeHtml(x.label)}</option>`).join('');
+  const canClose = t.status !== 'closed' && !ciUnclaimed(t) && (ciIsAdmin() || t.assigned_staff_id === myUserId);
+  box.innerHTML = `
+    <div class="ci-d-head">
+      <div class="ci-av big" style="background:${ciAvColor(clientId)}">${escapeHtml(ciInitials(a.full_name || t.full_name))}</div>
+      <div class="ci-d-name">${escapeHtml(a.full_name || t.full_name || 'Client')}</div>
+      ${(a.company_name || t.company_name) ? `<div class="ci-d-co">${escapeHtml(a.company_name || t.company_name)}</div>` : ''}
+      ${a.is_active === false ? '<div style="margin-top:6px;"><span class="ci-tag bad">Account disabled</span></div>' : ''}
+    </div>
+    <div class="ci-d-sec">
+      ${a.email ? `<a class="ci-d-line" href="mailto:${escapeHtml(a.email)}">\u2709 ${escapeHtml(a.email)}</a>` : ''}
+      ${a.phone ? `<a class="ci-d-line" href="tel:${escapeHtml(a.phone)}">\u260E ${escapeHtml(a.phone)}</a>` : ''}
+      <div class="ci-d-line dim">Client since ${escapeHtml(ciDate(a.created_at))}${a.last_login_at ? ' \u00b7 last signed in ' + escapeHtml(ciDate(a.last_login_at)) : ''}</div>
+    </div>
+    <div class="ci-d-sec"><div class="ci-d-label">Campaigns</div>${camps}</div>
+    <div class="ci-d-sec"><div class="ci-d-label">List orders</div><div class="ci-d-item-sub">${orders}</div></div>
+    <div class="ci-d-sec"><div class="ci-d-label">Payments</div>${pays}</div>
+    <div class="ci-d-sec">
+      <div class="ci-d-label">Conversation</div>
+      <div class="ci-d-item-sub">${escapeHtml(ciStatusLine(t))}</div>
+      ${canTransfer ? `<div class="ci-transfer">
+          <select id="ciTransferSel"><option value="">Transfer to\u2026</option>${staffOpts ? `<optgroup label="Teammates">${staffOpts}</optgroup>` : ''}${teamOpts ? `<optgroup label="Teams \u2014 first to accept gets it">${teamOpts}</optgroup>` : ''}</select>
+          <button type="button" class="ci-btn" id="ciTransferBtn">Transfer</button>
+        </div>
+        <div class="ci-d-msg" id="ciTransferMsg"></div>` : ''}
+      ${canClose ? '<button type="button" class="ci-btn danger" id="ciCloseBtn">Close conversation</button>' : ''}
+    </div>`;
+  const tb = $('ciTransferBtn');
+  if(tb) tb.onclick = ciDoTransfer;
+  const cb = $('ciCloseBtn');
+  if(cb) cb.onclick = async () => {
+    const done = await endClientChatThread(clientId);
+    if(done){ delete ciSummaryCache[clientId]; ciClose(); ciRefresh(); }
+  };
+}
+async function ciDoTransfer(){
+  const clientId = ciOpenClientId;
+  const sel = $('ciTransferSel');
+  const msg = $('ciTransferMsg');
+  if(!clientId || !sel) return;
+  const v = sel.value;
+  if(!v){ msg.textContent = 'Choose a teammate or a team.'; msg.className = 'ci-d-msg err'; return; }
+  const kind = v.slice(0, v.indexOf(':'));
+  const id = v.slice(v.indexOf(':') + 1);
+  const label = sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : '';
+  $('ciTransferBtn').disabled = true;
+  const { error } = await sb.rpc('client_chat_transfer', {
+    p_client_id: clientId, p_staff_id: kind === 'staff' ? id : null, p_queue_key: kind === 'team' ? id : null,
+  });
+  if($('ciTransferBtn')) $('ciTransferBtn').disabled = false;
+  if(error){ msg.textContent = error.message; msg.className = 'ci-d-msg err'; return; }
+  logActivity('client_chat.transfer', 'client_chat_thread', clientId, `Transferred ${chatClientThreadName(clientId)} to ${label}`);
+  msg.textContent = 'Transferred to ' + label + '.';
+  msg.className = 'ci-d-msg ok';
+  await loadClientChatOverview();
+  if($('ciDetails')) $('ciDetails').__sig = null;
+  ciRefresh();
+}
+
+// ---- composing ----------------------------------------------------------
+function ciAutoGrow(){
+  const i = $('ciInput');
+  i.style.height = 'auto';
+  i.style.height = Math.min(140, i.scrollHeight) + 'px';
+}
+function ciTypingPing(){
+  if(!ciOpenClientId) return;
+  const key = 'client:' + ciOpenClientId;
+  clearTimeout(ciTypingStopTimer);
+  if(!$('ciInput').value.trim()){ chatTypingSend(key, 'stopped'); ciTypingAt = 0; return; }
+  if(Date.now() - ciTypingAt > 2000){ ciTypingAt = Date.now(); chatTypingSend(key, 'typing'); }
+  ciTypingStopTimer = setTimeout(() => { chatTypingSend(key, 'stopped'); ciTypingAt = 0; }, 2500);
+}
+function ciSetAttachment(file){
+  if(!file) return;
+  if(file.size > 15 * 1024 * 1024){ alert('That file is too large \u2014 15MB max.'); return; }
+  ciPendingFile = file;
+  $('ciAttachName').textContent = '\u{1F4CE} ' + file.name;
+  $('ciAttachPreview').classList.remove('ci-hide');
+}
+function ciClearAttachment(){
+  ciPendingFile = null;
+  if($('ciAttachPreview')) $('ciAttachPreview').classList.add('ci-hide');
+}
+async function ciSend(){
+  const clientId = ciOpenClientId;
+  if(!clientId) return;
+  const input = $('ciInput');
+  const btn = $('ciSendBtn');
+  const body = input.value.trim();
+  if((!body && !ciPendingFile) || btn.disabled) return;
+  btn.disabled = true;
+  clearTimeout(ciTypingStopTimer);
+  chatTypingSend('client:' + clientId, 'stopped');
+  ciTypingAt = 0;
+  try{
+    let fields = null;
+    if(ciPendingFile){
+      const f = ciPendingFile;
+      const path = `${clientId}/${Date.now()}-${f.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+      const { error: upErr } = await sb.storage.from('client-chat-attachments').upload(path, f, { contentType: f.type || 'application/octet-stream' });
+      if(upErr){ console.error('inbox attachment upload failed', upErr); alert("Couldn't upload that attachment \u2014 try again."); return; }
+      fields = { attachment_path: path, attachment_name: f.name, attachment_mime: f.type || 'application/octet-stream' };
+    }
+    input.value = '';
+    ciAutoGrow();
+    const sent = await sendClientChatReply(clientId, body, fields);
+    if(!sent){ input.value = body; ciAutoGrow(); return; }
+    ciClearAttachment();
+    ciRenderMsgs(true);
+    ciRenderList();
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---- quick replies ------------------------------------------------------
+function ciFillPlaceholders(text){
+  const t = ciThread(ciOpenClientId) || {};
+  const first = String(t.full_name || '').trim().split(/\s+/)[0] || 'there';
+  return String(text)
+    .replaceAll('{client_name}', first)
+    .replaceAll('{company}', t.company_name || 'your company')
+    .replaceAll('{my_name}', String(myFullName || '').trim().split(/\s+/)[0] || 'our team');
+}
+function ciRenderQrMenu(){
+  const menu = $('ciQrMenu');
+  const items = ciQuickReplies.map(q => `<button type="button" class="ci-qr-item" data-id="${escapeHtml(q.id)}"><span class="ci-qr-title">${escapeHtml(q.title)}</span><span class="ci-qr-body">${escapeHtml(q.body)}</span></button>`).join('');
+  menu.innerHTML = (items || `<div class="ci-list-empty">No quick replies yet.${ciIsAdmin() ? '' : ' An owner or admin can add them.'}</div>`)
+    + (ciIsAdmin() ? '<button type="button" class="ci-qr-manage" id="ciQrManageBtn">Manage quick replies\u2026</button>' : '');
+  menu.querySelectorAll('.ci-qr-item').forEach(b => {
+    b.onclick = () => {
+      const q = ciQuickReplies.find(x => x.id === b.dataset.id);
+      if(!q) return;
+      const input = $('ciInput');
+      const text = ciFillPlaceholders(q.body);
+      const s = input.selectionStart ?? input.value.length;
+      const e = input.selectionEnd ?? input.value.length;
+      input.value = input.value.slice(0, s) + text + input.value.slice(e);
+      menu.classList.add('ci-hide');
+      input.focus();
+      input.selectionStart = input.selectionEnd = s + text.length;
+      ciAutoGrow();
+    };
+  });
+  const mb = $('ciQrManageBtn');
+  if(mb) mb.onclick = () => { menu.classList.add('ci-hide'); ciOpenQrModal(); };
+}
+function ciOpenQrModal(){
+  ciQrEditingId = null;
+  $('ciQrTitle').value = ''; $('ciQrBody').value = ''; $('ciQrMsg').textContent = '';
+  $('ciQrSave').textContent = 'Add reply';
+  ciRenderQrManageList();
+  $('ciQrModal').classList.remove('ci-hide');
+}
+function ciRenderQrManageList(){
+  const box = $('ciQrManageList');
+  box.innerHTML = ciQuickReplies.length ? ciQuickReplies.map(q => `<div class="ci-qr-manage-row">
+      <div><b>${escapeHtml(q.title)}</b><span>${escapeHtml(q.body)}</span></div>
+      <button type="button" class="ci-btn" data-edit="${escapeHtml(q.id)}">Edit</button>
+      <button type="button" class="ci-btn" data-del="${escapeHtml(q.id)}" style="color:var(--danger);">Delete</button>
+    </div>`).join('') : '<div class="ci-d-none">None yet \u2014 add the first one below.</div>';
+  box.querySelectorAll('[data-edit]').forEach(b => {
+    b.onclick = () => {
+      const q = ciQuickReplies.find(x => x.id === b.dataset.edit);
+      if(!q) return;
+      ciQrEditingId = q.id;
+      $('ciQrTitle').value = q.title; $('ciQrBody').value = q.body;
+      $('ciQrSave').textContent = 'Save changes';
+      $('ciQrTitle').focus();
+    };
+  });
+  box.querySelectorAll('[data-del]').forEach(b => {
+    b.onclick = async () => {
+      const q = ciQuickReplies.find(x => x.id === b.dataset.del);
+      if(!q || !confirm(`Delete the quick reply "${q.title}"?`)) return;
+      const { error } = await sb.from('client_chat_quick_replies').delete().eq('id', q.id);
+      if(error){ $('ciQrMsg').textContent = error.message; $('ciQrMsg').className = 'ci-d-msg err'; return; }
+      await ciLoadQuickReplies();
+      ciRenderQrManageList();
+    };
+  });
+}
+async function ciSaveQr(){
+  const title = $('ciQrTitle').value.trim();
+  const body = $('ciQrBody').value.trim();
+  const msg = $('ciQrMsg');
+  if(!title || !body){ msg.textContent = 'A title and the reply are both needed.'; msg.className = 'ci-d-msg err'; return; }
+  $('ciQrSave').disabled = true;
+  const res = ciQrEditingId
+    ? await sb.from('client_chat_quick_replies').update({ title, body, updated_at: new Date().toISOString() }).eq('id', ciQrEditingId)
+    : await sb.from('client_chat_quick_replies').insert({ title, body, sort: ciQuickReplies.length });
+  $('ciQrSave').disabled = false;
+  if(res.error){ msg.textContent = res.error.message; msg.className = 'ci-d-msg err'; return; }
+  msg.textContent = ciQrEditingId ? 'Saved.' : 'Added.';
+  msg.className = 'ci-d-msg ok';
+  ciQrEditingId = null;
+  $('ciQrTitle').value = ''; $('ciQrBody').value = '';
+  $('ciQrSave').textContent = 'Add reply';
+  await ciLoadQuickReplies();
+  ciRenderQrManageList();
+}
+
+// ---- starting a conversation (owner/admin, same rule as before) ---------
+async function ciOpenNewModal(){
+  $('ciNewSearch').value = '';
+  $('ciNewMsg').textContent = '';
+  $('ciNewList').innerHTML = '<div class="ci-list-empty">Loading\u2026</div>';
+  $('ciNewModal').classList.remove('ci-hide');
+  const { data, error } = await sb.from('client_accounts').select('id, full_name, company_name, email').eq('is_active', true).order('full_name');
+  if(error){ $('ciNewList').innerHTML = `<div class="ci-list-empty">${escapeHtml(error.message)}</div>`; return; }
+  ciNewDirectory = data || [];
+  ciRenderNewList();
+  $('ciNewSearch').focus();
+}
+function ciRenderNewList(){
+  const q = $('ciNewSearch').value.trim().toLowerCase();
+  const rows = ciNewDirectory.filter(c => !q || [c.full_name, c.company_name, c.email].some(v => String(v || '').toLowerCase().includes(q)));
+  $('ciNewList').innerHTML = rows.length ? rows.map(c => `<div class="ci-new-row" data-id="${escapeHtml(c.id)}">
+      <div class="ci-av" style="background:${ciAvColor(c.id)}">${escapeHtml(ciInitials(c.full_name || c.company_name))}</div>
+      <div style="min-width:0;"><div class="ci-row-name">${escapeHtml(c.full_name || 'Client')}</div><div class="ci-row-co">${escapeHtml([c.company_name, c.email].filter(Boolean).join(' \u00b7 '))}</div></div>
+    </div>`).join('') : '<div class="ci-list-empty">No client matches.</div>';
+  $('ciNewList').querySelectorAll('.ci-new-row').forEach(r => { r.onclick = () => ciStartConversation(r.dataset.id); });
+}
+async function ciStartConversation(clientId){
+  if(!ciThread(clientId)){
+    const { error } = await sb.from('client_chat_threads').insert({ client_id: clientId, status: 'routed', assigned_staff_id: myUserId, queue_key: null });
+    if(error){ $('ciNewMsg').textContent = error.message; $('ciNewMsg').className = 'ci-d-msg err'; return; }
+    await loadClientChatOverview();
+  }
+  $('ciNewModal').classList.add('ci-hide');
+  const t = ciThread(clientId);
+  if(t && !ciInFilter(t, ciFilter)) ciFilter = ['mine', 'unassigned', 'all', 'closed'].find(f => ciInFilter(t, f)) || 'all';
+  ciOpen(clientId);
+}
+
+// ---- wiring (once) ------------------------------------------------------
+function ciWire(){
+  $('ciSearch').addEventListener('input', ciRenderList);
+  $('ciFilters').addEventListener('click', (e) => {
+    const b = e.target.closest('.ci-filter');
+    if(!b) return;
+    ciFilter = b.dataset.f;
+    ciRenderList();
+  });
+  $('ciRows').addEventListener('click', (e) => {
+    const r = e.target.closest('.ci-row');
+    if(r) ciOpen(r.dataset.id);
+  });
+  $('ciBackBtn').addEventListener('click', ciClose);
+  $('ciDetailsBtn').addEventListener('click', () => $('ciWrap').classList.toggle('show-details'));
+  $('ciCallBtn').addEventListener('click', () => { if(ciOpenClientId) startVoiceCallToClient(ciOpenClientId, chatClientThreadName(ciOpenClientId)); });
+  $('ciClaimBtn').addEventListener('click', async () => {
+    if(!ciOpenClientId) return;
+    await acceptClientChatThread(ciOpenClientId);
+    if($('ciDetails')) $('ciDetails').__sig = null;
+    ciRefresh();
+    if(ciOpenClientId && !ciUnclaimed(ciThread(ciOpenClientId))) $('ciInput').focus();
+  });
+  $('ciSendBtn').addEventListener('click', ciSend);
+  $('ciInput').addEventListener('keydown', (e) => {
+    if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); ciSend(); }
+  });
+  $('ciInput').addEventListener('input', () => { ciAutoGrow(); ciTypingPing(); });
+  $('ciInput').addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if(!items) return;
+    for(const item of items){
+      if(item.kind !== 'file') continue;
+      const file = item.getAsFile();
+      if(!file) return;
+      e.preventDefault();
+      ciSetAttachment(file.name ? file : new File([file], `pasted-${Date.now()}.${(file.type.split('/')[1] || 'png')}`, { type: file.type }));
+      return;
+    }
+  });
+  $('ciAttachBtn').addEventListener('click', () => $('ciFile').click());
+  $('ciFile').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    ciSetAttachment(f);
+  });
+  $('ciAttachRemove').addEventListener('click', ciClearAttachment);
+  $('ciQrBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const m = $('ciQrMenu');
+    if(m.classList.contains('ci-hide')){ ciRenderQrMenu(); m.classList.remove('ci-hide'); }
+    else m.classList.add('ci-hide');
+  });
+  document.addEventListener('click', (e) => {
+    if(!e.target.closest || !e.target.closest('.ci-qr-wrap')) $('ciQrMenu').classList.add('ci-hide');
+  });
+  $('ciQrModalClose').addEventListener('click', () => $('ciQrModal').classList.add('ci-hide'));
+  $('ciQrClear').addEventListener('click', () => {
+    ciQrEditingId = null; $('ciQrTitle').value = ''; $('ciQrBody').value = ''; $('ciQrMsg').textContent = '';
+    $('ciQrSave').textContent = 'Add reply';
+  });
+  $('ciQrSave').addEventListener('click', ciSaveQr);
+  $('ciNewBtn').classList.toggle('ci-hide', !ciIsAdmin());
+  $('ciNewBtn').addEventListener('click', ciOpenNewModal);
+  $('ciNewClose').addEventListener('click', () => $('ciNewModal').classList.add('ci-hide'));
+  $('ciNewSearch').addEventListener('input', ciRenderNewList);
+  [$('ciQrModal'), $('ciNewModal')].forEach(m => m.addEventListener('click', (e) => { if(e.target === m) m.classList.add('ci-hide'); }));
+  document.addEventListener('keydown', (e) => {
+    if(e.key !== 'Escape') return;
+    $('ciQrMenu').classList.add('ci-hide');
+    $('ciQrModal').classList.add('ci-hide');
+    $('ciNewModal').classList.add('ci-hide');
+  });
+  // The relative times in the list ("5m") age while the page sits open.
+  setInterval(() => { if(ciTabActive()) ciRenderList(); }, 60000);
+}
 
 // ---------- v62: native voice calls (WebRTC) ----------
 // Two peers connect directly (peer-to-peer audio) using Supabase Realtime
