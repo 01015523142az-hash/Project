@@ -28184,6 +28184,7 @@ function csubFieldValueByLabel(row, label){
 // subscription system, or ones whose subscription row was since deleted).
 let csubCampaignSubsByNorm = {};
 let csubCampaignClientById = {};   // v680: client_accounts by id, for Client Details
+let csubCampaignRequestByNorm = {}; // v681: each campaign's first request, whatever the date filter
 // v395: normName -> { accepted, rejected, pending, total } lead outcome
 // counts, keyed the same way csubCampaignSubsByNorm is (csubNormalizeLabel
 // on the campaign's display name) so the Campaign Management table can
@@ -28284,6 +28285,18 @@ async function loadCsubCampaignSubsForCampaignTab(){
     const { data: cl } = await sb.from('client_accounts').select('id, full_name, company_name, email, phone').in('id', clientIds);
     (cl || []).forEach(c => { csubCampaignClientById[c.id] = c; });
   }
+  // v681: the Campaigns section only loads requests inside its From/To
+  // window, so a campaign requested before that window showed "No request
+  // submitted". Its first request is looked up here regardless of dates.
+  csubCampaignRequestByNorm = {};
+  const { data: reqs } = await sb.from('ghl_form_submissions')
+    .select('submitted_at, contact_name, contact_phone, contact_email, fields')
+    .order('submitted_at', { ascending: false })
+    .limit(1000);
+  (reqs || []).forEach(r => {   // newest first, so the last one kept is the earliest
+    const norm = csubNormalizeLabel(csubCampaignNameValue(r));
+    if(norm && norm in csubCampaignSubsByNorm) csubCampaignRequestByNorm[norm] = r;
+  });
 }
 // v296: dialer is now per-caller, so a subscription can mix "our dialer"
 // and "own dialer" callers -- a single dialer_choice label would be
@@ -28445,9 +28458,14 @@ function renderCsubCampaignTable(){
   }
   const csubCampaignTz = nonAgentDisplayTz();
   bodyEl.innerHTML = rows.map(r => {
-    const submitted = r.submitted_at ? new Date(r.submitted_at).toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', ...(csubCampaignTz ? { timeZone: csubCampaignTz } : {}) }) : (r.isPlaceholder ? 'No request submitted' : '—');
+    // v681: a placeholder falls back to the campaign's first request when that
+    // request sits outside the date window.
+    const firstReq = r.isPlaceholder ? csubCampaignRequestByNorm[csubNormalizeLabel(csubCampaignNameValue(r))] : null;
+    const submittedAt = r.submitted_at || firstReq?.submitted_at;
+    const submitted = submittedAt ? new Date(submittedAt).toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit', ...(csubCampaignTz ? { timeZone: csubCampaignTz } : {}) }) : (r.isPlaceholder ? 'No request submitted' : '—');
     const linkedClient = csubCampaignClientById[(csubCampaignSubsByNorm[csubNormalizeLabel(csubCampaignNameValue(r))] || {}).client_id];
     const clientDetails = [r.contact_name, r.contact_phone, r.contact_email].filter(Boolean).join(' · ')
+      || (firstReq ? [firstReq.contact_name, firstReq.contact_phone, firstReq.contact_email].filter(Boolean).join(' · ') : '')
       || (linkedClient ? [linkedClient.full_name || linkedClient.company_name, linkedClient.phone, linkedClient.email].filter(Boolean).join(' · ') : '—');
     const statusInfo = csubCampaignStatusInfo(r);
     const leadNorm = csubNormalizeLabel(csubCampaignNameValue(r));
