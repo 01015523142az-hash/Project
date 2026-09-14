@@ -39736,6 +39736,15 @@ async function loadOrderReadiness(force){
   try{
     const data = await dataSciStatsCall({ action: 'order_readiness' });
     if(!data || data.ok === false) throw new Error((data && data.error) || 'order_readiness failed');
+    // v683: the function labels a list order by its client_id; show the
+    // client's name instead (same client_accounts read List Orders uses).
+    const clientIds = Array.from(new Set((data.orders || []).filter(o => o.kind === 'list_order' && o.label).map(o => o.label)));
+    if(clientIds.length){
+      const { data: cl } = await sb.from('client_accounts').select('id, full_name, company_name, email').in('id', clientIds);
+      const nameById = {};
+      (cl || []).forEach(c => { nameById[c.id] = c.full_name || c.company_name || c.email; });
+      data.orders.forEach(o => { if(o.kind === 'list_order' && nameById[o.label]) o.label = nameById[o.label]; });
+    }
     dsReadinessCache = data;
     renderOrderReadiness();
   }catch(err){
