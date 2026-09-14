@@ -1913,7 +1913,7 @@ async function loadPipeline() {
     sb.from('dialer_opportunities').select('owner_id, status')
       .in('status', ['converted', 'lost']).gte('closed_at', since).limit(5000),
     sb.from('dialer_follow_ups').select('id, owner_id, phone_e164, contact_name, due_at, note')
-      .eq('status', 'open').order('due_at', { ascending: true }).limit(2000),
+      .eq('status', 'open').order('due_at', { ascending: true, nullsFirst: false }).limit(2000),   // v702: undated last
     sb.from('profiles').select('id, full_name, role'),
     sb.from('roles').select('name, can_use_dialer'),
   ]);
@@ -1936,7 +1936,7 @@ async function loadPipeline() {
   (fus.data || []).forEach((f) => {
     const r = rep(f.owner_id);
     r.fu++;
-    if (new Date(f.due_at).getTime() < now) r.overdue++;
+    if (f.due_at && new Date(f.due_at).getTime() < now) r.overdue++;   // v702: an undated one is never overdue
   });
   const ids = Object.keys(byRep).sort((a, b) => String(pipeNames[a] || '').localeCompare(String(pipeNames[b] || '')));
   $('pipeReps').innerHTML = ids.length ? ids.map((id) => {
@@ -1951,9 +1951,9 @@ async function loadPipeline() {
 
   // ---- follow-ups due within 24h, overdue first (already in due order) ----
   const horizon = now + 86400000;
-  const due = (fus.data || []).filter((f) => new Date(f.due_at).getTime() <= horizon);
+  const due = (fus.data || []).filter((f) => !f.due_at || new Date(f.due_at).getTime() <= horizon);   // v702: undated ones listed too, last
   $('pipeFollowUps').innerHTML = due.length ? due.map((f) => `<tr>
-      <td>${pipeDue(f.due_at)}<div class="hint" style="margin:2px 0 0">${esc(new Date(f.due_at).toLocaleString())}</div></td>
+      <td>${f.due_at ? `${pipeDue(f.due_at)}<div class="hint" style="margin:2px 0 0">${esc(new Date(f.due_at).toLocaleString())}</div>` : '<span class="hint">No date set</span>'}</td>
       <td>${esc(f.contact_name || '—')}<div class="mono" style="font-size:11px">${esc(f.phone_e164)}</div></td>
       <td>${pipeRepSelect('fu', f.id, f.owner_id)}</td>
       <td style="max-width:320px">${esc(f.note || '')}</td></tr>`).join('')

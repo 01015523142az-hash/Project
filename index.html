@@ -958,6 +958,28 @@
   .chat-status-dot.busy{ background:#F5A623; }
   .chat-status-dot.dnd{ background:var(--danger); }
   .chat-status-dot.offline{ background:var(--text-dim); }
+  /* v702: chat status -- Be right back, the message emoji, the picker. */
+  .chat-status-dot.brb{ background:var(--info, #4EA8FF); }
+  .chat-status-emoji{ margin-left:5px; font-size:12px; font-weight:400; }
+  .chat-status-presets{ display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 8px; }
+  .chat-status-presets button{
+    padding:4px 9px; margin:0; width:auto; font-size:11.5px; font-weight:600;
+    background:var(--inset); color:var(--text); border:1px solid var(--border-light);
+  }
+  .chat-status-presets button:hover{ border-color:var(--focus); }
+  .chat-status-msg-row{ display:flex; gap:6px; }
+  .chat-status-msg-row input{ margin:0; }
+  .chat-status-emoji-input{ width:52px !important; flex:none; text-align:center; }
+  .chat-my-photo-hint{ font-size:11.5px; color:var(--text-dim); margin-top:8px; }
+  /* v702: Calls tab -- missed in red, a call-back button on every row. */
+  .chat-ghl-list-item.chat-call-missed .chat-conv-name{ color:var(--danger); }
+  .chat-call-missed-label{ color:var(--danger); font-weight:600; }
+  .chat-call-back-btn{
+    width:30px; height:30px; padding:0; margin:0 0 0 6px; flex-shrink:0;
+    display:inline-flex; align-items:center; justify-content:center; font-size:13px;
+    background:var(--inset); color:var(--text); border:1px solid var(--border-light);
+  }
+  .chat-call-back-btn:hover{ border-color:var(--good); background:var(--good-dim, var(--inset)); }
 
   .chat-my-avatar-btn{
     width:28px; height:28px; border-radius:50%; background:var(--focus); color:#0a1f14; border:none; cursor:pointer;
@@ -2746,6 +2768,10 @@
   }
   .profile-menu-google-btn:hover{ border-color:var(--focus); color:var(--focus); background:var(--focus-dim); }
   .profile-menu-google-btn:disabled{ opacity:.55; cursor:default; }
+  /* v702: your photo, shown in the menu and on its button, changed here. */
+  .profile-menu-avatar, .profile-menu-btn{ overflow:hidden; }
+  .profile-menu-avatar img{ width:38px; height:38px; border-radius:50%; object-fit:cover; display:block; }
+  .profile-menu-btn img{ width:34px; height:34px; border-radius:50%; object-fit:cover; display:block; }
 
 </style>
 </head>
@@ -2933,6 +2959,15 @@
                 <div class="profile-menu-role" id="profileMenuRole"></div>
                 <div class="profile-menu-email" id="profileMenuEmail"></div>
               </div>
+            </div>
+            <!-- v702: your profile photo is changed HERE only (not in the chat). -->
+            <div class="profile-menu-google" id="pmPhoto">
+              <div class="profile-menu-google-title">Profile photo</div>
+              <div class="profile-menu-google-btns">
+                <button type="button" class="profile-menu-google-btn" id="pmPhotoBtn">Change photo</button>
+              </div>
+              <input type="file" id="pmPhotoInput" accept="image/*" style="display:none;">
+              <div class="msg" id="pmPhotoMsg" style="margin:6px 0 0; font-size:11.5px;"></div>
             </div>
             <!-- v696: the caller's own Google (Gmail + Calendar) -- the same
                  connection the dialer uses, via dialer-conversations. Shown
@@ -8326,7 +8361,7 @@
     <!-- conversation list view -->
     <div id="chatListView">
       <div class="chat-panel-header">
-        <button id="chatMyProfileBtn" class="chat-my-avatar-btn" title="My profile"><span id="chatMyAvatarBtnInner">?</span></button>
+        <button id="chatMyProfileBtn" class="chat-my-avatar-btn" title="My status"><span id="chatMyAvatarBtnInner">?</span></button>
         <span style="flex:1;">Chat</span>
         <span id="chatNewClientChatBtn" class="chat-icon-btn" title="New client chat" style="display:none;">&#128172;+</span>
         <span id="chatNewGroupBtn" class="chat-icon-btn" title="New group">&#128101;+</span>
@@ -8465,19 +8500,48 @@
     <div id="chatMyProfileView" style="display:none;">
       <div class="chat-panel-header">
         <span id="chatMyProfileBackBtn" class="chat-icon-btn" title="Back">&larr;</span>
-        <span style="flex:1; margin-left:8px;">My profile</span>
+        <span style="flex:1; margin-left:8px;">My status</span>
       </div>
       <div class="chat-scroll-pad" style="text-align:center;">
         <div id="chatMyAvatarPreview" class="chat-my-avatar-preview">?</div>
-        <input type="file" id="chatAvatarFileInput" accept="image/*" style="display:none;">
-        <button class="btn-secondary" id="chatChangeAvatarBtn" style="width:auto; padding:7px 14px; margin-top:10px;">Change photo</button>
+        <!-- v702: the photo is changed from the profile menu (top right) only. -->
+        <div class="chat-my-photo-hint">To change your photo, use your profile menu (top right).</div>
         <div style="text-align:left; margin-top:18px;">
           <label>Status</label>
           <select id="chatMyStatusSelect">
-            <option value="auto">\u{1F7E2} Automatic (Active / Away)</option>
-            <option value="busy">\u{1F7E0} Busy</option>
-            <option value="dnd">\u26D4 Do not disturb</option>
+            <option value="auto">🟢 Automatic (Active / Away)</option>
+            <option value="busy">🟠 Busy</option>
+            <option value="dnd">⛔ Do not disturb (mutes chat sounds and pop-ups)</option>
+            <option value="brb">🕒 Be right back</option>
+            <option value="invisible">⚪ Appear offline</option>
           </select>
+          <!-- v702: a status message with an emoji, and when it all clears. -->
+          <label style="margin-top:14px;">Status message</label>
+          <div class="chat-status-presets" id="chatStatusPresets">
+            <button type="button" data-e="📅" data-t="In a meeting">📅 In a meeting</button>
+            <button type="button" data-e="🍔" data-t="Lunch">🍔 Lunch</button>
+            <button type="button" data-e="🚗" data-t="Commuting">🚗 Commuting</button>
+            <button type="button" data-e="🏠" data-t="Working remotely">🏠 Working remotely</button>
+            <button type="button" data-e="🤒" data-t="Out sick">🤒 Out sick</button>
+            <button type="button" data-e="🌴" data-t="On leave">🌴 On leave</button>
+          </div>
+          <div class="chat-status-msg-row">
+            <input type="text" id="chatStatusEmoji" class="chat-status-emoji-input" maxlength="8" placeholder="🙂" aria-label="Status emoji">
+            <input type="text" id="chatStatusText" maxlength="80" placeholder="What are you up to?">
+          </div>
+          <label style="margin-top:12px;">Clear after</label>
+          <select id="chatStatusUntil">
+            <option value="">Don't clear</option>
+            <option value="30m">30 minutes</option>
+            <option value="1h">1 hour</option>
+            <option value="4h">4 hours</option>
+            <option value="today">Today</option>
+            <option value="week">This week</option>
+          </select>
+          <div style="display:flex; gap:8px; margin-top:12px;">
+            <button type="button" class="btn-primary" id="chatStatusSaveBtn" style="width:auto; padding:7px 14px;">Save status</button>
+            <button type="button" class="btn-secondary" id="chatStatusClearBtn" style="width:auto; padding:7px 14px;">Clear status</button>
+          </div>
         </div>
         <div class="msg" id="chatMyProfileMsg"></div>
       </div>
@@ -8965,7 +9029,8 @@ let myDepartment = '';
 let myEmail = '';
 let myAvatarUrl = null;
 let myChatStatus = 'offline';
-let myChatStatusManual = null; // v1.2.9: deliberate 'busy'/'dnd' override; null = auto
+let myChatStatusManual = null; // v1.2.9: deliberate 'busy'/'dnd' override; null = auto (v702: + 'brb', 'invisible')
+let myStatusText = null, myStatusEmoji = null, myStatusUntil = null; // v702: chat status message, and when it clears
 
 // Header greeting — "Welcome, {first name}!" / email / last login —
 // applies to every signed-in role, not just Owner/Admin. previousLoginAt
@@ -9405,16 +9470,22 @@ function currentAutoStatus(){
 
 async function writeHeartbeat(){
   if(!sb || !myUserId) return;
+  const patch = {};
+  // v702: a status set to "clear after" a while clears itself here.
+  if(myStatusUntil && Date.now() > new Date(myStatusUntil).getTime()){
+    myChatStatusManual = null; myStatusText = null; myStatusEmoji = null; myStatusUntil = null;
+    Object.assign(patch, { chat_status_manual: null, status_text: null, status_emoji: null, status_until: null });
+  }
   // If the user set a manual override, keep chat_status on that; otherwise
-  // reflect the auto state. Always bump last_seen_at.
+  // reflect the auto state. v702: 'Appear offline' is written as offline,
+  // and WITHOUT a fresh last_seen_at, which would give them away.
   const auto = currentAutoStatus();
-  const effective = myChatStatusManual || auto;
+  const effective = myChatStatusManual === 'invisible' ? 'offline' : (myChatStatusManual || auto);
   myChatStatus = effective;
+  patch.chat_status = effective;
+  if(myChatStatusManual !== 'invisible') patch.last_seen_at = new Date().toISOString();
   try {
-    await sb.from('profiles').update({
-      chat_status: effective,
-      last_seen_at: new Date().toISOString(),
-    }).eq('id', myUserId);
+    await sb.from('profiles').update(patch).eq('id', myUserId);
   } catch(e){ /* heartbeat is best-effort; next tick retries */ }
 }
 
@@ -9435,13 +9506,20 @@ function stopPresenceHeartbeat(){
 // VIEWER show? This is the single source of truth for rendered presence.
 function derivePresence(person){
   if(!person) return 'offline';
-  const manual = person.chat_status_manual;
-  if(manual === 'busy' || manual === 'dnd') return manual; // deliberate override always shows
-  const stored = person.chat_status || 'offline';
+  // v702: a status set to clear after a while stops counting once it has,
+  // even before its owner's page gets round to clearing it.
+  const expired = !!(person.status_until && Date.now() > new Date(person.status_until).getTime());
+  const manual = expired ? null : person.chat_status_manual;
+  if(manual === 'invisible') return 'offline';   // 'Appear offline'
+  let stored = person.chat_status || 'offline';
   if(stored === 'offline') return 'offline';
-  // stale heartbeat -> offline (self-heal)
+  // stale heartbeat -> offline (self-heal). v702: this now applies to Busy,
+  // Do not disturb and Be right back too -- someone who signed out, or whose
+  // laptop is shut, is offline, whatever they had chosen.
   const seen = person.last_seen_at ? new Date(person.last_seen_at).getTime() : 0;
   if(!seen || (Date.now() - seen) > PRESENCE_STALE_MS) return 'offline';
+  if(manual === 'busy' || manual === 'dnd' || manual === 'brb') return manual; // deliberate override
+  if(stored === 'busy' || stored === 'dnd' || stored === 'brb') stored = 'active'; // an expired override, still stored
   return stored; // 'active' or 'away'
 }
 function fmtHM(sec){
@@ -9637,7 +9715,7 @@ async function handOverSessionToExtension(){
 }
 
 async function establishSession(user, { isNewLogin = true } = {}){
-  const { data: profile } = await sb.from('profiles').select('role, full_name, avatar_url, chat_status, chat_status_manual, must_change_password, password_changed_at, department, title, grade').eq('id', user.id).single();
+  const { data: profile } = await sb.from('profiles').select('role, full_name, avatar_url, chat_status, chat_status_manual, status_text, status_emoji, status_until, must_change_password, password_changed_at, department, title, grade').eq('id', user.id).single();
   // v319: forced password rotation -- intercepted here, before any role/
   // permission loading or app reveal, on every call to establishSession(),
   // whether from a fresh sign-in or the boot script resuming an existing
@@ -9724,8 +9802,13 @@ async function establishSession(user, { isNewLogin = true } = {}){
   myEmail = user.email;
   myUserId = user.id;
   myAvatarUrl = profile?.avatar_url || null;
+  if(typeof renderProfileMenu === 'function') renderProfileMenu();   // v702: the photo on the menu button
   myChatStatus = profile?.chat_status || 'offline';
-  myChatStatusManual = (profile?.chat_status_manual === 'busy' || profile?.chat_status_manual === 'dnd') ? profile.chat_status_manual : null;
+  myChatStatusManual = ['busy', 'dnd', 'brb', 'invisible'].includes(profile?.chat_status_manual) ? profile.chat_status_manual : null;
+  // v702: the status message, and when the whole status clears.
+  myStatusText = profile?.status_text || null;
+  myStatusEmoji = profile?.status_emoji || null;
+  myStatusUntil = profile?.status_until || null;
 
   // v144: populated here (not just on first visit to Activity or User
   // Management > Tasks) so ACTIVITY_SECTIONS' per-task Extension entries
@@ -10399,8 +10482,42 @@ function chatStatusMeta(status){
     case 'away':   return { dot: 'away',   label: 'Away' };
     case 'busy':   return { dot: 'busy',   label: 'Busy' };
     case 'dnd':    return { dot: 'dnd',    label: 'Do not disturb' };
+    case 'brb':    return { dot: 'brb',    label: 'Be right back' };      // v702
+    case 'invisible': return { dot: 'offline', label: 'Appear offline' }; // v702: how I see my own
     default:       return { dot: 'offline',label: 'Offline' };
   }
+}
+// v702: a person's status message, if it has not expired.
+function chatPersonStatusMsg(userId){
+  const p = userId === myUserId
+    ? { status_text: myStatusText, status_emoji: myStatusEmoji, status_until: myStatusUntil }
+    : chatDirectory.find(x => x.id === userId);
+  if(!p || (!p.status_text && !p.status_emoji)) return null;
+  if(p.status_until && Date.now() > new Date(p.status_until).getTime()) return null;
+  return { emoji: p.status_emoji || '', text: p.status_text || '' };
+}
+function chatStatusBadgeHtml(userId){
+  const s = chatPersonStatusMsg(userId);
+  if(!s) return '';
+  return `<span class="chat-status-emoji" title="${escapeHtml(s.text || '')}">${escapeHtml(s.emoji || '💬')}</span>`;
+}
+function chatLastSeenLabel(userId){
+  const p = chatDirectory.find(x => x.id === userId) || chatGroupDirectory.find(x => x.id === userId);
+  if(!p || !p.last_seen_at) return '';
+  const s = (Date.now() - new Date(p.last_seen_at).getTime()) / 1000;
+  if(s < 90) return 'just now';
+  if(s < 3600) return Math.floor(s / 60) + 'm ago';
+  if(s < 86400) return Math.floor(s / 3600) + 'h ago';
+  const tz = nonAgentDisplayTz();
+  return new Date(p.last_seen_at).toLocaleDateString([], { month: 'short', day: 'numeric', ...(tz ? { timeZone: tz } : {}) });
+}
+// Do not disturb (and not expired): no chat sound, no chat pop-up.
+function chatIsMyDnd(){
+  return myChatStatusManual === 'dnd' && !(myStatusUntil && Date.now() > new Date(myStatusUntil).getTime());
+}
+function chatFmtUntil(iso){
+  const tz = nonAgentDisplayTz();
+  return new Date(iso).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit', ...(tz ? { timeZone: tz } : {}) });
 }
 // Renders the little presence line under the conversation title: for a DM it's
 // the other person's status (dot + label); for a group it's how many members
@@ -10433,6 +10550,10 @@ function renderChatThreadHeaderStatus(key){
   // whether this was a teammate or a department head.
   const roleLine = chatContactRole(key);
   el.innerHTML = `<span class="chat-status-dot ${meta.dot}" style="width:7px;height:7px;display:inline-block;border-radius:50%;margin-right:5px;vertical-align:middle;"></span>${meta.label}`;
+  // v702: when they were last here, and what they have said they are doing.
+  if(st === 'offline'){ const seen = chatLastSeenLabel(key); if(seen) el.innerHTML += ` · last seen ${escapeHtml(seen)}`; }
+  const sm = chatPersonStatusMsg(key);
+  if(sm) el.innerHTML += ` · ${escapeHtml(((sm.emoji ? sm.emoji + ' ' : '') + (sm.text || '')).trim())}`;
   if(roleLine) el.innerHTML += `<span style="opacity:.75;"> · ${escapeHtml(roleLine)}</span>`;
   el.style.display = 'block';
 }
@@ -10482,6 +10603,7 @@ async function initChatWidget(){
   subscribeChatRealtime();
   subscribeStaffOpsRealtime();
   initNotifCenter();
+  handleCallbackHash();   // v702: a missed-call notification opened from the dialer
   initPushToggle();
   initVoiceCallSignaling();
   initChatTypingSignaling();
@@ -10702,6 +10824,7 @@ function chatSeenByHtml(m, key){
 // by the time a message needs to play this, it's safe to create/resume.
 let chatAudioCtx = null;
 function chatPlayNotificationSound(){
+  if(chatIsMyDnd()) return;   // v702: Do not disturb means no chat sound
   try{
     if(!chatAudioCtx) chatAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if(chatAudioCtx.state === 'suspended') chatAudioCtx.resume();
@@ -10740,6 +10863,7 @@ function chatEnsureNotificationPermission(){
 }
 function chatShowDesktopNotification(key, m){
   if(!('Notification' in window) || Notification.permission !== 'granted') return;
+  if(chatIsMyDnd()) return;   // v702: ...and no chat pop-up
   const title = key === 'team' ? 'Communication' : (key.startsWith('group:') ? `${chatConvDisplayName(key)} \u00b7 ${chatContactName(m.sender_id)}` : chatContactName(m.sender_id));
   const body = m.body || (m.attachment_mime && m.attachment_mime.startsWith('audio/') ? 'Sent a voice message' : (m.attachment_name ? `Sent a file: ${m.attachment_name}` : 'New message'));
   const iconLink = document.querySelector('link[rel="icon"]');
@@ -10792,7 +10916,7 @@ function chatMaybeNotify(key, m){
       // deliberately NOT silent: that also routes it through
       // pushSelfNotification(), so it reaches your phone or a minimised
       // browser, which an ordinary channel message should not do.
-      silent: !mentionsMe,
+      silent: !mentionsMe || chatIsMyDnd(),   // v702: Do not disturb silences a mention too
     });
   }
   if(activelyViewing) return;
@@ -10819,6 +10943,12 @@ function renderProfileMenu(){
   const setText = (id, v) => { const el = $(id); if(el) el.textContent = v; };
   setText('profileMenuInitials', initials);
   setText('profileMenuAvatar', initials);
+  // v702: your photo, when you have one -- in the menu and on its button.
+  if(myAvatarUrl){
+    const img = `<img src="${escapeHtml(myAvatarUrl)}" alt="">`;
+    if($('profileMenuAvatar')) $('profileMenuAvatar').innerHTML = img;
+    if($('profileMenuInitials')) $('profileMenuInitials').innerHTML = img;
+  }
   setText('profileMenuName', name);
   setText('profileMenuEmail', myEmail || '');
   // Title and department, the reason this menu exists. Falls back to the
@@ -11479,6 +11609,8 @@ function showDurableStaffNotification(row, silent){
       // conversation in the Client Inbox here -- not the portal again in a
       // new tab.
       if(row.kind === 'client_chat_queue' && row.ref_id && ciCanUseInbox()){ ciOpenFromElsewhere(row.ref_id); return; }
+      // v702: a missed call -- click to call them back.
+      if(row.kind === 'missed_call' && row.ref_id){ voiceCallBackFromCallId(row.ref_id); return; }
       // The dialer is its own origin, so a new tab rather than a tab switch.
       if(row.url) window.open(row.url, '_blank');
     },
@@ -12042,7 +12174,7 @@ function renderChatConvList(filterText){
     .filter(p => !search || (p.full_name || p.email || '').toLowerCase().includes(search))
     .forEach(p => {
       const conv = chatConversations[p.id];
-      items.push({ key: p.id, name: p.full_name || p.email, isTeam: false, isGroup: false, last: lastOf(conv), unread: conv ? conv.unread : 0 });
+      items.push({ key: p.id, name: p.full_name || p.email, isTeam: false, isGroup: false, last: lastOf(conv), unread: conv ? conv.unread : 0, statusBadge: chatStatusBadgeHtml(p.id) });   // v702: status emoji
     });
   Object.values(chatGroups)
     .filter(g => !search || g.name.toLowerCase().includes(search))
@@ -12095,7 +12227,7 @@ function renderChatConvList(filterText){
       <div class="chat-conv-item" data-key="${it.key}">
         ${avatarHtml}
         <div class="chat-conv-info">
-          <div class="chat-conv-name">${escapeHtml(it.name)}${it.isUnclaimed ? ' <span style="font-size:10px; font-weight:600; color:var(--away); text-transform:uppercase; letter-spacing:0.5px;">\u2022 Waiting</span>' : ''}</div>
+          <div class="chat-conv-name">${escapeHtml(it.name)}${it.isUnclaimed ? ' <span style="font-size:10px; font-weight:600; color:var(--away); text-transform:uppercase; letter-spacing:0.5px;">\u2022 Waiting</span>' : ''}${it.statusBadge || ''}</div>
           <div class="chat-conv-preview${typingNow ? ' chat-conv-preview-typing' : ''}">${escapeHtml(previewText)}</div>
         </div>
         ${it.unread > 0 ? `<div class="chat-conv-badge">${it.unread > 99 ? '99+' : it.unread}</div>` : ''}
@@ -12412,6 +12544,7 @@ async function chatRenderCallsList(){
       callee_client:client_accounts!voice_calls_callee_client_id_fkey(full_name, company_name)
     `)
     .order('started_at', { ascending: false })
+    .or(`caller_id.eq.${myUserId},callee_id.eq.${myUserId}`)   // v702: MY calls -- an admin can read everyone's
     .limit(50);
   if(error){ box.innerHTML = `<div class="chat-ghl-list-empty">${escapeHtml(error.message)}</div>`; return; }
   // Pending count for the Calls bottom-tab badge -- calls that happened
@@ -12420,7 +12553,7 @@ async function chatRenderCallsList(){
   // whether the list itself is empty, so the badge is still accurate even
   // on a range with zero calls in it.
   const lastReadIso = chatLastRead['calls'];
-  chatCallsPendingCount = (calls || []).filter(c => !lastReadIso || new Date(c.started_at) > new Date(lastReadIso)).length;
+  chatCallsPendingCount = (calls || []).filter(c => c.caller_id !== myUserId && (!lastReadIso || new Date(c.started_at) > new Date(lastReadIso))).length;   // v702: calls TO me, not my own
   chatUpdateBottomTabBadges();
   if(!calls || !calls.length){ box.innerHTML = '<div class="chat-ghl-list-empty">No calls yet.</div>'; return; }
   const statusLabel = { ringing: 'No answer', declined: 'Declined', missed: 'Missed', failed: 'Call failed', ended: 'Ended', answered: 'Answered' };
@@ -12431,20 +12564,59 @@ async function chatRenderCallsList(){
       : (c.caller_profile?.full_name || c.caller_client?.full_name || c.caller_client?.company_name || 'Unknown');
     const durationSec = (c.answered_at && c.ended_at) ? Math.max(0, Math.round((new Date(c.ended_at) - new Date(c.answered_at)) / 1000)) : null;
     const durationLabel = durationSec != null ? `${Math.floor(durationSec / 60)}:${String(durationSec % 60).padStart(2, '0')}` : (statusLabel[c.status] || c.status);
-    const isPending = !lastReadIso || new Date(c.started_at) > new Date(lastReadIso);
+    const isPending = !isMine && (!lastReadIso || new Date(c.started_at) > new Date(lastReadIso));   // v702: calls TO me
+    // v702: a call you missed says so, in red, and every row can call back.
+    const missedByMe = !isMine && (c.status === 'missed' || c.status === 'ringing');
+    const otherStaffId = isMine ? c.callee_id : c.caller_id;
+    const otherClientId = isMine ? c.callee_client_id : c.caller_client_id;
+    const canCallBack = !!otherStaffId || (!!otherClientId && myPermissions.canTextClients);
     return `
-      <div class="chat-ghl-list-item">
-        <div class="chat-conv-avatar" style="width:32px; height:32px;">${isMine ? '&#8599;&#65039;' : '&#8601;&#65039;'}</div>
+      <div class="chat-ghl-list-item${missedByMe ? ' chat-call-missed' : ''}">
+        <div class="chat-conv-avatar" style="width:32px; height:32px;">${isMine ? '&#8599;&#65039;' : (missedByMe ? '&#128245;' : '&#8601;&#65039;')}</div>
         <div class="chat-conv-info">
           <div class="chat-conv-name">${escapeHtml(otherName)}</div>
-          <div class="chat-conv-preview">${isMine ? 'Outgoing' : 'Incoming'} &middot; ${escapeHtml(durationLabel)}</div>
+          <div class="chat-conv-preview">${missedByMe ? '<span class="chat-call-missed-label">Missed call</span>' : `${isMine ? 'Outgoing' : 'Incoming'} &middot; ${escapeHtml(durationLabel)}`}</div>
         </div>
         <div class="mono" style="font-size:10px; color:var(--text-dim); white-space:nowrap;">${chatGhlFmtWhen(c.started_at)}</div>
+        ${canCallBack ? `<button type="button" class="chat-call-back-btn" data-staff="${escapeHtml(otherStaffId || '')}" data-client="${escapeHtml(otherClientId || '')}" data-name="${escapeHtml(otherName)}" title="Call ${escapeHtml(otherName)} back">&#128222;</button>` : ''}
         ${isPending ? '<div class="chat-ghl-list-item-badge" title="Not yet seen"></div>' : ''}
       </div>
     `;
   }).join('');
+  box.querySelectorAll('.chat-call-back-btn').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    chatCallBack(b.dataset.staff || null, b.dataset.client || null, b.dataset.name);
+  }));
 }
+
+// v702: calling someone back -- from a Calls-tab row, a missed-call
+// notification, or the dialer's bell (which opens #callback=<call id>).
+function chatCallBack(staffId, clientId, name){
+  if(voiceCallState){ alert('You are already on a call.'); return; }
+  if(staffId) startVoiceCall(staffId, name || 'Colleague');
+  else if(clientId) startVoiceCallToClient(clientId, name || 'Client');
+}
+async function voiceCallBackFromCallId(callId){
+  const { data: c, error } = await sb.from('voice_calls')
+    .select('id, caller_id, caller_client_id, caller_profile:profiles!voice_calls_caller_id_fkey(full_name), caller_client:client_accounts!voice_calls_caller_client_id_fkey(full_name, company_name)')
+    .eq('id', callId).maybeSingle();
+  if(error || !c){ alert('That call could not be found.'); return; }
+  const name = (c.caller_profile && c.caller_profile.full_name)
+    || (c.caller_client && (c.caller_client.full_name || c.caller_client.company_name)) || 'them';
+  if(!c.caller_id && c.caller_client_id && !myPermissions.canTextClients){
+    alert(`${name} is a client, and your role cannot call clients from the portal.`);
+    return;
+  }
+  if(!confirm(`Call ${name} back now?`)) return;
+  chatCallBack(c.caller_id || null, c.caller_id ? null : c.caller_client_id, name);
+}
+function handleCallbackHash(){
+  const m = /^#callback=([0-9a-f-]{36})$/i.exec(location.hash || '');
+  if(!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  voiceCallBackFromCallId(m[1]);
+}
+window.addEventListener('hashchange', () => { if(myUserId) handleCallbackHash(); });
 
 // ---- SMS tab: in-app notification when a client replies ----
 // There's no reliable webhook feed for this -- ghl_messages (fed by a GHL
@@ -13472,7 +13644,13 @@ function renderChatThread(){
     `;
   }).join('') || '<div class="empty" style="padding:16px 0;">No messages yet — say hello!</div>';
   if(chatOfflineHint && chatOfflineHint.key === chatActiveConv){
-    box.innerHTML += `<div class="chat-offline-hint">📴 ${escapeHtml(chatOfflineHint.name)} is offline — they'll see this when they're back.</div>`;
+    const h = chatOfflineHint, nm = escapeHtml(h.name);
+    const line = h.status === 'dnd' ? `⛔ ${nm} has Do not disturb on — they'll see this, just without a sound or pop-up.`
+      : h.status === 'busy' ? `🟠 ${nm} is busy — they may take a while to reply.`
+      : h.status === 'brb' ? `🕒 ${nm} will be right back.`
+      : `📴 ${nm} is offline — they'll see this when they're back.`;
+    const hs = chatPersonStatusMsg(h.key);
+    box.innerHTML += `<div class="chat-offline-hint">${line}${hs ? ' Their status: ' + escapeHtml(((hs.emoji ? hs.emoji + ' ' : '') + (hs.text || '')).trim()) : ''}</div>`;
   }
   if(chatIsPeerTyping(chatActiveConv)) box.innerHTML += chatTypingBubbleHtml();
   // v632: see chatAtBottom().
@@ -13775,8 +13953,10 @@ async function sendChatMessageInner(input, body, pendingFile){
   // don't wonder why there's been no reply. Doesn't affect the offline
   // person in any way (there's nothing running on their end to notify) —
   // this is purely a heads-up for whoever just sent the message.
-  if(!isGroup && chatActiveConv !== 'team' && chatContactStatus(chatActiveConv) === 'offline'){
-    chatOfflineHint = { key: chatActiveConv, name: chatContactName(chatActiveConv) };
+  // v702: the same heads-up for Do not disturb, Busy and Be right back.
+  const recipientSt = (!isGroup && chatActiveConv !== 'team') ? chatContactStatus(chatActiveConv) : null;
+  if(['offline', 'dnd', 'busy', 'brb'].includes(recipientSt)){
+    chatOfflineHint = { key: chatActiveConv, name: chatContactName(chatActiveConv), status: recipientSt };
     chatPlayOfflineHintSound();
   } else {
     chatOfflineHint = null;
@@ -16566,17 +16746,26 @@ $('chatMyProfileBtn').addEventListener('click', () => {
   $('chatMyProfileView').style.display = 'flex';
   $('chatMyAvatarPreview').innerHTML = myAvatarUrl ? `<img src="${escapeHtml(myAvatarUrl)}" alt="">` : escapeHtml((myFullName || myEmail || '?').charAt(0).toUpperCase());
   $('chatMyStatusSelect').value = myChatStatusManual || 'auto';
-  $('chatMyProfileMsg').textContent = '';
+  // v702: the message, as saved, and when it clears.
+  $('chatStatusEmoji').value = myStatusEmoji || '';
+  $('chatStatusText').value = myStatusText || '';
+  $('chatStatusUntil').value = '';
+  $('chatMyProfileMsg').textContent = myStatusUntil ? 'Your status clears ' + chatFmtUntil(myStatusUntil) + '.' : '';
+  $('chatMyProfileMsg').className = 'msg';
 });
 $('chatMyProfileBackBtn').addEventListener('click', () => {
   $('chatMyProfileView').style.display = 'none';
   $('chatListView').style.display = 'flex';
 });
-$('chatChangeAvatarBtn').addEventListener('click', () => $('chatAvatarFileInput').click());
-$('chatAvatarFileInput').addEventListener('change', async () => {
-  const file = $('chatAvatarFileInput').files[0];
+// v702: your profile photo is changed from the profile menu (top right) only
+// -- not from the chat -- at the owner's request. Same upload as before, just
+// started from there.
+$('pmPhotoBtn').addEventListener('click', (e) => { e.stopPropagation(); $('pmPhotoInput').click(); });
+$('pmPhotoInput').addEventListener('change', async () => {
+  const file = $('pmPhotoInput').files[0];
+  $('pmPhotoInput').value = '';
   if(!file) return;
-  const msg = $('chatMyProfileMsg');
+  const msg = $('pmPhotoMsg');
   if(!file.type.startsWith('image/')){
     msg.textContent = 'Please choose an image file.';
     msg.className = 'msg error';
@@ -16613,29 +16802,65 @@ $('chatAvatarFileInput').addEventListener('change', async () => {
   myAvatarUrl = bustedUrl;
   $('chatMyAvatarPreview').innerHTML = `<img src="${escapeHtml(bustedUrl)}" alt="">`;
   chatUpdateMyAvatarButton();
+  renderProfileMenu();   // v702
   renderChatConvList($('chatSearchInput').value);
   msg.textContent = 'Updated!';
   msg.className = 'msg ok';
 });
-$('chatMyStatusSelect').addEventListener('change', async () => {
-  const choice = $('chatMyStatusSelect').value;
+// v702: CHAT STATUS -- the state (Automatic / Busy / Do not disturb / Be
+// right back / Appear offline), a message with an emoji, and when it all
+// clears. Chat only. Saved to profiles (status_text, status_emoji,
+// status_until); everyone's chat reads it through chat_directory().
+function chatStatusUntilFrom(choice){
+  const now = new Date();
+  if(choice === '30m') return new Date(now.getTime() + 30 * 60000);
+  if(choice === '1h') return new Date(now.getTime() + 3600000);
+  if(choice === '4h') return new Date(now.getTime() + 4 * 3600000);
+  if(choice === 'today'){ const d = new Date(now); d.setHours(23, 59, 59, 0); return d; }
+  if(choice === 'week'){ const d = new Date(now); d.setDate(d.getDate() + ((7 - d.getDay()) % 7)); d.setHours(23, 59, 59, 0); return d; }
+  return null;
+}
+async function chatSaveMyStatus(){
   const msg = $('chatMyProfileMsg');
-  // 'auto' clears the manual override and lets the heartbeat drive presence;
-  // 'busy'/'dnd' set a deliberate override that survives until changed back.
-  if(choice === 'auto'){
-    myChatStatusManual = null;
-    myChatStatus = currentAutoStatus();
-    const { error } = await sb.from('profiles').update({ chat_status_manual: null, chat_status: myChatStatus, last_seen_at: new Date().toISOString() }).eq('id', myUserId);
-    if(error){ msg.textContent = error.message; msg.className = 'msg error'; }
-    else { msg.textContent = 'Status is now automatic.'; msg.className = 'msg ok'; }
-  } else {
-    myChatStatusManual = choice;
-    myChatStatus = choice;
-    const { error } = await sb.from('profiles').update({ chat_status_manual: choice, chat_status: choice, last_seen_at: new Date().toISOString() }).eq('id', myUserId);
-    if(error){ msg.textContent = error.message; msg.className = 'msg error'; }
-    else { msg.textContent = 'Status updated.'; msg.className = 'msg ok'; }
-  }
+  const choice = $('chatMyStatusSelect').value;
+  const manual = choice === 'auto' ? null : choice;
+  const text = $('chatStatusText').value.trim().slice(0, 80) || null;
+  const emoji = $('chatStatusEmoji').value.trim().slice(0, 8) || null;
+  const untilSel = $('chatStatusUntil').value;
+  // "Clear after" left alone keeps the time already set, rather than
+  // silently making a status permanent.
+  let untilIso = myStatusUntil;
+  if(untilSel) untilIso = chatStatusUntilFrom(untilSel).toISOString();
+  if(!manual && !text && !emoji) untilIso = null;
+  myChatStatusManual = manual; myStatusText = text; myStatusEmoji = emoji; myStatusUntil = untilIso;
+  myChatStatus = manual === 'invisible' ? 'offline' : (manual || currentAutoStatus());
+  const patch = { chat_status_manual: manual, chat_status: myChatStatus, status_text: text, status_emoji: emoji, status_until: untilIso };
+  if(manual !== 'invisible') patch.last_seen_at = new Date().toISOString();
+  const { error } = await sb.from('profiles').update(patch).eq('id', myUserId);
+  if(error){ msg.textContent = error.message; msg.className = 'msg error'; return; }
+  msg.textContent = (!manual && !text && !emoji) ? 'Your status is automatic.'
+    : 'Status saved' + (untilIso ? ' \u2014 it clears ' + chatFmtUntil(untilIso) + '.' : '.');
+  msg.className = 'msg ok';
+  $('chatStatusUntil').value = '';
+  chatUpdateMyAvatarButton();
   renderChatConvList($('chatSearchInput') ? $('chatSearchInput').value : '');
+}
+$('chatMyStatusSelect').addEventListener('change', chatSaveMyStatus);
+$('chatStatusSaveBtn').addEventListener('click', chatSaveMyStatus);
+$('chatStatusClearBtn').addEventListener('click', () => {
+  $('chatMyStatusSelect').value = 'auto';
+  $('chatStatusText').value = '';
+  $('chatStatusEmoji').value = '';
+  $('chatStatusUntil').value = '';
+  myStatusUntil = null;
+  chatSaveMyStatus();
+});
+$('chatStatusPresets').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-t]');
+  if(!b) return;
+  $('chatStatusEmoji').value = b.dataset.e || '';
+  $('chatStatusText').value = b.dataset.t || '';
+  $('chatStatusText').focus();
 });
 
 // ---------- groups: create ----------
@@ -41483,7 +41708,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '697'; // 697: coverage leaves out test campaigns and says what is left out (692: light theme)
+const DIALER_ADMIN_VERSION = '702'; // 702: follow-ups may have no date (697: coverage leaves out test campaigns; 692: light theme)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
