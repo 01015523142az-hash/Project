@@ -2001,6 +2001,11 @@
      on top of it. */
   .call-banner{ top:var(--call-stack-top, 20px); }
   #incomingMeetBanner{ top:var(--meet-stack-top, 20px); }
+  /* v709: a ringing call was drawn UNDER the Client Inbox's dialogs (500)
+     and the impersonation strip (900) -- a call could ring behind an open
+     window. Every call layer now sits above everything else on the page. */
+  body .call-banner, body .call-bar, body #incomingMeetBanner{ z-index:10000; }
+  body .call-video-panel{ z-index:9990; }
   /* The 14px dot becomes the reference's 48px icon tile with a ping ring.
      The glyph comes from ::before so the markup is untouched. */
   .call-banner-pulse{
@@ -15200,6 +15205,7 @@ function voiceStartRingtone(kind){
   voiceRingInterval = setInterval(playCycle, incoming ? 2500 : 3500);
 }
 function voiceStopRingtone(){
+  voiceIncomingAlertStop();   // v709: every path that stops the ring ends the alert too
   if(voiceRingInterval){ clearInterval(voiceRingInterval); voiceRingInterval = null; }
   if(voiceRingGain){
     try{ voiceRingGain.disconnect(); }catch(e){}
@@ -15323,8 +15329,67 @@ function voiceSendOneOff(toUserId, payload){
 function initVoiceCallSignaling(){
   if(!myUserId || voiceMyChannel) return;
   voiceMyChannel = sb.channel('call-signal-' + myUserId);
-  voiceMyChannel.on('broadcast', { event: 'signal' }, ({ payload }) => handleVoiceSignal(payload)).subscribe();
+  // v709: this is the channel every incoming call arrives on, and a failed
+  // or timed-out join used to leave it dead until a reload -- calls simply
+  // stopped reaching this person. Same retry-with-backoff as the chat
+  // channel (v703).
+  voiceMyChannel.on('broadcast', { event: 'signal' }, ({ payload }) => handleVoiceSignal(payload)).subscribe((status) => {
+    if(status === 'SUBSCRIBED') voiceSignalRetryDelay = 2000;
+    else if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') voiceSignalRetry();
+  });
   loadWebrtcTurnConfig();
+}
+var voiceSignalRetryTimer = null;
+var voiceSignalRetryDelay = 2000;
+function voiceSignalRetry(){
+  if(voiceSignalRetryTimer || !voiceMyChannel) return;
+  const delay = voiceSignalRetryDelay;
+  voiceSignalRetryDelay = Math.min(voiceSignalRetryDelay * 2, 60000);
+  voiceSignalRetryTimer = setTimeout(() => {
+    voiceSignalRetryTimer = null;
+    if(!voiceMyChannel) return;   // signed out meanwhile
+    const old = voiceMyChannel;
+    voiceMyChannel = null;
+    try{ sb.removeChannel(old); }catch(e){ /* already gone */ }
+    initVoiceCallSignaling();
+  }, delay);
+}
+function voiceSignalCheck(){ if(voiceMyChannel && voiceMyChannel.state !== 'joined') voiceSignalRetry(); }
+window.addEventListener('online', voiceSignalCheck);
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible') voiceSignalCheck(); });
+
+// v709: an incoming call has to be NOTICED with this portal in a background
+// tab. Staff calls to Mariam rang out unanswered -- she has no push
+// subscription, and the ring and banner only show inside the tab. So, as
+// the client portal has done since v697: a flashing tab title, and a desktop
+// notification when notifications are allowed (tagged like the call's push,
+// so the two replace each other rather than doubling up).
+let voiceTitleTimer = null;
+let voiceTitleOrig = null;
+let voiceCallNotif = null;
+function voiceIncomingAlertStart(name, callRowId){
+  voiceIncomingAlertStop();
+  voiceTitleOrig = document.title;
+  let on = false;
+  voiceTitleTimer = setInterval(() => {
+    on = !on;
+    document.title = on ? `📞 Incoming call — ${name}` : voiceTitleOrig;
+  }, 1000);
+  if(document.visibilityState !== 'visible' && 'Notification' in window && Notification.permission === 'granted'){
+    try{
+      const iconLink = document.querySelector('link[rel="icon"]');
+      voiceCallNotif = new Notification(`Incoming call from ${name}`, {
+        body: 'Click to answer in the staff portal.', tag: callRowId ? `call-${callRowId}` : 'staff-call',
+        requireInteraction: true, icon: iconLink ? iconLink.href : undefined,
+      });
+      voiceCallNotif.onclick = () => { window.focus(); if(voiceCallNotif) voiceCallNotif.close(); };
+    }catch(e){ voiceCallNotif = null; }
+  }
+}
+function voiceIncomingAlertStop(){
+  if(voiceTitleTimer){ clearInterval(voiceTitleTimer); voiceTitleTimer = null; }
+  if(voiceTitleOrig !== null){ document.title = voiceTitleOrig; voiceTitleOrig = null; }
+  if(voiceCallNotif){ try{ voiceCallNotif.close(); }catch(e){ /* gone */ } voiceCallNotif = null; }
 }
 
 function teardownVoiceCallSignaling(){
@@ -15665,11 +15730,15 @@ const VOICE_REJOIN_WINDOW_MS = 60000;
 const VOICE_SAVED_CALL_KEY = 'pt.activeCall';
 function voiceSaveCallForRejoin(){
   const st = voiceCallState;
-  if(!st || st.status !== 'answered' || !st.callRowId || !st.peerId) return;
+  // v709: a call I placed that is still RINGING is kept too, so a refresh
+  // does not silently drop it (voiceResumeRinging).
+  const ringingOut = !!st && st.status === 'ringing' && st.role === 'caller';
+  if(!st || (st.status !== 'answered' && !ringingOut) || !st.callRowId || !st.peerId) return;
   try{
     sessionStorage.setItem(VOICE_SAVED_CALL_KEY, JSON.stringify({
       callRowId: st.callRowId, peerId: st.peerId, peerName: st.peerName, role: st.role,
-      isClientCall: !!st.isClientCall, startedAt: st.startedAt || Date.now(),
+      isClientCall: !!st.isClientCall, startedAt: st.startedAt || null,
+      status: st.status, ringStartedAt: st.ringStartedAt || null,
       groupId: st.groupId || null, savedAt: Date.now(),
     }));
   }catch(e){ /* private mode: no rejoin after a refresh, nothing else lost */ }
@@ -15828,19 +15897,55 @@ async function voiceRestoreFromSaved(saved){
   if(voiceCallState){ localStream.getTracks().forEach(t => t.stop()); return voiceCallState; }
   const outboundChannel = sb.channel('call-signal-' + saved.peerId);
   await voiceChannelReady(outboundChannel);
-  voiceCallState = { role: saved.role, isClientCall: !!saved.isClientCall, peerId: saved.peerId, peerName: saved.peerName, pc: null, localStream, outboundChannel, callRowId: saved.callRowId, status: 'answered', remoteDescSet: false, pendingCandidates: [], videoSender: null, screenStream: null, hasScreenShare: false, peerSharing: false, videoPanelMinimized: false, videoPanelMaximized: false, groupId: saved.groupId || voiceGenId(), extraPeers: {}, startedAt: saved.startedAt, restored: true };
+  voiceCallState = { role: saved.role, isClientCall: !!saved.isClientCall, peerId: saved.peerId, peerName: saved.peerName, pc: null, localStream, outboundChannel, callRowId: saved.callRowId, status: 'answered', remoteDescSet: false, pendingCandidates: [], videoSender: null, screenStream: null, hasScreenShare: false, peerSharing: false, videoPanelMinimized: false, videoPanelMaximized: false, groupId: saved.groupId || voiceGenId(), extraPeers: {}, startedAt: saved.startedAt || Date.now(), restored: true };
   voiceBeginReconnect(voiceCallState, null);
   return voiceCallState;
 }
 async function voiceResumeSavedCall(){
   const saved = voiceReadSavedCall();
   if(!saved || voiceCallState) return;
+  // v709: what happened while the page reloaded? The call record says.
+  const { data } = await sb.from('voice_calls').select('status').eq('id', saved.callRowId).maybeSingle();
+  const rowStatus = data ? data.status : null;
+  if(saved.status === 'ringing'){
+    if(rowStatus === 'ringing' && Date.now() - (saved.ringStartedAt || 0) < VOICE_RING_MS){ voiceResumeRinging(saved); return; }
+    if(rowStatus !== 'answered'){ voiceClearSavedCall(); return; }
+    // They answered during the reload: carry on below as an answered call.
+  } else if(rowStatus && rowStatus !== 'answered'){ voiceClearSavedCall(); return; }
   const state = await voiceEnsureRestored(saved);
   if(!state || state.callRowId !== saved.callRowId) return;
-  // Still on? The other side may have hung up during the reload.
-  const { data } = await sb.from('voice_calls').select('status').eq('id', saved.callRowId).maybeSingle();
-  if(data && data.status !== 'answered'){ if(voiceCallState === state) endVoiceCall(null, false); return; }
   if(voiceCallState === state && !state.answeredRejoinId && !state.rejoinId && !state.remoteDescSet) voiceSendRejoin(state);
+}
+// v709: back to ringing after a refresh. A fresh connection and a fresh
+// offer, sent as an 'offer-retry' flagged `replace` and tagged, so the other
+// side swaps it in without ringing twice; the ring keeps its original
+// 45-second budget.
+async function voiceResumeRinging(saved){
+  let localStream;
+  try{ localStream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch(e){ voiceClearSavedCall(); return; }
+  if(voiceCallState){ localStream.getTracks().forEach(t => t.stop()); return; }
+  const outboundChannel = sb.channel('call-signal-' + saved.peerId);
+  await voiceChannelReady(outboundChannel);
+  if(voiceCallState){ localStream.getTracks().forEach(t => t.stop()); sb.removeChannel(outboundChannel); return; }
+  const tag = voiceGenId();
+  const state = voiceCallState = { role: 'caller', isClientCall: !!saved.isClientCall, peerId: saved.peerId, peerName: saved.peerName, pc: null, localStream, outboundChannel, callRowId: saved.callRowId, status: 'ringing', remoteDescSet: false, pendingCandidates: [], videoSender: null, screenStream: null, hasScreenShare: false, peerSharing: false, videoPanelMinimized: false, videoPanelMaximized: false, groupId: saved.groupId || voiceGenId(), extraPeers: {}, ringStartedAt: saved.ringStartedAt || Date.now(), pcTag: tag, restored: true };
+  const pc = await voiceBuildPc(state, tag);
+  if(voiceCallState !== state){ pc.close(); return; }
+  state.pc = pc;
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  const payload = { type: 'offer-retry', sdp: offer, callRowId: state.callRowId, replace: true, tag };
+  if(!state.isClientCall) payload.groupId = state.groupId;
+  voiceSend(outboundChannel, payload);
+  voiceRepeatOffer(outboundChannel, payload);
+  voiceShowActiveBar(state.peerName, 'Calling…', true);
+  voiceStartRingtone('ringback');
+  const left = Math.max(5000, VOICE_RING_MS - (Date.now() - state.ringStartedAt));
+  state.ringTimeout = setTimeout(() => {
+    if(voiceCallState === state && state.status === 'ringing') endVoiceCall('missed', true);
+  }, left);
+  voiceMarkLive(state);
 }
 
 async function voiceHandleRejoinRequest(msg){
@@ -15905,6 +16010,18 @@ function voiceRepeatOffer(channel, payload){
 
 async function handleVoiceSignal(msg){
   if(msg.type === 'offer-retry'){
+    // v709: the caller refreshed while this rang, and sent a NEW offer for
+    // the same call. Swap it in and keep ringing -- it has not been
+    // answered yet, so there is nothing else to change.
+    if(msg.replace && voiceCallState && voiceCallState.role === 'callee' && voiceCallState.callRowId === msg.callRowId){
+      if(voiceCallState.status === 'ringing' && !voiceCallState.pc && voiceCallState.offerTag !== msg.tag){
+        voiceCallState.offerSdp = msg.sdp;
+        voiceCallState.offerTag = msg.tag;
+        voiceCallState.pcTag = msg.tag;
+        voiceCallState.pendingCandidates = (voiceCallState.candidateStash && voiceCallState.candidateStash[msg.tag]) || [];
+      }
+      return;
+    }
     if(voiceCallState || !msg.callRowId || voiceRangCallIds.has(msg.callRowId)) return;
     msg = { ...msg, type: 'offer' };
   }
@@ -15912,6 +16029,7 @@ async function handleVoiceSignal(msg){
     if(voiceCallState){ voiceSendOneOff(msg.from, { type: 'busy' }); return; } // already on/starting a call
     if(msg.callRowId) voiceRangCallIds.add(msg.callRowId);
     voiceCallState = { role: 'callee', peerId: msg.from, peerName: msg.fromName, callRowId: msg.callRowId, offerSdp: msg.sdp, status: 'ringing', remoteDescSet: false, pendingCandidates: [], videoSender: null, screenStream: null, hasScreenShare: false, peerSharing: false, videoPanelMinimized: false, videoPanelMaximized: false, groupId: msg.groupId || voiceGenId(), extraPeers: {}, meshParticipants: msg.participants || [] };
+    if(msg.tag){ voiceCallState.pcTag = msg.tag; voiceCallState.offerTag = msg.tag; }   // v709: a re-sent offer
     // v395: subscribe to the roster while still just ringing, not only
     // after Accept — the caller already inserted this browser's own row
     // (status 'ringing') when they placed the call, so it's there to be
@@ -15924,6 +16042,7 @@ async function handleVoiceSignal(msg){
     $('incomingCallBanner').style.display = 'flex';
     requestAnimationFrame(voiceSetCallStackOffsets); // v634
     voiceStartRingtone('incoming');
+    voiceIncomingAlertStart(msg.fromName || 'Someone', msg.callRowId);   // v709
   } else if(msg.type === 'answer'){
     if(!voiceCallState || voiceCallState.role !== 'caller' || !voiceCallState.pc) return;
     clearTimeout(voiceCallState.ringTimeout);
@@ -16180,7 +16299,8 @@ async function startVoiceCall(calleeId, calleeName){
   pc.onicecandidate = (e) => {
     if(e.candidate){
       console.log('[call] local ICE candidate:', e.candidate.type, e.candidate.protocol);
-      voiceSend(outboundChannel, { type: 'ice-candidate', candidate: e.candidate });
+      // v709: tagged like the offer it answers, when that offer was re-sent.
+      voiceSend(outboundChannel, { type: 'ice-candidate', candidate: e.candidate, tag: (voiceCallState && voiceCallState.pcTag) || undefined });
     }
   };
   voiceAttachDiagnostics(pc);
@@ -16228,6 +16348,8 @@ async function startVoiceCall(calleeId, calleeName){
   await pc.setLocalDescription(offer);
   voiceSend(outboundChannel, { type: 'offer', sdp: offer, callRowId: voiceCallState.callRowId, groupId: voiceCallState.groupId });
   voiceRepeatOffer(outboundChannel, { type: 'offer-retry', sdp: offer, callRowId: voiceCallState.callRowId, groupId: voiceCallState.groupId });   // v700
+  voiceCallState.ringStartedAt = Date.now();
+  voiceMarkLive(voiceCallState);   // v709: a refresh keeps this ringing
 
   voiceShowActiveBar(calleeName, 'Calling…', true);
   voiceStartRingtone('ringback');
@@ -16292,6 +16414,8 @@ async function startVoiceCallToClient(clientId, clientName){
   await pc.setLocalDescription(offer);
   voiceSend(outboundChannel, { type: 'offer', sdp: offer, callRowId: voiceCallState.callRowId });
   voiceRepeatOffer(outboundChannel, { type: 'offer-retry', sdp: offer, callRowId: voiceCallState.callRowId });   // v700
+  voiceCallState.ringStartedAt = Date.now();
+  voiceMarkLive(voiceCallState);   // v709
 
   voiceShowActiveBar(clientName, 'Calling…', true);
   voiceStartRingtone('ringback');
@@ -16321,7 +16445,8 @@ async function acceptIncomingCall(){
   pc.onicecandidate = (e) => {
     if(e.candidate){
       console.log('[call] local ICE candidate:', e.candidate.type, e.candidate.protocol);
-      voiceSend(outboundChannel, { type: 'ice-candidate', candidate: e.candidate });
+      // v709: tagged like the offer it answers, when that offer was re-sent.
+      voiceSend(outboundChannel, { type: 'ice-candidate', candidate: e.candidate, tag: (voiceCallState && voiceCallState.pcTag) || undefined });
     }
   };
   voiceAttachDiagnostics(pc);
