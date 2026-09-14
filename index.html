@@ -1927,6 +1927,21 @@
   /* Reference caps the bubble column at 85%/78% rather than letting a long
      line run the full panel width. */
   .chat-panel .chat-msg-row{ max-width:85%; }
+  /* v704: the sender's photo beside an incoming message (the owner's
+     reference), in staff-to-staff chat, the floating client chat and the
+     Client Inbox. The row keeps its column layout; the photo hangs in a
+     36px gutter so a sequential message (no photo) still lines up. */
+  .chat-msg-row.with-av{ position:relative; margin-left:36px; }
+  .chat-msg-av{ position:absolute; left:-36px; top:0; }
+  .chat-msg-av .chat-conv-avatar{ width:28px; height:28px; }
+  .chat-msg-av img{ width:100%; height:100%; border-radius:50%; object-fit:cover; display:block; }
+  /* v704: "Ellen has joined the conversation" and other notes the database
+     writes for the client (sender 'system') -- not a message from anybody. */
+  .chat-system-note{
+    align-self:center; max-width:90%; margin:8px auto; padding:5px 12px; border-radius:999px;
+    background:var(--inset); border:1px solid var(--border-light); color:var(--text-2);
+    font-size:11.5px; line-height:1.4; text-align:center;
+  }
 
   /* =========================================================================
      v627: CALLING, to the same reference.
@@ -9809,6 +9824,7 @@ async function establishSession(user, { isNewLogin = true } = {}){
   myUserId = user.id;
   myAvatarUrl = profile?.avatar_url || null;
   if(typeof renderProfileMenu === 'function') renderProfileMenu();   // v702: the photo on the menu button
+  setTimeout(() => { if(typeof avatarAutoShrink === 'function') avatarAutoShrink(); }, 8000);   // v704
   myChatStatus = profile?.chat_status || 'offline';
   myChatStatusManual = ['busy', 'dnd', 'brb', 'invisible'].includes(profile?.chat_status_manual) ? profile.chat_status_manual : null;
   // v702: the status message, and when the whole status clears.
@@ -10339,6 +10355,35 @@ function chatOnPeerTypingChanged(key){
 }
 function chatTypingBubbleHtml(){
   return '<div class="chat-msg-row theirs chat-typing-row"><div class="chat-msg-bubble chat-typing-dots"><span></span><span></span><span></span></div></div>';
+}
+// v704 ("if the other person is typing, the voice message I'm playing
+// stops"). Every realtime tick -- a typing ping, a read receipt, an edit --
+// rebuilt the whole message list with innerHTML, which destroyed the <audio>
+// element mid-play (and re-fetched every image). An attachment that has
+// already loaded is now carried across by its path: the SAME element goes
+// back into the new markup within the same task, and a media element that is
+// back in the document by then never pauses.
+function chatSwapHtml(box, html){
+  const keep = new Map();
+  box.querySelectorAll('.chat-msg-attachment[data-resolved="1"]').forEach(el => {
+    if(!keep.has(el.dataset.attachmentPath)) keep.set(el.dataset.attachmentPath, el);
+  });
+  box.innerHTML = html;
+  if(!keep.size) return;
+  box.querySelectorAll('.chat-msg-attachment[data-attachment-path]').forEach(el => {
+    const old = keep.get(el.dataset.attachmentPath);
+    if(old){ el.replaceWith(old); keep.delete(el.dataset.attachmentPath); }
+  });
+}
+// v704: the photo beside an incoming message. Staff: their profile photo
+// (initial if none); a client: their initials on their inbox colour; the AI:
+// its face.
+function chatMsgAvatarHtml(kind, id, name){
+  let inner;
+  if(kind === 'ai') inner = chatBotAvatarIconHtml(28);
+  else if(kind === 'client') inner = `<div class="chat-conv-avatar" style="width:28px; height:28px; font-size:11px; background:${ciAvColor(id)}; color:#fff;">${escapeHtml(ciInitials(name))}</div>`;
+  else inner = chatAvatarHtml(id, name, 28, false);
+  return `<div class="chat-msg-av">${inner}</div>`;
 }
 
 function initChatTypingSignaling(){
@@ -13052,7 +13097,7 @@ async function loadClientChatOverview(){
       .filter(m => m.client_id === clientId)
       .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     const lastReadIso = chatLastRead[key];
-    const unread = messages.filter(m => m.sender !== 'staff' && (!lastReadIso || new Date(m.created_at) > new Date(lastReadIso))).length;
+    const unread = messages.filter(m => m.sender !== 'staff' && m.sender !== 'system' && (!lastReadIso || new Date(m.created_at) > new Date(lastReadIso))).length;
     chatConversations[key] = { key, messages, unread, loadedOnce: true };
   });
   updateChatUnreadBadge();
@@ -13285,7 +13330,8 @@ function renderClientChatMessages(clientId){
   // v626: who sent the previous message, for the sequential check below.
   let prevSender = null;
   const clientDisplayName = chatClientThreadName(clientId);
-  box.innerHTML = conv.messages.map(m => {
+  chatSwapHtml(box, conv.messages.map(m => {
+    if(m.sender === 'system'){ prevSender = null; return `<div class="chat-system-note">${escapeHtml(m.body || '')}</div>`; }   // v704
     const mine = m.sender === 'staff';
     // v626: senderLabel moved OUT of the meta line and into the header
     // above the bubble (chatMsgHeadHtml), so it is empty here now. The
@@ -13328,15 +13374,16 @@ function renderClientChatMessages(clientId){
       : '';
     const ticksHtml = mine ? chatTicksHtml(chatClientTickState(m)) : '';
     return `
-      <div class="chat-msg-row ${mine ? 'mine' : 'theirs'} from-${role}${isSeq ? ' seq' : ''}">
+      <div class="chat-msg-row ${mine ? 'mine' : 'theirs with-av'} from-${role}${isSeq ? ' seq' : ''}">
+        ${(!mine && !isSeq) ? chatMsgAvatarHtml(role, clientId, clientDisplayName) : ''}
         ${headHtml}
         ${bodyHtml}
         ${attachmentHtml}
         <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${ticksHtml ? ' ' + ticksHtml : ''}</div>
       </div>
     `;
-  }).join('') || '<div class="empty" style="padding:16px 0;">No messages yet.</div>';
-  if(chatIsPeerTyping(key)) box.innerHTML += chatTypingBubbleHtml();
+  }).join('') || '<div class="empty" style="padding:16px 0;">No messages yet.</div>');
+  if(chatIsPeerTyping(key)) box.insertAdjacentHTML('beforeend', chatTypingBubbleHtml());   // v704
   // v632: see chatAtBottom() -- pin only if they were already at the bottom,
   // and re-pin once the attachments have resolved and their images loaded.
   if(wasAtBottom) chatPinToBottom(box);
@@ -13399,13 +13446,14 @@ async function clientChatResolveAttachmentUrl(path){
   return data.signedUrl;
 }
 async function clientChatResolveVisibleAttachments(container){
-  const els = Array.from((container || $('chatMessages')).querySelectorAll('.chat-msg-attachment'));
+  const els = Array.from((container || $('chatMessages')).querySelectorAll('.chat-msg-attachment:not([data-resolved="1"])'));   // v704
   for(const el of els){
     const path = el.dataset.attachmentPath;
     const mime = el.dataset.attachmentMime || '';
     const name = el.dataset.attachmentName || 'file';
     const url = await clientChatResolveAttachmentUrl(path);
     if(!url){ el.textContent = 'Attachment unavailable'; continue; }
+    el.dataset.resolved = '1';   // v704: chatSwapHtml carries it across re-renders
     if(mime.startsWith('image/')){
       el.innerHTML = `<img src="${url}" alt="${escapeHtml(name)}">`;
       el.querySelector('img').addEventListener('click', () => window.open(url, '_blank'));
@@ -13600,7 +13648,7 @@ function renderChatThread(){
   const isDm = chatActiveConv !== 'team' && !chatActiveConv.startsWith('group:');
   const teamChatTz = nonAgentDisplayTz();
   let prevSender = null;
-  box.innerHTML = visibleChatThreadMessages(chatActiveConv, conv.messages).map(m => {
+  chatSwapHtml(box, visibleChatThreadMessages(chatActiveConv, conv.messages).map(m => {
     const mine = m.sender_id === myUserId;
     // v626: the name moved above the bubble, with a Staff badge beside it.
     //
@@ -13641,14 +13689,15 @@ function renderChatThread(){
       : '';
     const ticksHtml = mine ? (isDm ? chatTicksHtml(chatDmTickState(m, chatActiveConv)) : chatSeenByHtml(m, chatActiveConv)) : '';
     return `
-      <div class="chat-msg-row ${mine ? 'mine' : 'theirs'} from-staff${isSeq ? ' seq' : ''}">
+      <div class="chat-msg-row ${mine ? 'mine' : 'theirs with-av'} from-staff${isSeq ? ' seq' : ''}">
+        ${(!mine && !isSeq) ? chatMsgAvatarHtml((AI_ASSISTANT_BOT_ID && m.sender_id === AI_ASSISTANT_BOT_ID) ? 'ai' : 'staff', m.sender_id, chatContactName(m.sender_id)) : ''}
         ${headHtml}
         ${bodyHtml}
         ${attachmentHtml}
         <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${ticksHtml ? ' ' + ticksHtml : ''}</div>
       </div>
     `;
-  }).join('') || '<div class="empty" style="padding:16px 0;">No messages yet — say hello!</div>';
+  }).join('') || '<div class="empty" style="padding:16px 0;">No messages yet — say hello!</div>');
   if(chatOfflineHint && chatOfflineHint.key === chatActiveConv){
     const h = chatOfflineHint, nm = escapeHtml(h.name);
     const line = h.status === 'dnd' ? `⛔ ${nm} has Do not disturb on — they'll see this, just without a sound or pop-up.`
@@ -13656,9 +13705,9 @@ function renderChatThread(){
       : h.status === 'brb' ? `🕒 ${nm} will be right back.`
       : `📴 ${nm} is offline — they'll see this when they're back.`;
     const hs = chatPersonStatusMsg(h.key);
-    box.innerHTML += `<div class="chat-offline-hint">${line}${hs ? ' Their status: ' + escapeHtml(((hs.emoji ? hs.emoji + ' ' : '') + (hs.text || '')).trim()) : ''}</div>`;
+    box.insertAdjacentHTML('beforeend', `<div class="chat-offline-hint">${line}${hs ? ' Their status: ' + escapeHtml(((hs.emoji ? hs.emoji + ' ' : '') + (hs.text || '')).trim()) : ''}</div>`);   // v704: += would rebuild every node
   }
-  if(chatIsPeerTyping(chatActiveConv)) box.innerHTML += chatTypingBubbleHtml();
+  if(chatIsPeerTyping(chatActiveConv)) box.insertAdjacentHTML('beforeend', chatTypingBubbleHtml());   // v704
   // v632: see chatAtBottom().
   if(wasAtBottom) chatPinToBottom(box);
   Promise.resolve(chatResolveVisibleAttachments(box))
@@ -13803,13 +13852,14 @@ function chatKeepPinned(box, wasAtBottom){
 }
 
 async function chatResolveVisibleAttachments(container){
-  const els = Array.from((container || $('chatMessages')).querySelectorAll('.chat-msg-attachment'));
+  const els = Array.from((container || $('chatMessages')).querySelectorAll('.chat-msg-attachment:not([data-resolved="1"])'));   // v704
   for(const el of els){
     const path = el.dataset.attachmentPath;
     const mime = el.dataset.attachmentMime || '';
     const name = el.dataset.attachmentName || 'file';
     const url = await chatResolveAttachmentUrl(path);
     if(!url){ el.textContent = 'Attachment unavailable'; continue; }
+    el.dataset.resolved = '1';   // v704: chatSwapHtml carries it across re-renders
     if(mime.startsWith('image/')){
       el.innerHTML = `<img src="${url}" alt="${escapeHtml(name)}">`;
       el.querySelector('img').addEventListener('click', () => window.open(url, '_blank'));
@@ -14125,7 +14175,7 @@ function subscribeChatRealtime(){
         if(m.sender === 'client'){
           sb.rpc('mark_client_chat_read', { p_client_id: m.client_id }).then(({ error }) => { if(error) console.error('mark_client_chat_read failed', error); });
         }
-      } else if(m.sender !== 'staff'){
+      } else if(m.sender !== 'staff' && m.sender !== 'system'){   // v704: a transfer note is not the client
         chatConversations[key].unread++;
         chatPlayNotificationSound();
         renderChatConvList($('chatSearchInput').value);
@@ -14523,6 +14573,7 @@ function ciRenderMsgs(forceBottom){
     const day = ciDayLabel(d);
     let sep = '';
     if(day !== lastDay){ sep = `<div class="ci-day"><span>${escapeHtml(day)}</span></div>`; prev = null; lastDay = day; }
+    if(m.sender === 'system'){ prev = null; return `${sep}<div class="chat-system-note">${escapeHtml(m.body || '')}</div>`; }   // v704
     const mine = m.sender === 'staff';
     const role = m.sender === 'ai' ? 'ai' : (m.sender === 'client' ? 'client' : 'staff');
     const at = d.getTime();
@@ -14541,9 +14592,9 @@ function ciRenderMsgs(forceBottom){
       : '';
     const ticks = mine ? ' ' + chatTicksHtml(chatClientTickState(m)) : '';
     const edited = m.edited_at ? ' <span class="chat-edited-label">(edited)</span>' : '';
-    return `${sep}<div class="chat-msg-row ${mine ? 'mine' : 'theirs'} from-${role}${seq ? ' seq' : ''}">${head}${body}${att}<div class="chat-msg-meta">${escapeHtml(time)}${edited}${ticks}</div></div>`;
+    return `${sep}<div class="chat-msg-row ${mine ? 'mine' : 'theirs with-av'} from-${role}${seq ? ' seq' : ''}">${(!mine && !seq) ? chatMsgAvatarHtml(role, clientId, clientName) : ''}${head}${body}${att}<div class="chat-msg-meta">${escapeHtml(time)}${edited}${ticks}</div></div>`;
   }).join('');
-  box.innerHTML = (html || '<div class="ci-list-empty">No messages yet. Say hello.</div>') + (typing ? chatTypingBubbleHtml() : '');
+  chatSwapHtml(box, (html || '<div class="ci-list-empty">No messages yet. Say hello.</div>') + (typing ? chatTypingBubbleHtml() : ''));   // v704
   if(wasAtBottom) chatPinToBottom(box);
   Promise.resolve(clientChatResolveVisibleAttachments(box)).then(() => chatKeepPinned(box, wasAtBottom));
 }
@@ -16802,6 +16853,54 @@ $('chatMyProfileBackBtn').addEventListener('click', () => {
   $('chatMyProfileView').style.display = 'none';
   $('chatListView').style.display = 'flex';
 });
+// v704 ("the profile picture is not clear at all"). Photos were stored exactly
+// as picked -- a 2048x2048, 2.7MB camera photo shown in a 28-32px circle.
+// Browsers shrink that badly in one step, so it looked blurred and jagged,
+// and every chat list downloaded megabytes per face. A photo is now cut to a
+// centred square and halved step by step down to 256x256 -- sharp at every
+// size it is shown, and a few dozen KB.
+async function avatarSquareJpeg(blob, size){
+  const bmp = await createImageBitmap(blob);
+  const side = Math.min(bmp.width, bmp.height);
+  let cur = document.createElement('canvas');
+  cur.width = cur.height = side;
+  cur.getContext('2d').drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, side, side);
+  if(bmp.close) bmp.close();
+  while(cur.width > size){
+    const next = document.createElement('canvas');
+    next.width = next.height = Math.max(size, Math.round(cur.width / 2));
+    const ctx = next.getContext('2d');
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(cur, 0, 0, next.width, next.height);
+    cur = next;
+  }
+  return await new Promise((resolve, reject) => cur.toBlob(b => b ? resolve(b) : reject(new Error('Could not encode the photo')), 'image/jpeg', 0.9));
+}
+// A photo uploaded before v704 is shrunk once, the next time its owner opens
+// the portal -- only the owner may write their own photo, so it cannot be
+// done for everyone from one place. A HEAD request decides, so an already
+// small photo costs nothing.
+async function avatarAutoShrink(){
+  try{
+    if(!myAvatarUrl || !myUserId || !myAvatarUrl.includes('/storage/v1/object/public/avatars/')) return;
+    const head = await fetch(myAvatarUrl, { method: 'HEAD', cache: 'no-store' });
+    const len = Number(head.headers.get('content-length') || 0);
+    if(!head.ok || !len || len < 200 * 1024) return;
+    const blob = await (await fetch(myAvatarUrl, { cache: 'no-store' })).blob();
+    const photo = await avatarSquareJpeg(blob, 256);
+    const path = `${myUserId}/avatar.jpg`;
+    const { error: upErr } = await sb.storage.from('avatars').upload(path, photo, { upsert: true, contentType: 'image/jpeg' });
+    if(upErr){ console.warn('avatar shrink upload failed', upErr); return; }
+    const { data: urlData } = sb.storage.from('avatars').getPublicUrl(path);
+    const url = `${urlData.publicUrl}?v=${Date.now()}`;
+    const { error: saveErr } = await sb.from('profiles').update({ avatar_url: url }).eq('id', myUserId);
+    if(saveErr){ console.warn('avatar shrink save failed', saveErr); return; }
+    myAvatarUrl = url;
+    if(typeof renderProfileMenu === 'function') renderProfileMenu();
+    try{ chatUpdateMyAvatarButton(); }catch(e){ /* chat not built yet */ }
+  }catch(e){ console.warn('avatar shrink skipped', e); }
+}
 // v702: your profile photo is changed from the profile menu (top right) only
 // -- not from the chat -- at the owner's request. Same upload as before, just
 // started from there.
@@ -16816,8 +16915,8 @@ $('pmPhotoInput').addEventListener('change', async () => {
     msg.className = 'msg error';
     return;
   }
-  if(file.size > 5 * 1024 * 1024){
-    msg.textContent = 'That image is larger than 5MB — please pick a smaller one.';
+  if(file.size > 15 * 1024 * 1024){   // v704: it is shrunk before upload, so a phone photo is fine
+    msg.textContent = 'That image is larger than 15MB — please pick a smaller one.';
     msg.className = 'msg error';
     return;
   }
@@ -16826,9 +16925,16 @@ $('pmPhotoInput').addEventListener('change', async () => {
   // Fixed filename (not a timestamped one, unlike chat attachments) so a
   // new upload just overwrites the last photo instead of accumulating —
   // upsert:true is what makes that overwrite actually work.
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-  const path = `${myUserId}/avatar.${ext}`;
-  const { error: uploadErr } = await sb.storage.from('avatars').upload(path, file, { upsert: true, contentType: file.type });
+  // v704: always a 256x256 JPEG (avatarSquareJpeg), whatever was picked.
+  let photo;
+  try{ photo = await avatarSquareJpeg(file, 256); }
+  catch(e){
+    msg.textContent = 'Could not read that image — try a JPG or PNG.';
+    msg.className = 'msg error';
+    return;
+  }
+  const path = `${myUserId}/avatar.jpg`;
+  const { error: uploadErr } = await sb.storage.from('avatars').upload(path, photo, { upsert: true, contentType: 'image/jpeg' });
   if(uploadErr){
     msg.textContent = uploadErr.message || 'Upload failed.';
     msg.className = 'msg error';
@@ -20500,7 +20606,7 @@ $('chatLogsConvSelect').addEventListener('change', async () => {
     const chatLogsClientTz = nonAgentDisplayTz();
     box.innerHTML = (msgs || []).map(m => {
       const time = new Date(m.created_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(chatLogsClientTz ? { timeZone: chatLogsClientTz } : {}) });
-      const sender = m.sender === 'client' ? (chatLogsClientNames[clientId] || 'Client') : (m.sender === 'ai' ? 'AI Assistant' : chatContactName(m.staff_id));
+      const sender = m.sender === 'client' ? (chatLogsClientNames[clientId] || 'Client') : (m.sender === 'ai' ? 'AI Assistant' : (m.sender === 'system' ? 'System note' : chatContactName(m.staff_id)));
       const bodyHtml = m.body ? `<div class="chat-msg-bubble">${escapeHtml(m.body)}</div>` : '';
       const attachmentHtml = m.attachment_path
         ? `<div class="chat-msg-attachment" data-attachment-path="${escapeHtml(m.attachment_path)}" data-attachment-mime="${escapeHtml(m.attachment_mime || '')}" data-attachment-name="${escapeHtml(m.attachment_name || 'file')}" data-attachment-bucket="client-chat-attachments">Loading attachment…</div>`
