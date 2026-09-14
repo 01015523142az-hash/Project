@@ -3341,5 +3341,207 @@ $('impBtn').onclick = async () => {
 };
 
 
+// ---------------------------------------------------------------- reports --
+// Aggregates over a date range. Deliberately NOT another live-floor view --
+// the Agents tab already shows who is on shift, and the Call log already
+// lists individual calls. This answers what neither does: how a person or a
+// campaign performed over a period.
+//
+// Open to reviewers as well as managers: the RPCs re-check
+// role_can_review_calls() themselves (v541), so a read-only Quality user
+// gets real numbers here even though every write control elsewhere on this
+// page is disabled for them.
+const rpPct = (v) => v == null ? '—' : (Number(v) * 100).toFixed(1) + '%';
+const rpDur = (s) => {
+  s = Number(s || 0);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+};
+
+function rpInitDates() {
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  [['rpAFrom', monthAgo], ['rpATo', today], ['rpCFrom', monthAgo], ['rpCTo', today]]
+    .forEach(([id, v]) => { const el = $(id); if (el && !el.value) el.value = v; });
+}
+
+async function rpRunAgents() {
+  const { data, error } = await sb.rpc('dialer_agent_stats', {
+    from_ts: new Date($('rpAFrom').value + 'T00:00:00').toISOString(),
+    to_ts: new Date($('rpATo').value + 'T23:59:59').toISOString(),
+  });
+  if (error) { $('rpAgentRows').innerHTML = `<tr><td colspan="9">${esc(error.message)}</td></tr>`; return; }
+  const rows = data || [];
+  $('rpAgentRows').innerHTML = rows.length
+    ? rows.map((r) => `<tr>
+        <td>${esc(r.agent_name || '—')}</td>
+        <td class="num">${Number(r.dials).toLocaleString()}</td>
+        <td class="num">${Number(r.connects).toLocaleString()}</td>
+        <td class="num">${rpPct(r.answer_rate)}</td>
+        <td class="num">${rpDur(r.talk_seconds)}</td>
+        <td class="num">${rpDur(r.billed_seconds)}</td>
+        <td class="num">${r.leads}</td>
+        <td class="num">${r.manual_dials}</td>
+        <td class="num">${r.unchecked_hours}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="9">No calls in that range.</td></tr>';
+
+  // Manual dials skip the calling-hours check by policy (v527). That choice
+  // is only defensible if somebody actually looks at the result, so it is
+  // surfaced here rather than left to a SQL query nobody runs.
+  const unchecked = rows.reduce((a, r) => a + Number(r.unchecked_hours || 0), 0);
+  const note = $('rpUnchecked');
+  note.classList.toggle('hide', !unchecked);
+  if (unchecked) {
+    note.textContent = `${unchecked} call(s) went out without a calling-hours check — `
+      + `all manual dials, where the agent judges local time instead of the system. `
+      + `Worth a look if they cluster at odd hours.`;
+  }
+}
+
+async function rpRunCampaigns() {
+  const { data, error } = await sb.rpc('dialer_campaign_stats', {
+    from_ts: new Date($('rpCFrom').value + 'T00:00:00').toISOString(),
+    to_ts: new Date($('rpCTo').value + 'T23:59:59').toISOString(),
+  });
+  if (error) { $('rpCampRows').innerHTML = `<tr><td colspan="7">${esc(error.message)}</td></tr>`; return; }
+  const rows = data || [];
+  $('rpCampRows').innerHTML = rows.length
+    ? rows.map((r) => {
+      const d = r.dispositions || {};
+      const chips = Object.keys(d).sort((a, b) => d[b] - d[a])
+        .map((k) => `${esc(k)} ${d[k]}`).join(' · ') || '—';
+      return `<tr>
+        <td>${esc(r.campaign_name || 'Manual / no campaign')}</td>
+        <td class="num">${Number(r.dials).toLocaleString()}</td>
+        <td class="num">${Number(r.connects).toLocaleString()}</td>
+        <td class="num">${rpPct(r.answer_rate)}</td>
+        <td class="num">${r.leads}</td>
+        <td class="num">${r.abandoned}</td>
+        <td style="color:var(--ink2)">${chips}</td>
+      </tr>`;
+    }).join('')
+    : '<tr><td colspan="7">No calls in that range.</td></tr>';
+}
+
+if ($('rpARun')) $('rpARun').onclick = rpRunAgents;
+if ($('rpCRun')) $('rpCRun').onclick = rpRunCampaigns;
+rpInitDates();
+
+
+// ------------------------------------------------------------------ inbox --
+// Reads v542's RPCs, which carry the visibility rule themselves: an agent
+// sees only threads they have personally texted in, a reviewer sees all.
+// Nothing is filtered client-side, so opening this page directly gains
+// nobody a conversation they should not see.
+let inboxPhone = null;
+let inboxName = null;
+
+const smsTime = (t) => new Date(t).toLocaleString([], {
+  month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+// A segment is 160 chars, but a single emoji drops the whole message to 70 --
+// so a short-looking text can silently cost five segments. Count honestly.
+const smsSegments = (t) => {
+  if (!t) return 0;
+  const unicode = /[^\u0000-\u007F]/.test(t);
+  const per = unicode ? 70 : 160;
+  return Math.ceil(t.length / per);
+};
+
+async function loadInbox() {
+  const { data, error } = await sb.rpc('dialer_sms_threads');
+  if (error) { $('inboxThreads').innerHTML = `<tr><td>${esc(error.message)}</td></tr>`; return; }
+  const rows = data || [];
+  $('inboxMsg').textContent = rows.length
+    ? `${rows.length} conversation${rows.length === 1 ? '' : 's'}`
+    : '';
+  $('inboxThreads').innerHTML = rows.length
+    ? rows.map((r) => `<tr>
+        <td style="cursor:pointer" data-ph="${esc(r.contact_phone)}"
+            data-nm="${esc(r.contact_name || '')}">
+          <div style="display:flex;justify-content:space-between;gap:8px">
+            <strong>${esc(r.contact_name || r.contact_phone)}</strong>
+            <span style="font-size:11px;color:var(--ink2)">${smsTime(r.last_at)}</span>
+          </div>
+          <div class="mono" style="font-size:11px;color:var(--ink2)">${esc(r.contact_phone)}</div>
+          <div style="font-size:12px;color:var(--ink2);margin-top:3px;
+                      overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+            ${r.last_direction === 'inbound' ? '' : '<span style="color:var(--accent)">You: </span>'}${esc(r.last_body || '')}
+          </div>
+        </td></tr>`).join('')
+    : '<tr><td>No conversations yet.</td></tr>';
+
+  $('inboxThreads').querySelectorAll('td[data-ph]').forEach((td) => {
+    td.onclick = () => openThread(td.dataset.ph, td.dataset.nm);
+  });
+}
+
+async function openThread(phone, name) {
+  inboxPhone = phone;
+  inboxName = name || null;
+  // v593: no pull any more -- Telnyx pushes replies to telnyx-sms-webhook.
+  const { data, error } = await sb.rpc('dialer_sms_thread', { p_phone: phone });
+  if (error) { $('inboxThread').innerHTML = esc(error.message); return; }
+  const msgs = data || [];
+
+  $('inboxThread').innerHTML = msgs.length
+    ? msgs.map((m) => {
+      const out = m.direction !== 'inbound';
+      return `<div style="display:flex;justify-content:${out ? 'flex-end' : 'flex-start'};margin-bottom:8px">
+        <div style="max-width:74%;padding:8px 11px;border-radius:10px;font-size:13px;
+                    background:${out ? 'var(--accent)' : '#fff'};
+                    color:${out ? '#fff' : 'var(--ink)'};
+                    border:1px solid ${out ? 'var(--accent)' : 'var(--line)'}">
+          <div style="white-space:pre-wrap">${esc(m.body || '')}</div>
+          <div style="font-size:10.5px;margin-top:4px;opacity:.75">
+            ${smsTime(m.message_at)}${out && m.agent_name ? ' \u00b7 ' + esc(m.agent_name) : ''}
+          </div>
+        </div></div>`;
+    }).join('')
+    : '<div style="color:var(--ink2)">No messages in this conversation.</div>';
+
+  // Scroll to newest, which is what anyone opening a thread wants to read.
+  const wrap = $('inboxThreadWrap');
+  wrap.scrollTop = wrap.scrollHeight;
+
+  $('inboxBody').disabled = false;
+  $('inboxSend').disabled = false;
+  $('inboxBody').focus();
+}
+
+$('inboxBody').addEventListener('input', () => {
+  const t = $('inboxBody').value;
+  const seg = smsSegments(t);
+  $('inboxLen').textContent = t
+    ? `${t.length} characters \u00b7 ${seg} segment${seg === 1 ? '' : 's'}`
+      + (/[^\u0000-\u007F]/.test(t) ? ' (non-ASCII \u2014 70 chars per segment)' : '')
+    : '';
+});
+
+$('inboxSend').onclick = async () => {
+  const text = $('inboxBody').value.trim();
+  if (!inboxPhone || !text) return;
+  $('inboxSend').disabled = true;
+  const r = await callFn('dialer-sms', {
+    action: 'send', to: inboxPhone, body: text, name: inboxName || undefined,
+  });
+  $('inboxSend').disabled = false;
+  if (!r?.ok) { say($('inboxMsg'), r?.error || 'Send failed', 'err'); return; }
+  if (!r.sent) { say($('inboxMsg'), r.detail || 'Not sent.', 'warn'); return; }
+  $('inboxBody').value = '';
+  $('inboxLen').textContent = '';
+  // Re-read rather than appending optimistically: dialer-sms writes the row
+  // into dialer_sms_messages itself, so the thread is the source of truth and an
+  // optimistic bubble could disagree with it.
+  await openThread(inboxPhone, inboxName);
+  loadInbox();
+};
+
+$('inboxRefresh').onclick = () => {
+  loadInbox();
+  if (inboxPhone) openThread(inboxPhone, inboxName);
+};
+
+
 window.DialerAdmin = { showSection };
 })();
