@@ -3028,17 +3028,26 @@ async function loadFloorMap(sessions) {
     return;
   }
   // An agent can have two tabs open; a call on either one is what counts.
+  // v689: the RPC carries each session's own status and when it last changed
+  // (status_since, stamped by a trigger), so a call is timed from the dial or
+  // the answer instead of from the agent's last Ready/Break change. The direct
+  // session read is only a fallback for the pre-v689 RPC shape.
   const sess = {};
   (sessions || []).forEach((s) => { if (!sess[s.agent_id] || s.status === 'on_call') sess[s.agent_id] = s.status; });
+  const rows = {};
+  (data || []).forEach((r) => {   // the RPC lists the freshest session first
+    const cur = rows[r.agent_id];
+    if (!cur || (r.session_status === 'on_call' && cur.session_status !== 'on_call')) rows[r.agent_id] = r;
+  });
   fmLive = {};
-  (data || []).forEach((r) => {
-    if (fmLive[r.agent_id]) return;   // the RPC lists the freshest session first
-    const state = fmClassify(r, sess[r.agent_id]);
+  Object.values(rows).forEach((r) => {
+    const state = fmClassify(r, r.session_status || sess[r.agent_id]);
+    const callTimed = (state === 'call' || state === 'wrap') && r.status_since;
     fmLive[r.agent_id] = {
       state,
       label: state === 'call' ? 'On a call' : state === 'wrap' ? 'Wrap-up'
         : state === 'alert2' ? 'No heartbeat' : (r.status_label || r.agent_status || 'Signed in'),
-      since: r.since, queue: r.campaign_name, heartbeat: r.heartbeat_age_seconds,
+      since: callTimed ? r.status_since : r.since, queue: r.campaign_name, heartbeat: r.heartbeat_age_seconds,
     };
     if (!fmRoster.some((p) => p.id === r.agent_id)) {
       fmRoster.push({ id: r.agent_id, name: r.agent_name || 'Agent', role: '' });
@@ -3057,7 +3066,8 @@ function fmTileHtml(p) {
     <div class="fm-top">${esc((L && L.queue) || fmRoleLabel(p.role))}</div>
     <div class="fm-name">${esc(p.name)}</div>
     <div class="fm-st"><span>${esc(L ? L.label : 'Offline')}</span>${L && L.since
-      ? `<span class="fm-timer" data-since="${esc(L.since)}" title="Time in this status">${fmDur(L.since)}</span>` : ''}</div>
+      ? `<span class="fm-timer" data-since="${esc(L.since)}" title="${st === 'call' ? 'Time on this call'
+        : st === 'wrap' ? 'Time in wrap-up' : 'Time in this status'}">${fmDur(L.since)}</span>` : ''}</div>
     ${canManage ? '<button type="button" class="fm-x" data-fmx="1" title="Take off the map">×</button>' : ''}
   </div>`;
 }
