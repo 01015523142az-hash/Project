@@ -3591,7 +3591,7 @@
           <div><label>Seller Name</label><input type="text" id="leadsQueueSellerFilter" placeholder="Search seller name…"></div>
           <div><label>Phone</label><input type="text" id="leadsQueuePhoneFilter" placeholder="Search phone…"></div>
           <div style="min-width:200px;"><label>Campaign Name</label><select id="leadsQueueCampaignFilter"><option value="">All campaigns</option></select></div>
-          <div style="flex:0; min-width:150px;"><label>Status</label><select id="leadsQueueStatusFilter"><option value="">All statuses</option><option value="pending">Pending</option><option value="accepted">Accepted</option><option value="rejected">Rejected</option></select></div>
+          <div style="flex:0; min-width:150px;"><label>Status</label><select id="leadsQueueStatusFilter"><option value="">All statuses</option><option value="pending" selected>Pending</option><option value="accepted">Accepted</option><option value="rejected">Rejected</option></select></div>
           <div style="flex:0; align-self:flex-end;"><button class="btn-secondary leads-refresh-btn" data-refresh-key="queue_review" style="width:auto; padding:10px 16px;" title="Reload this list from the database">&#8635; Refresh</button></div>
           <div style="flex:1; align-self:flex-end; display:flex; justify-content:flex-end;"><button class="btn-secondary export-btn owner-admin-export-only" id="leadsExportCsvBtn" style="width:auto; padding:10px 16px;">Export CSV</button></div>
         </div>
@@ -3798,8 +3798,8 @@
             <div><label>Seller Name</label><input type="text" id="leadsIspdSellerFilter" placeholder="Search seller name…"></div>
             <div><label>Phone</label><input type="text" id="leadsIspdPhoneFilter" placeholder="Search phone…"></div>
             <div style="min-width:200px;"><label>Campaign Name</label><select id="leadsIspdCampaignFilter"><option value="">All campaigns</option></select></div>
-            <div style="flex:0; min-width:150px;"><label>Status</label><select id="leadsIspdStatusFilter"><option value="">All statuses</option><option value="pending">Pending</option><option value="accepted">Accepted (Purchased)</option><option value="rejected">Rejected</option><option value="refund">Refund</option></select></div>
-            <div style="flex:0; min-width:150px;"><label>PrimeHome Buyers</label><select id="leadsIspdSentFilter"><option value="">Sent or not sent</option><option value="sent">Sent</option><option value="not_sent">Not sent</option></select></div>
+            <div style="flex:0; min-width:150px;"><label>Status</label><select id="leadsIspdStatusFilter"><option value="">All statuses</option><option value="pending" selected>Pending</option><option value="accepted">Accepted (Purchased)</option><option value="rejected">Rejected</option><option value="refund">Refund</option></select></div>
+            <div style="flex:0; min-width:150px;"><label>PrimeHome Buyers</label><select id="leadsIspdSentFilter"><option value="">Sent or not sent</option><option value="sent">Sent</option><option value="not_sent" selected>Not sent</option></select></div>
             <div style="flex:0; min-width:170px;"><label>Sent via</label><select id="leadsIspdSentChannelFilter" title="How the lead reached iSpeedToLead. &quot;Postback only&quot; means iSpeedToLead confirmed delivery but this system holds no send record — the postback does not say which channel it came through."><option value="">Any channel</option><option value="gyhomes">Sent to gyhomes</option><option value="primehome">Sent to PrimeHome Buyers</option><option value="postback">Delivered — postback only</option><option value="manual">Closed by staff — not sendable</option></select></div>
             <div style="min-width:170px;"><label>Sent by</label><select id="leadsIspdSentByFilter"><option value="">Anyone</option></select></div>
             <div><label>Sent from</label><input type="date" id="leadsIspdSentDateFromFilter"></div>
@@ -25215,7 +25215,8 @@ let leadsPrimeHomeBuyersFormId = null;
 // v107: id of the seeded "Ticket" form (TICKET_FORM_NAME, defined further
 // down) — resolved each loadLeads() same as leadsPrimeHomeBuyersFormId.
 let leadsTicketFormId = null;
-let leadsQueueFilters = { user: '', seller: '', phone: '', task: '', status: '', dateFrom: '', dateTo: '' };
+// Opens on what still needs a decision: Pending.
+let leadsQueueFilters = { user: '', seller: '', phone: '', task: '', status: 'pending', dateFrom: '', dateTo: '' };
 let leadsTicketsFilters = { user: '', seller: '', phone: '', stage: '', dateFrom: '', dateTo: '' };
 // v107: 'sent' added — filters Lead Reviewing by whether a lead has been
 // sent to PrimeHome Buyers yet ('' = all, 'sent' = a successful send on
@@ -25224,7 +25225,8 @@ let leadsTicketsFilters = { user: '', seller: '', phone: '', stage: '', dateFrom
 // a failed send still isn't a SENT lead. Applied client-side against the
 // already-fetched leadsIspeedtoleadSendByLeadId map, same as every other
 // local filter on this subtab.
-let leadsIspdFilters = { user: '', seller: '', phone: '', task: '', status: '', dateFrom: '', dateTo: '', sent: '', sentChannel: '', sentBy: '', sentDateFrom: '', sentDateTo: '' };
+// Opens on the work still to do: Pending and not yet sent to PrimeHome Buyers.
+let leadsIspdFilters = { user: '', seller: '', phone: '', task: '', status: 'pending', dateFrom: '', dateTo: '', sent: 'not_sent', sentChannel: '', sentBy: '', sentDateFrom: '', sentDateTo: '' };
 
 // Resolves which IANA timezone to render a lead's "Submitted at" in, under
 // the shared global "Times shown in" toggle — identical convention to
