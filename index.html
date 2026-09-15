@@ -2816,6 +2816,38 @@
   .side-subnav .finance-subtab-btn, .side-subnav .hr-subtab-btn, .side-subnav .datasci-subtab-btn,
   .side-subnav .taxes-subtab-btn, .side-subnav .tm-subtab-btn, .side-subnav .audit-subtab-btn,
   .side-subnav .act-subtab-btn, .side-subnav .act-group-btn{ font-size:12.5px; }
+  /* v716: the chat photo viewer (see openPhotoViewer). Dark in both themes,
+     like any photo viewer; above the call layers (10000) while open. */
+  .photo-viewer{ position:fixed; inset:0; z-index:10050; display:flex; flex-direction:column; background:rgba(8,10,12,.93); }
+  .photo-viewer[hidden]{ display:none; }
+  .photo-viewer-bar{ display:flex; align-items:center; gap:8px; padding:10px 14px; color:#fff; flex-wrap:wrap; }
+  .photo-viewer-name{ flex:1; min-width:0; font-size:13px; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.85; }
+  .photo-viewer-btn{ min-width:36px; height:36px; padding:0 10px; border-radius:10px; border:1px solid rgba(255,255,255,.2);
+    background:rgba(255,255,255,.08); color:#fff; font-size:17px; font-weight:700; line-height:1; cursor:pointer;
+    display:inline-flex; align-items:center; justify-content:center; }
+  .photo-viewer-btn:hover{ background:rgba(255,255,255,.18); }
+  .photo-viewer-btn[data-pv="fit"]{ font-size:12.5px; }
+  .photo-viewer-zoom{ min-width:48px; text-align:center; font-size:12px; font-variant-numeric:tabular-nums; opacity:.8; }
+  .photo-viewer-stage{ flex:1; position:relative; overflow:hidden; touch-action:none; cursor:zoom-in; }
+  .photo-viewer-stage.zoomed{ cursor:grab; }
+  .photo-viewer-stage.dragging{ cursor:grabbing; }
+  .photo-viewer-img{ position:absolute; left:50%; top:50%; max-width:none; max-height:none; width:auto; height:auto;
+    user-select:none; -webkit-user-drag:none; box-shadow:0 10px 40px rgba(0,0,0,.5); }
+  /* v717: Client Communications -- its children are real tabs, so its
+     sub-menu stays open while one of them is the active tab (the base rule
+     opens a sub-menu only while the PARENT is active). */
+  .side-nav-group:has(.side-subnav .tab-btn.active) .side-subnav{ display:flex; }
+  .side-nav-group:has(.side-subnav .tab-btn.active) > .tab-btn{ color:var(--text); }
+  .side-subnav .cc-subtab-btn{
+    display:flex; align-items:center; gap:8px; width:100%; justify-content:flex-start; text-align:left;
+    background:transparent; border:none; color:var(--text-dim); border-radius:6px; padding:7px 10px 7px 12px;
+    top:0; cursor:pointer; white-space:normal; line-height:1.3;
+    font-family:var(--sans); font-size:12.5px; font-weight:600; text-transform:none; letter-spacing:0;
+  }
+  .side-subnav .cc-subtab-btn:hover:not(.active){ color:var(--text-2); background:var(--card-hover); }
+  .side-subnav .cc-subtab-btn.active{ color:var(--text); background:var(--card-hover); box-shadow:none; }
+  .side-subnav .cc-subtab-btn::before, .side-subnav .cc-subtab-btn::after{ display:none !important; }
+  .hr-rc-head td{ background:var(--inset); font-size:12.5px; }
 </style>
 </head>
 <body>
@@ -3138,13 +3170,22 @@
       </div>
     </div>
     <div class="side-nav-group">
-      <!-- v701: client chat as a page. Shown by applyRolePermissionsToNav()
-           to whoever may take client chats (ciCanUseInbox).
-           v703: in its OWN group. It used to sit inside the Leads group, and
-           `.side-nav-group:has(> .tab-btn.active) .side-subnav` then read
-           "this group has the active tab" and unfolded the Leads sub-menu
-           whenever the Client Inbox was open. -->
-      <button class="tab-btn" data-tab="client_chat" title="Client Inbox"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M3.5 5.5a2 2 0 012-2h9a2 2 0 012 2v6a2 2 0 01-2 2H9l-3.5 3v-3h0a2 2 0 01-2-2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M7 7.5h6M7 10h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Client Inbox</span><span class="ci-nav-badge" id="ciNavBadge" style="display:none;">0</span></button>
+      <!-- v701/v703: client chat as a page, in its OWN group (inside the Leads
+           group, `.side-nav-group:has(> .tab-btn.active) .side-subnav` unfolded
+           the Leads sub-menu whenever it was open).
+           v717 (the owner): the group is now "Client Communications", under
+           Dialer Management, holding "Client chat" (was Client Inbox) and
+           "Dispute/Feedback" (moved out of Leads). Like Dialer Management the
+           parent is not a destination -- a click opens the first child this
+           role may see -- and each child keeps the permission it always had:
+           Client chat follows ciCanUseInbox(), Dispute/Feedback the Leads
+           'leads_dispute' grant. The waiting-chats badge sits on the parent so
+           it still shows while the group is folded. -->
+      <button class="tab-btn" data-tab="client_communications" title="Client Communications"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M3.5 5.5a2 2 0 012-2h9a2 2 0 012 2v6a2 2 0 01-2 2H9l-3.5 3v-3h0a2 2 0 01-2-2z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M7 7.5h6M7 10h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Client Communications</span><span class="ci-nav-badge" id="ciNavBadge" style="display:none;">0</span></button>
+      <div class="side-subnav side-subnav-cc">
+        <button class="tab-btn cc-subtab-btn" data-tab="client_chat" title="Client chat"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 5.5a2 2 0 012-2h9a2 2 0 012 2v6a2 2 0 01-2 2H9l-3.5 3v-3h0a2 2 0 01-2-2z"/><path d="M7 7.5h6M7 10h4"/></svg>Client chat</button>
+        <button class="tab-btn cc-subtab-btn" data-tab="client_disputes" title="Dispute/Feedback"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h14v9.5H8.5L4.5 17v-3H3z"/><path d="M10 7.5v3M10 12.7h.01"/></svg>Dispute/Feedback</button>
+      </div>
     </div>
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="leads" title="Leads"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="0.8" fill="currentColor"/></svg><span>Leads</span></button>
@@ -3154,7 +3195,6 @@
       <button class="leads-subtab-btn" data-leads-section="queue_review"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12.5l1.8-6.5h10.4l1.8 6.5"/><path d="M3 12.5v3a1 1 0 001 1h12a1 1 0 001-1v-3"/><path d="M3 12.5h4l1 2h4l1-2h4"/></svg>Leads Queue Review</button>
       <button class="leads-subtab-btn" data-leads-section="queue_review_ispeedtolead"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 9.5L10 4l6.5 5.5"/><path d="M5.5 8.5V16h9V8.5"/></svg>Leads Queue Review — PrimeHome Buyers</button>
       <button class="leads-subtab-btn" data-leads-section="tickets_review"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8a2 2 0 010 4v3a1 1 0 001 1h13a1 1 0 001-1v-3a2 2 0 010-4V5a1 1 0 00-1-1h-13a1 1 0 00-1 1z"/></svg>Tickets Review</button>
-      <button class="leads-subtab-btn" data-leads-section="leads_dispute"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h14v9.5H8.5L4.5 17v-3H3z"/><path d="M10 7.5v3M10 12.7h.01"/></svg>Dispute/Feedback</button>
       <button class="leads-subtab-btn" data-leads-section="call_back"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5L3 6.5l3 3"/><path d="M3 6.5h9a4.5 4.5 0 014.5 4.5v0a4.5 4.5 0 01-4.5 4.5H7"/></svg>Call Back</button>
       <button class="leads-subtab-btn" data-leads-section="all_queue"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3l7 4-7 4-7-4z"/><path d="M3 11l7 4 7-4"/></svg>All Queue</button>
         </div>
@@ -4080,59 +4120,6 @@
          accepted lead, or leaving general feedback on any of their leads.
          v112: both share this same review queue — the Type column/filter
          below is what tells them apart. ===== -->
-    <div class="leads-section" id="leadsSection-leads_dispute" style="display:none;">
-      <div class="card" style="margin-bottom:16px;">
-        <div class="filter-row">
-          <div style="flex:0; min-width:170px;">
-            <label>Type</label>
-            <select id="disputeTypeFilter">
-              <option value="" selected>All (Dispute + Feedback)</option>
-              <option value="dispute">Dispute</option>
-              <option value="feedback">Feedback</option>
-            </select>
-          </div>
-          <div style="flex:0; min-width:170px;">
-            <label>Status</label>
-            <select id="disputeStatusFilter">
-              <option value="open" selected>Open</option>
-              <option value="accepted">Accepted (lead rejected)</option>
-              <option value="rejected">Rejected (lead unchanged)</option>
-              <option value="">All statuses</option>
-            </select>
-          </div>
-          <div><label>From</label><input type="date" id="disputeDateFromFilter"></div>
-          <div><label>To</label><input type="date" id="disputeDateToFilter"></div>
-          <div style="flex:0; align-self:flex-end;"><button class="btn-secondary leads-refresh-btn" data-refresh-key="leads_dispute" style="width:auto; padding:10px 16px;" title="Reload this list from the database">&#8635; Refresh</button></div>
-        </div>
-      </div>
-      <div class="act-stats-row" id="disputesStatsRow">
-        <div class="act-stat-card">
-          <div class="act-stat-label">Showing</div>
-          <div class="act-stat-value" id="disputesStatTotal">—</div>
-        </div>
-        <div class="act-stat-card">
-          <div class="act-stat-label">Disputes</div>
-          <div class="act-stat-value" id="disputesStatDisputes">—</div>
-        </div>
-        <div class="act-stat-card">
-          <div class="act-stat-label">Feedback</div>
-          <div class="act-stat-value" id="disputesStatFeedback">—</div>
-        </div>
-        <div class="act-stat-card">
-          <div class="act-stat-label">Open</div>
-          <div class="act-stat-value" id="disputesStatOpen">—</div>
-        </div>
-        <div class="act-stat-card">
-          <div class="act-stat-label">Accepted</div>
-          <div class="act-stat-value good" id="disputesStatAccepted">—</div>
-        </div>
-        <div class="act-stat-card">
-          <div class="act-stat-label">Rejected</div>
-          <div class="act-stat-value bad" id="disputesStatRejected">—</div>
-        </div>
-      </div>
-      <div id="disputesList"></div>
-    </div>
 
     <!-- ===== Leads Queue Review — PrimeHome Buyers: per-lead review/send + CSV/Excel bulk upload ===== -->
     <div class="leads-section" id="leadsSection-queue_review_ispeedtolead" style="display:none;">
@@ -6003,11 +5990,71 @@
 
 
   <!-- v701: CLIENT INBOX. See the v701 block in the script for how it works. -->
+  <!-- v717: Client Communications -> Dispute/Feedback. The Leads tab's
+       Dispute/Feedback section, moved here whole; it keeps its id so
+       applyLeadsSectionEditGating('leads_dispute') and its handlers still find
+       it, and loses the leads-section class so Leads' own sub-tab switching no
+       longer hides it. -->
+  <div class="tab-panel" id="tab-client_disputes">
+    <div class="cc-section" id="leadsSection-leads_dispute">
+      <div class="card" style="margin-bottom:16px;">
+        <div class="filter-row">
+          <div style="flex:0; min-width:170px;">
+            <label>Type</label>
+            <select id="disputeTypeFilter">
+              <option value="" selected>All (Dispute + Feedback)</option>
+              <option value="dispute">Dispute</option>
+              <option value="feedback">Feedback</option>
+            </select>
+          </div>
+          <div style="flex:0; min-width:170px;">
+            <label>Status</label>
+            <select id="disputeStatusFilter">
+              <option value="open" selected>Open</option>
+              <option value="accepted">Accepted (lead rejected)</option>
+              <option value="rejected">Rejected (lead unchanged)</option>
+              <option value="">All statuses</option>
+            </select>
+          </div>
+          <div><label>From</label><input type="date" id="disputeDateFromFilter"></div>
+          <div><label>To</label><input type="date" id="disputeDateToFilter"></div>
+          <div style="flex:0; align-self:flex-end;"><button class="btn-secondary leads-refresh-btn" data-refresh-key="leads_dispute" style="width:auto; padding:10px 16px;" title="Reload this list from the database">&#8635; Refresh</button></div>
+        </div>
+      </div>
+      <div class="act-stats-row" id="disputesStatsRow">
+        <div class="act-stat-card">
+          <div class="act-stat-label">Showing</div>
+          <div class="act-stat-value" id="disputesStatTotal">—</div>
+        </div>
+        <div class="act-stat-card">
+          <div class="act-stat-label">Disputes</div>
+          <div class="act-stat-value" id="disputesStatDisputes">—</div>
+        </div>
+        <div class="act-stat-card">
+          <div class="act-stat-label">Feedback</div>
+          <div class="act-stat-value" id="disputesStatFeedback">—</div>
+        </div>
+        <div class="act-stat-card">
+          <div class="act-stat-label">Open</div>
+          <div class="act-stat-value" id="disputesStatOpen">—</div>
+        </div>
+        <div class="act-stat-card">
+          <div class="act-stat-label">Accepted</div>
+          <div class="act-stat-value good" id="disputesStatAccepted">—</div>
+        </div>
+        <div class="act-stat-card">
+          <div class="act-stat-label">Rejected</div>
+          <div class="act-stat-value bad" id="disputesStatRejected">—</div>
+        </div>
+      </div>
+      <div id="disputesList"></div>
+    </div>
+  </div>
   <div class="tab-panel" id="tab-client_chat">
     <div class="ci-wrap" id="ciWrap">
       <aside class="ci-list">
         <div class="ci-list-head">
-          <span class="ci-title">Client Inbox</span>
+          <span class="ci-title">Client chat</span>
           <button type="button" class="ci-icon-btn ci-hide" id="ciNewBtn" title="Start a conversation with a client">&#65291;</button>
         </div>
         <input type="search" class="ci-search" id="ciSearch" placeholder="Search clients or messages&hellip;">
@@ -6848,6 +6895,21 @@
               <tr><th>Agent</th><th>Accepted Leads</th><th>Target</th><th>Lead Bonus</th><th>Extra Bonus</th><th>Basic Pay</th><th>Total Owed</th></tr>
             </thead>
             <tbody id="finCommissionBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <!-- v717: recruiter commission (EGP), due inside the same period. -->
+      <div class="card" style="margin-top:16px;">
+        <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Recruiter commission</h3>
+        <div style="font-size:11px; color:var(--text-dim); margin-bottom:10px; line-height:1.4;">
+          EGP 1,500 per approved candidate who reached 14 days employed inside the period above and is still an active
+          account &mdash; the same rule as HR &rarr; Recruiter Commission. Totalled in EGP, separately from the USD payroll above.
+        </div>
+        <div class="ts-day-total mono" id="finRecruiterTotal" style="margin-bottom:10px;">&mdash;</div>
+        <div style="overflow-x:auto;">
+          <table class="data-table">
+            <thead><tr><th>Recruiter</th><th>Candidate</th><th>Start date</th><th>Qualified on</th><th>Amount</th></tr></thead>
+            <tbody id="finRecruiterBody"></tbody>
           </table>
         </div>
       </div>
@@ -9078,6 +9140,7 @@ let myTitle = '';
 let myDepartment = '';
 let myEmail = '';
 let myAvatarUrl = null;
+let myGrade = null;   // v717: profiles.grade -- staff / lead / manager / head
 let myChatStatus = 'offline';
 let myChatStatusManual = null; // v1.2.9: deliberate 'busy'/'dnd' override; null = auto (v702: + 'brb', 'invisible')
 let myStatusText = null, myStatusEmoji = null, myStatusUntil = null; // v702: chat status message, and when it clears
@@ -9247,6 +9310,13 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
     // `.side-nav-group:has(> .tab-btn.active) .side-subnav`, and clicking any
     // other tab clears it because activateTab() toggles .active off every
     // .tab-btn that does not match.
+    // v717: Client Communications is a parent like Dialer Management below:
+    // it opens the first child (Client chat, Dispute/Feedback) this role sees.
+    if(btn.dataset.tab === 'client_communications'){
+      const first = Array.from(document.querySelectorAll('.side-subnav-cc .tab-btn')).find(b => b.style.display !== 'none');
+      if(first) activateTab(first.dataset.tab);
+      return;
+    }
     if(btn.dataset.tab === 'dialer_management'){
       // v675: a role that can see a Dialer Admin section lands on it (the
       // parent now HAS a panel). One that only has the agent Dialer keeps the
@@ -9852,6 +9922,7 @@ async function establishSession(user, { isNewLogin = true } = {}){
   myEmail = user.email;
   myUserId = user.id;
   myAvatarUrl = profile?.avatar_url || null;
+  myGrade = profile?.grade || null;   // v717
   if(typeof renderProfileMenu === 'function') renderProfileMenu();   // v702: the photo on the menu button
   setTimeout(() => { if(typeof avatarAutoShrink === 'function') avatarAutoShrink(); }, 8000);   // v704
   myChatStatus = profile?.chat_status || 'offline';
@@ -10101,6 +10172,21 @@ function applyRolePermissionsToNav(){
   // 'client_chat' key -- not the key alone, which admin rows may lack.
   const _ciBtn = document.querySelector('.tab-btn[data-tab="client_chat"]');
   if(_ciBtn) _ciBtn.style.display = ciCanUseInbox() ? '' : 'none';
+  // v717: Dispute/Feedback keeps its Leads grant (the Leads tab plus the
+  // 'leads_dispute' section), and the Client Communications parent shows when
+  // either child does.
+  const _cdBtn = document.querySelector('.tab-btn[data-tab="client_disputes"]');
+  const _canDisputes = myIsOwner || (myPermissions.allowedTabs.includes('leads') && canViewLeadsSection('leads_dispute'));
+  if(_cdBtn) _cdBtn.style.display = _canDisputes ? '' : 'none';
+  const _ccBtn = document.querySelector('.tab-btn[data-tab="client_communications"]');
+  if(_ccBtn) _ccBtn.style.display = (ciCanUseInbox() || _canDisputes) ? '' : 'none';
+  // v717: groups in chat are created by seniors only (see chatIsSenior).
+  const _ngb = $('chatNewGroupBtn');
+  if(_ngb) _ngb.style.display = chatIsSenior() ? '' : 'none';
+  // v717: owner/admin earn no recruiter commission -- their HR subtab lists
+  // every recruiter's instead (loadHrRecruiterCommissions).
+  const _hrcBtn = document.querySelector('.hr-subtab-btn[data-hr-section="commission"]');
+  if(_hrcBtn && _hrcBtn.lastChild) _hrcBtn.lastChild.textContent = ciIsAdmin() ? 'Recruiter Commission' : 'My Commission';
   // v623: the Dialer Management parent has no grant of its own -- it is a
   // disclosure control for the two real keys underneath. Show it when the
   // role can see either child, hide it when it can see neither, so nobody
@@ -10171,7 +10257,7 @@ function applyRolePermissionsToNav(){
   const canLandOnDashboard = tmBtn && tmBtn.style.display !== 'none' && (myIsOwner || canViewTimeManagementSection('staff'));
   const landingBtn = canLandOnDashboard
     ? tmBtn
-    : Array.from(document.querySelectorAll('.tab-btn')).find(btn => btn.style.display !== 'none');
+    : Array.from(document.querySelectorAll('.tab-btn')).find(btn => btn.style.display !== 'none' && document.getElementById('tab-' + btn.dataset.tab));   // v717: a parent (no panel) is not a landing page
   // v714: a refresh reopens the page this browser tab was on (staffPageRestore).
   if(staffPageRestore()) return;
   if(landingBtn) activateTab(landingBtn.dataset.tab);
@@ -10266,6 +10352,7 @@ function activateTab(tabKey){
   if(tabKey === 'leads') initLeadsTab();
   if(tabKey === 'call_activity') initActivityTab();
   if(tabKey === 'client_chat') ciInitTab();   // v701
+  if(tabKey === 'client_disputes') initClientDisputesTab();   // v717
   if(tabKey === 'client_submissions') initClientSubmissionsTab();
   if(tabKey === 'activity') initAuditLogTab();
   if(tabKey === 'usermanagement') initUserManagementTab();
@@ -10463,6 +10550,156 @@ function chatTypingBubbleHtml(){
 // already loaded is now carried across by its path: the SAME element goes
 // back into the new markup within the same task, and a media element that is
 // back in the document by then never pauses.
+// v716 (the owner: "a photo sent in chat should pop up, with zoom in and zoom
+// out, instead of opening in another tab"). One viewer for every chat photo:
+// the - / + buttons, the mouse wheel and a two-finger pinch zoom around the
+// pointer; a zoomed photo is dragged around; double-click toggles fit / 2.5x;
+// Esc, the x or a click on the dark area closes it. Download keeps the
+// existing save-to-disk path (downloadFileToDisk). Built on first use.
+const photoViewer = { el: null, stage: null, img: null, label: null, url: '', name: '',
+  s: 1, fit: 1, tx: 0, ty: 0, pointers: new Map(), pinch: null, moved: false, downOnStage: false, prevOverflow: '' };
+function photoViewerApply(){
+  const v = photoViewer;
+  v.img.style.transform = `translate(${v.tx}px, ${v.ty}px) translate(-50%, -50%) scale(${v.s})`;
+  v.label.textContent = Math.round(v.s * 100) + '%';
+  v.stage.classList.toggle('zoomed', v.s > v.fit * 1.01);
+}
+// Zoom to scale ns keeping the screen point (cx, cy) still -- the photo's
+// centre sits at the stage centre + (tx, ty), a photo pixel q at centre + t + s*q.
+function photoViewerZoomTo(ns, cx, cy){
+  const v = photoViewer;
+  ns = Math.min(Math.max(v.fit * 8, 4), Math.max(v.fit * 0.5, ns));
+  const r = v.stage.getBoundingClientRect();
+  const px = (cx == null ? r.left + r.width / 2 : cx) - (r.left + r.width / 2);
+  const py = (cy == null ? r.top + r.height / 2 : cy) - (r.top + r.height / 2);
+  const k = ns / v.s;
+  v.tx = px - k * (px - v.tx);
+  v.ty = py - k * (py - v.ty);
+  v.s = ns;
+  photoViewerApply();
+}
+function photoViewerZoomBy(f, cx, cy){ photoViewerZoomTo(photoViewer.s * f, cx, cy); }
+function photoViewerFit(){
+  const v = photoViewer;
+  const r = v.stage.getBoundingClientRect();
+  const w = v.img.naturalWidth || 1, h = v.img.naturalHeight || 1;
+  v.fit = Math.max(0.01, Math.min((r.width - 32) / w, (r.height - 32) / h, 1));   // never blown up past its real size
+  v.s = v.fit; v.tx = 0; v.ty = 0;
+  photoViewerApply();
+}
+function photoViewerBuild(){
+  if(photoViewer.el) return;
+  const v = photoViewer;
+  const el = document.createElement('div');
+  el.className = 'photo-viewer';
+  el.hidden = true;
+  el.setAttribute('role', 'dialog');
+  el.setAttribute('aria-modal', 'true');
+  el.setAttribute('aria-label', 'Photo');
+  el.innerHTML = `
+    <div class="photo-viewer-bar">
+      <div class="photo-viewer-name"></div>
+      <button type="button" class="photo-viewer-btn" data-pv="out" title="Zoom out (-)" aria-label="Zoom out">&minus;</button>
+      <div class="photo-viewer-zoom">100%</div>
+      <button type="button" class="photo-viewer-btn" data-pv="in" title="Zoom in (+)" aria-label="Zoom in">+</button>
+      <button type="button" class="photo-viewer-btn" data-pv="fit" title="Fit to screen (0)">Fit</button>
+      <button type="button" class="photo-viewer-btn" data-pv="download" title="Download" aria-label="Download">&#11015;</button>
+      <button type="button" class="photo-viewer-btn" data-pv="close" title="Close (Esc)" aria-label="Close">&times;</button>
+    </div>
+    <div class="photo-viewer-stage"><img class="photo-viewer-img" alt="" draggable="false"></div>`;
+  document.body.appendChild(el);
+  v.el = el;
+  v.stage = el.querySelector('.photo-viewer-stage');
+  v.img = el.querySelector('.photo-viewer-img');
+  v.label = el.querySelector('.photo-viewer-zoom');
+  el.querySelector('.photo-viewer-bar').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pv]');
+    if(!b) return;
+    const act = b.dataset.pv;
+    if(act === 'in') photoViewerZoomBy(1.25);
+    else if(act === 'out') photoViewerZoomBy(0.8);
+    else if(act === 'fit') photoViewerFit();
+    else if(act === 'download') downloadFileToDisk(v.url, v.name || 'photo');
+    else if(act === 'close') closePhotoViewer();
+  });
+  const stage = v.stage;
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    photoViewerZoomBy(Math.exp(-e.deltaY * 0.0015), e.clientX, e.clientY);
+  }, { passive: false });
+  stage.addEventListener('dblclick', (e) => {
+    if(v.s > v.fit * 1.05) photoViewerFit();
+    else photoViewerZoomTo(Math.max(v.fit * 2.5, 1), e.clientX, e.clientY);
+  });
+  stage.addEventListener('pointerdown', (e) => {
+    if(!v.pointers.size){ v.moved = false; v.downOnStage = e.target === stage; }
+    try{ stage.setPointerCapture(e.pointerId); }catch(err){ /* pointer already gone */ }
+    v.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if(v.pointers.size === 2){
+      const [a, b] = [...v.pointers.values()];
+      v.pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, s: v.s };
+    }
+  });
+  stage.addEventListener('pointermove', (e) => {
+    const prev = v.pointers.get(e.pointerId);
+    if(!prev) return;
+    const cur = { x: e.clientX, y: e.clientY };
+    v.pointers.set(e.pointerId, cur);
+    if(v.pointers.size === 2 && v.pinch){
+      const [a, b] = [...v.pointers.values()];
+      photoViewerZoomTo(v.pinch.s * Math.hypot(a.x - b.x, a.y - b.y) / v.pinch.d, (a.x + b.x) / 2, (a.y + b.y) / 2);
+      v.moved = true;
+      return;
+    }
+    const dx = cur.x - prev.x, dy = cur.y - prev.y;
+    if(Math.abs(dx) + Math.abs(dy) > 1){ v.moved = true; stage.classList.add('dragging'); }
+    v.tx += dx; v.ty += dy;
+    photoViewerApply();
+  });
+  const release = (e) => {
+    v.pointers.delete(e.pointerId);
+    if(v.pointers.size < 2) v.pinch = null;
+    if(!v.pointers.size) stage.classList.remove('dragging');
+  };
+  stage.addEventListener('pointerup', (e) => {
+    release(e);
+    // A plain click on the dark area (not the photo, not a drag) closes it.
+    if(!v.pointers.size && !v.moved && v.downOnStage) closePhotoViewer();
+  });
+  stage.addEventListener('pointercancel', release);
+  document.addEventListener('keydown', (e) => {
+    if(!v.el || v.el.hidden) return;
+    if(e.key === 'Escape'){ e.preventDefault(); e.stopImmediatePropagation(); closePhotoViewer(); }
+    else if(e.key === '+' || e.key === '='){ e.preventDefault(); photoViewerZoomBy(1.25); }
+    else if(e.key === '-' || e.key === '_'){ e.preventDefault(); photoViewerZoomBy(0.8); }
+    else if(e.key === '0'){ e.preventDefault(); photoViewerFit(); }
+  }, true);
+  window.addEventListener('resize', () => { if(!v.el.hidden) photoViewerFit(); });
+}
+function openPhotoViewer(url, name){
+  photoViewerBuild();
+  const v = photoViewer;
+  v.url = url;
+  v.name = name || 'photo';
+  v.el.querySelector('.photo-viewer-name').textContent = v.name;
+  v.img.style.visibility = 'hidden';
+  v.img.onload = () => { v.img.style.visibility = ''; photoViewerFit(); };
+  v.img.src = url;
+  v.prevOverflow = document.documentElement.style.overflow;
+  document.documentElement.style.overflow = 'hidden';
+  v.el.hidden = false;
+  if(v.img.complete && v.img.naturalWidth){ v.img.style.visibility = ''; photoViewerFit(); }
+  v.el.querySelector('[data-pv="close"]').focus({ preventScroll: true });
+}
+function closePhotoViewer(){
+  const v = photoViewer;
+  if(!v.el || v.el.hidden) return;
+  v.el.hidden = true;
+  v.pointers.clear();
+  v.pinch = null;
+  document.documentElement.style.overflow = v.prevOverflow || '';
+}
+
 function chatSwapHtml(box, html){
   const keep = new Map();
   box.querySelectorAll('.chat-msg-attachment[data-resolved="1"]').forEach(el => {
@@ -11630,6 +11867,7 @@ function initNotifCenter(){
 const STAFF_NOTIF_KINDS = [
   { key: 'ticket_new', label: 'New ticket to review' },
   { key: 'lead_submitted', label: 'New lead submitted (Leads Queue Review)' },
+  { key: 'lead_submitted_primehome', label: 'New lead submitted (Leads Queue Review — PrimeHome Buyers)' },   // v717
   { key: 'ticket_accepted', label: 'Client accepted a ticket' },
   { key: 'ticket_declined', label: 'Client declined a ticket' },
   { key: 'dispute_reply', label: 'Client reply on a dispute/feedback thread' },
@@ -11824,8 +12062,10 @@ async function subscribeStaffOpsRealtime(){
       const fromFile = !!(lead.imported || lead.last_import_batch);
       // v713: nor a Sales rep's converted opportunity -- it does not go to the
       // agents' QA queue, so a "needs review" alert pointing there is wrong.
-      if(!lead.ticket_stage && !fromFile && !isSalesConversionLead(lead) && staffNotifKindAllowed('lead_submitted')){
-        const prime = isPrimeHomeBuyersLead(lead);
+      // v717: PrimeHome Buyers leads have their own row in Notifications
+      // Setting ('lead_submitted_primehome'), seeded from this one's roles.
+      const prime = !lead.ticket_stage && isPrimeHomeBuyersLead(lead);
+      if(!lead.ticket_stage && !fromFile && !isSalesConversionLead(lead) && staffNotifKindAllowed(prime ? 'lead_submitted_primehome' : 'lead_submitted')){
         pushStaffNotification({
           priority: true,   // v645: needs someone to act
           icon: '📥',
@@ -11872,7 +12112,7 @@ async function subscribeStaffOpsRealtime(){
         icon: '⚠️',
         title: 'Client reply on a dispute',
         body: msg.message || 'New message on a lead dispute/feedback thread.',
-        onClick: () => activateTab('leads'),
+        onClick: () => activateTab('client_disputes'),   // v717: moved to Client Communications
       });
     })
     // v238: client-proposed Campaign Guide edits (Leads → Campaign Guide)
@@ -13569,7 +13809,7 @@ async function clientChatResolveVisibleAttachments(container){
     el.dataset.resolved = '1';   // v704: chatSwapHtml carries it across re-renders
     if(mime.startsWith('image/')){
       el.innerHTML = `<img src="${url}" alt="${escapeHtml(name)}">`;
-      el.querySelector('img').addEventListener('click', () => window.open(url, '_blank'));
+      el.querySelector('img').addEventListener('click', () => openPhotoViewer(url, name));   // v716: pop-up viewer, not a new tab
     } else if(mime.startsWith('audio/')){
       el.className = 'chat-msg-attachment chat-msg-audio';
       // v205: controlsList="nodownload" hides the browser's own forced-
@@ -13975,7 +14215,7 @@ async function chatResolveVisibleAttachments(container){
     el.dataset.resolved = '1';   // v704: chatSwapHtml carries it across re-renders
     if(mime.startsWith('image/')){
       el.innerHTML = `<img src="${url}" alt="${escapeHtml(name)}">`;
-      el.querySelector('img').addEventListener('click', () => window.open(url, '_blank'));
+      el.querySelector('img').addEventListener('click', () => openPhotoViewer(url, name));   // v716: pop-up viewer, not a new tab
     } else if(mime.startsWith('audio/')){
       el.className = 'chat-msg-attachment chat-msg-audio';
       // v205: controlsList="nodownload" hides the browser's own forced-
@@ -14543,7 +14783,7 @@ async function ciLoadTargets(){
   if(ciOpenClientId){ $('ciDetails').__sig = null; ciRenderDetails(); }
 }
 async function ciLoadQuickReplies(){
-  const { data, error } = await sb.from('client_chat_quick_replies').select('id, title, body, sort').order('sort').order('title');
+  const { data, error } = await sb.from('client_chat_quick_replies').select('id, title, body, sort').eq('kind', 'chat').order('sort').order('title');   // v717: not the dispute ones
   if(error){ console.error('quick replies load failed', error); return; }
   ciQuickReplies = data || [];
 }
@@ -14896,7 +15136,19 @@ function ciRenderQrMenu(){
   const mb = $('ciQrManageBtn');
   if(mb) mb.onclick = () => { menu.classList.add('ci-hide'); ciOpenQrModal(); };
 }
-function ciOpenQrModal(){
+// v717: one editor for both lists -- chat replies and Dispute/Feedback replies.
+let ciQrKind = 'chat';
+function ciQrList(){ return ciQrKind === 'dispute' ? disputeQuickReplies : ciQuickReplies; }
+async function ciReloadQrKind(){ if(ciQrKind === 'dispute') await disputeLoadQuickReplies(); else await ciLoadQuickReplies(); }
+function ciOpenQrModal(kind){
+  ciQrKind = kind === 'dispute' ? 'dispute' : 'chat';
+  const modal = $('ciQrModal');
+  // v717: it lived inside the Client chat page, so it could not open anywhere else.
+  if(modal.parentElement !== document.body) document.body.appendChild(modal);
+  modal.querySelector('.ci-modal-head span').textContent = ciQrKind === 'dispute' ? 'Dispute & feedback replies' : 'Quick replies';
+  modal.querySelector('.ci-modal-note').textContent = ciQrKind === 'dispute'
+    ? 'Saved answers for dispute and feedback threads. Placeholders fill in when used: {client_name} (their first name), {company}, {seller} (the lead\u2019s seller), {my_name}.'
+    : 'Saved answers for everyone who takes client chats. Placeholders fill in when used: {client_name} (their first name), {company}, {my_name}.';
   ciQrEditingId = null;
   $('ciQrTitle').value = ''; $('ciQrBody').value = ''; $('ciQrMsg').textContent = '';
   $('ciQrSave').textContent = 'Add reply';
@@ -14905,14 +15157,14 @@ function ciOpenQrModal(){
 }
 function ciRenderQrManageList(){
   const box = $('ciQrManageList');
-  box.innerHTML = ciQuickReplies.length ? ciQuickReplies.map(q => `<div class="ci-qr-manage-row">
+  box.innerHTML = ciQrList().length ? ciQrList().map(q => `<div class="ci-qr-manage-row">
       <div><b>${escapeHtml(q.title)}</b><span>${escapeHtml(q.body)}</span></div>
       <button type="button" class="ci-btn" data-edit="${escapeHtml(q.id)}">Edit</button>
       <button type="button" class="ci-btn" data-del="${escapeHtml(q.id)}" style="color:var(--danger);">Delete</button>
     </div>`).join('') : '<div class="ci-d-none">None yet \u2014 add the first one below.</div>';
   box.querySelectorAll('[data-edit]').forEach(b => {
     b.onclick = () => {
-      const q = ciQuickReplies.find(x => x.id === b.dataset.edit);
+      const q = ciQrList().find(x => x.id === b.dataset.edit);
       if(!q) return;
       ciQrEditingId = q.id;
       $('ciQrTitle').value = q.title; $('ciQrBody').value = q.body;
@@ -14922,11 +15174,11 @@ function ciRenderQrManageList(){
   });
   box.querySelectorAll('[data-del]').forEach(b => {
     b.onclick = async () => {
-      const q = ciQuickReplies.find(x => x.id === b.dataset.del);
+      const q = ciQrList().find(x => x.id === b.dataset.del);
       if(!q || !confirm(`Delete the quick reply "${q.title}"?`)) return;
       const { error } = await sb.from('client_chat_quick_replies').delete().eq('id', q.id);
       if(error){ $('ciQrMsg').textContent = error.message; $('ciQrMsg').className = 'ci-d-msg err'; return; }
-      await ciLoadQuickReplies();
+      await ciReloadQrKind();
       ciRenderQrManageList();
     };
   });
@@ -14939,7 +15191,7 @@ async function ciSaveQr(){
   $('ciQrSave').disabled = true;
   const res = ciQrEditingId
     ? await sb.from('client_chat_quick_replies').update({ title, body, updated_at: new Date().toISOString() }).eq('id', ciQrEditingId)
-    : await sb.from('client_chat_quick_replies').insert({ title, body, sort: ciQuickReplies.length });
+    : await sb.from('client_chat_quick_replies').insert({ title, body, sort: ciQrList().length, kind: ciQrKind });
   $('ciQrSave').disabled = false;
   if(res.error){ msg.textContent = res.error.message; msg.className = 'ci-d-msg err'; return; }
   msg.textContent = ciQrEditingId ? 'Saved.' : 'Added.';
@@ -14947,7 +15199,7 @@ async function ciSaveQr(){
   ciQrEditingId = null;
   $('ciQrTitle').value = ''; $('ciQrBody').value = '';
   $('ciQrSave').textContent = 'Add reply';
-  await ciLoadQuickReplies();
+  await ciReloadQrKind();
   ciRenderQrManageList();
 }
 
@@ -17532,6 +17784,12 @@ function chatRenderGroupPicker(container, directory, selected, cap, excludeIds, 
     });
   });
 }
+// v717 (the owner): groups are created by seniors only -- owner/admin, or
+// grade lead / manager / head. The chat_groups insert policy enforces the same
+// rule (is_chat_senior()); this hides the button from everyone else.
+function chatIsSenior(){
+  return myIsOwner || myRole === 'admin' || ['lead', 'manager', 'head'].includes(myGrade);
+}
 $('chatNewGroupBtn').addEventListener('click', () => {
   chatNewGroupSelected = new Set();
   $('chatNewGroupName').value = '';
@@ -17627,6 +17885,7 @@ $('chatNewClientChatSearch').addEventListener('input', chatRenderNewClientChatPi
 $('chatCreateGroupBtn').addEventListener('click', async () => {
   const name = $('chatNewGroupName').value.trim();
   const msg = $('chatNewGroupMsg');
+  if(!chatIsSenior()){ msg.textContent = 'Only seniors (team leads, managers, heads, admins) can create a group.'; msg.className = 'msg error'; return; }   // v717
   if(!name){
     msg.textContent = 'Give the group a name.';
     msg.className = 'msg error';
@@ -21697,7 +21956,8 @@ async function loadPromoCodesList(){
     tbody.innerHTML = '<tr><td colspan="6" style="color:var(--text-dim);">No discount codes yet.</td></tr>';
     return;
   }
-  const canEditFinance = canEditFinanceSection('stripe_discount_codes');
+  // v717 (the owner): only the Owner may deactivate a discount code.
+  const canEditFinance = canEditFinanceSection('stripe_discount_codes') && myIsOwner;
   tbody.innerHTML = codes.map(c => {
     const redeemed = c.maxRedemptions ? `${c.timesRedeemed} / ${c.maxRedemptions}` : `${c.timesRedeemed}`;
     const expires = c.expiresAt ? new Date(c.expiresAt).toLocaleDateString([], nonAgentDisplayTz() ? { timeZone: nonAgentDisplayTz() } : {}) : 'Never';
@@ -21716,6 +21976,7 @@ async function loadPromoCodesList(){
 if($('promoCodesTbody')) $('promoCodesTbody').addEventListener('click', async (e) => {
   const btn = e.target.closest('.promo-code-deactivate-btn');
   if(!btn) return;
+  if(!myIsOwner){ alert('Only the Owner can deactivate a discount code.'); return; }   // v717
   if(!confirm('Deactivate this discount code? It will stop working immediately — existing redemptions are unaffected.')) return;
   btn.disabled = true;
   const { data, error } = await sb.functions.invoke('create-promo-code', { body: { action: 'deactivate', promotionCodeId: btn.dataset.id } });
@@ -27560,7 +27821,7 @@ function initLeadsTab(){
     btn.style.display = canViewLeadsSection(btn.dataset.leadsSection) ? '' : 'none';
   });
   const firstVisible = Array.from(document.querySelectorAll('.leads-subtab-btn')).find(b => b.style.display !== 'none');
-  const target = (leadsActiveSection && canViewLeadsSection(leadsActiveSection)) ? leadsActiveSection : (firstVisible ? firstVisible.dataset.leadsSection : null);
+  const target = (leadsActiveSection && canViewLeadsSection(leadsActiveSection) && document.querySelector(`.leads-subtab-btn[data-leads-section="${leadsActiveSection}"]`)) ? leadsActiveSection : (firstVisible ? firstVisible.dataset.leadsSection : null);   // v717: only a sub-tab Leads still has
   if(target) activateLeadsSection(target);
 }
 function activateLeadsSection(key){
@@ -29610,6 +29871,58 @@ let disputeFormNameById = {};
 let disputeMessagesCache = {}; // dispute_id -> messages array, loaded on demand
 let disputeExpandedId = null;
 
+// v717: Client Communications -> Dispute/Feedback (moved out of Leads; see
+// the tab-client_disputes markup). Same loader and edit gating as before,
+// plus its own quick replies.
+function initClientDisputesTab(){
+  loadDisputesList();
+  applyLeadsSectionEditGating('leads_dispute');
+  disputeLoadQuickReplies();
+}
+// v717 (the owner: "quick replies like client chat, for dispute and feedback
+// scenarios"). The same client_chat_quick_replies table, kind = 'dispute';
+// owner/admin manage them through the same editor (ciOpenQrModal('dispute')).
+let disputeQuickReplies = [];
+async function disputeLoadQuickReplies(){
+  const { data, error } = await sb.from('client_chat_quick_replies').select('id, title, body, sort').eq('kind', 'dispute').order('sort').order('title');
+  if(error){ console.error('dispute quick replies load failed', error); return; }
+  disputeQuickReplies = data || [];
+}
+function disputeFillPlaceholders(text, dispute){
+  const client = dispute.client_accounts || {};
+  const lead = dispute.leads || {};
+  const first = String(client.full_name || '').trim().split(/\s+/)[0] || 'there';
+  return String(text)
+    .replaceAll('{client_name}', first)
+    .replaceAll('{company}', client.company_name || 'your company')
+    .replaceAll('{seller}', lead.seller_investor_name || 'this seller')
+    .replaceAll('{my_name}', String(myFullName || '').trim().split(/\s+/)[0] || 'our team');
+}
+function disputeRenderQrMenu(menu, input, dispute){
+  const items = disputeQuickReplies.map(q => `<button type="button" class="ci-qr-item" data-id="${escapeHtml(q.id)}"><span class="ci-qr-title">${escapeHtml(q.title)}</span><span class="ci-qr-body">${escapeHtml(q.body)}</span></button>`).join('');
+  menu.innerHTML = (items || `<div class="ci-list-empty">No dispute replies yet.${ciIsAdmin() ? '' : ' An owner or admin can add them.'}</div>`)
+    + (ciIsAdmin() ? '<button type="button" class="ci-qr-manage">Manage dispute replies\u2026</button>' : '');
+  menu.querySelectorAll('.ci-qr-item').forEach(b => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const q = disputeQuickReplies.find(x => x.id === b.dataset.id);
+      if(!q) return;
+      const text = disputeFillPlaceholders(q.body, dispute);
+      const st = input.selectionStart ?? input.value.length;
+      const en = input.selectionEnd ?? input.value.length;
+      input.value = input.value.slice(0, st) + text + input.value.slice(en);
+      menu.classList.add('ci-hide');
+      input.focus();
+      input.selectionStart = input.selectionEnd = st + text.length;
+    };
+  });
+  const mb = menu.querySelector('.ci-qr-manage');
+  if(mb) mb.onclick = (e) => { e.stopPropagation(); menu.classList.add('ci-hide'); ciOpenQrModal('dispute'); };
+}
+document.addEventListener('click', (e) => {
+  document.querySelectorAll('.dispute-qr-menu:not(.ci-hide)').forEach(m => { if(!m.parentElement.contains(e.target)) m.classList.add('ci-hide'); });
+});
+
 async function loadDisputesList(){
   const container = $('disputesList');
   if(container && !disputesCache.length) container.innerHTML = '<div class="empty">Loading…</div>';
@@ -29756,9 +30069,22 @@ function renderDisputeThread(container, dispute, messages){
     replyRow.className = 'edit-only';
     replyRow.style.cssText = 'display:flex; gap:8px; margin-bottom:10px;';
     replyRow.innerHTML = `
+      <div class="ci-qr-wrap" style="align-self:flex-end;">
+        <button type="button" class="ci-btn dispute-qr-btn" title="Insert a saved reply">Quick replies &#9662;</button>
+        <div class="ci-qr-menu ci-hide dispute-qr-menu"></div>
+      </div>
       <textarea class="dispute-reply-input" placeholder="Reply to the client…" style="flex:1; min-height:50px; padding:8px; font-size:12px;"></textarea>
       <button class="btn-secondary dispute-reply-btn" style="width:auto; align-self:flex-end; padding:8px 14px;">Send</button>
     `;
+    // v717: quick replies for dispute / feedback threads.
+    const qrMenu = replyRow.querySelector('.dispute-qr-menu');
+    replyRow.querySelector('.dispute-qr-btn').addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if(!qrMenu.classList.contains('ci-hide')){ qrMenu.classList.add('ci-hide'); return; }
+      if(!disputeQuickReplies.length) await disputeLoadQuickReplies();
+      disputeRenderQrMenu(qrMenu, replyRow.querySelector('.dispute-reply-input'), dispute);
+      qrMenu.classList.remove('ci-hide');
+    });
     replyRow.querySelector('.dispute-reply-btn').addEventListener('click', async () => {
       const btn = replyRow.querySelector('.dispute-reply-btn');
       if(btn.disabled) return;
@@ -41809,6 +42135,7 @@ async function loadFinanceCommissionLiability(){
   }
   const [fy, fm, fd] = $('finCommissionFromInput').value.split('-').map(Number);
   const [ty, tm, td] = $('finCommissionToInput').value.split('-').map(Number);
+  loadFinanceRecruiterLiability($('finCommissionFromInput').value, $('finCommissionToInput').value);   // v717
   const { startMs: rangeStartMs } = dayBoundsMsInZone(globalDisplayTzMode, null, fy, fm, fd);
   const { endMs: rangeEndMs } = dayBoundsMsInZone(globalDisplayTzMode, null, ty, tm, td);
 
@@ -41873,6 +42200,30 @@ async function loadFinanceCommissionLiability(){
 $('finCommissionFromInput').addEventListener('change', loadFinanceCommissionLiability);
 $('finCommissionToInput').addEventListener('change', loadFinanceCommissionLiability);
 $('finCommissionRefreshBtn').addEventListener('click', loadFinanceCommissionLiability);
+
+// v717 (the owner: "Commission Liability doesn't report the recruiter
+// commission"). Recruiter commission that became due inside the period: a
+// candidate who reached 14 days employed (qualifies_on) between From and To
+// and still qualifies -- hr_recruiter_commissions(), the rule HR -> Recruiter
+// Commission shows. In EGP, so it is totalled on its own rather than mixed into
+// the USD payroll figures. Owner/admin only (anyone else gets no rows).
+async function loadFinanceRecruiterLiability(from, to){
+  const body = $('finRecruiterBody');
+  if(!body) return;
+  body.innerHTML = '<tr><td colspan="5" class="empty">Loading\u2026</td></tr>';
+  const { data, error } = await sb.rpc('hr_recruiter_commissions');
+  if(error){ body.innerHTML = `<tr><td colspan="5" class="empty">${escapeHtml(error.message)}</td></tr>`; $('finRecruiterTotal').textContent = '\u2014'; return; }
+  const due = (data || []).filter(r => r.qualifies && r.qualifies_on && r.qualifies_on >= from && r.qualifies_on <= to);
+  const total = due.reduce((t, r) => t + (Number(r.commission_amount) || 0), 0);
+  $('finRecruiterTotal').textContent = `EGP ${total.toLocaleString()} owed to recruiters in this period`;
+  body.innerHTML = due.length ? due.map(r => `<tr>
+      <td>${escapeHtml(r.recruiter_name)}</td>
+      <td>${escapeHtml(r.candidate_name)}</td>
+      <td class="mono">${hrFmtDate(r.employment_start_date)}</td>
+      <td class="mono">${hrFmtDate(r.qualifies_on)}</td>
+      <td class="mono" style="font-weight:700;">EGP ${Number(r.commission_amount).toLocaleString()}</td>
+    </tr>`).join('') : '<tr><td colspan="5" class="empty">No recruiter commission became due in this period.</td></tr>';
+}
 
 // v358: Data Science tab — Data Form + Skip Trace (from Client
 // Submissions), List Builder + Data Orders (from Leads). Same 2-level
@@ -42909,6 +43260,7 @@ async function loadHrMySubmissions(){
 // hr_my_commissions() SECURITY DEFINER function, scoped to auth.uid()
 // there — this just renders whatever it returns.
 async function loadHrMyCommissions(){
+  if(ciIsAdmin()) return loadHrRecruiterCommissions();   // v717: owner/admin see every recruiter
   const body = $('hrCommissionBody');
   const empty = $('hrCommissionEmpty');
   const { data, error } = await sb.rpc('hr_my_commissions');
@@ -42936,6 +43288,63 @@ async function loadHrMyCommissions(){
   }).join('');
 }
 $('hrCommissionRefreshBtn').addEventListener('click', loadHrMyCommissions);
+
+// v717 (the owner: owner/admin had "My Commission", which they don't earn --
+// show each recruiter's commission and their candidates' dates instead).
+// hr_recruiter_commissions() applies hr_my_commissions()'s exact rule to every
+// recruiter's candidates; owner/admin only (anyone else gets no rows).
+function hrFmtDate(v){
+  if(!v) return '\u2014';
+  const d = String(v).length === 10 ? new Date(v + 'T00:00:00') : new Date(v);
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+}
+async function loadHrRecruiterCommissions(){
+  const sec = $('hrSection-commission');
+  const body = $('hrCommissionBody');
+  const empty = $('hrCommissionEmpty');
+  const h3 = sec.querySelector('h3');
+  if(h3) h3.textContent = 'Recruiter commission';
+  const note = $('hrCommissionSummary').nextElementSibling;
+  if(note) note.textContent = 'EGP 1,500 per candidate a recruiter submitted, once approved, given an employment start date, active for at least 14 days since that date, and still an active account. Every candidate is listed with their dates; only qualified ones earn.';
+  body.closest('table').querySelector('thead').innerHTML = '<tr><th>Candidate</th><th>Submitted</th><th>Approved</th><th>Start date</th><th>Qualifies on</th><th>Status</th><th>Commission</th></tr>';
+  const { data, error } = await sb.rpc('hr_recruiter_commissions');
+  if(error){ console.error('Failed to load recruiter commissions', error); body.innerHTML = `<tr><td colspan="7" class="empty">${escapeHtml(error.message)}</td></tr>`; return; }
+  const rows = data || [];
+  empty.textContent = 'No candidates submitted yet.';
+  empty.style.display = rows.length ? 'none' : 'block';
+  const groups = new Map();
+  rows.forEach(r => {
+    const k = r.recruiter_id || 'none';
+    if(!groups.has(k)) groups.set(k, { name: r.recruiter_name, rows: [] });
+    groups.get(k).rows.push(r);
+  });
+  const earned = rows.reduce((t, r) => t + (Number(r.commission_amount) || 0), 0);
+  const pending = rows.filter(r => r.status === 'approved' && r.employment_start_date && r.is_active && !r.qualifies).length;
+  $('hrCommissionSummary').textContent = `EGP ${earned.toLocaleString()} earned by ${groups.size} recruiter${groups.size === 1 ? '' : 's'}` + (pending ? ` \u00b7 ${pending} pending` : '');
+  body.innerHTML = [...groups.values()].map(g => {
+    const total = g.rows.reduce((t, r) => t + (Number(r.commission_amount) || 0), 0);
+    const qualified = g.rows.filter(r => r.qualifies).length;
+    const head = `<tr class="hr-rc-head"><td colspan="7"><b>${escapeHtml(g.name)}</b> <span style="color:var(--text-dim);">\u2014 ${g.rows.length} candidate${g.rows.length === 1 ? '' : 's'} \u00b7 ${qualified} qualified</span><span class="mono" style="float:right;">EGP ${total.toLocaleString()}</span></td></tr>`;
+    return head + g.rows.map(r => {
+      let st;
+      if(r.status !== 'approved') st = `<span style="color:var(--text-dim);">${escapeHtml(HR_STATUS_LABEL[r.status] || r.status)}</span>`;
+      else if(!r.employment_start_date) st = '<span style="color:var(--text-dim);">Approved \u2014 no start date yet</span>';
+      else if(!r.is_active) st = '<span class="bad">Account inactive \u2014 disqualified</span>';
+      else if(r.qualifies) st = '<span class="good">Qualified</span>';
+      else { const left = Math.max(0, 14 - (r.days_employed || 0)); st = `<span style="color:var(--text-dim);">Pending \u2014 ${left} day${left === 1 ? '' : 's'} left</span>`; }
+      const approved = ['approved', 'terminated', 'found_other_offer'].includes(r.status) ? hrFmtDate(r.reviewed_at) : '\u2014';
+      return `<tr>
+        <td>${escapeHtml(r.candidate_name)}</td>
+        <td style="color:var(--text-2);">${hrFmtDate(r.submitted_at)}</td>
+        <td style="color:var(--text-2);">${approved}</td>
+        <td style="color:var(--text-2);">${hrFmtDate(r.employment_start_date)}</td>
+        <td style="color:var(--text-2);">${r.employment_start_date ? hrFmtDate(r.qualifies_on) : '\u2014'}</td>
+        <td>${st}</td>
+        <td class="mono">${r.qualifies ? `EGP ${Number(r.commission_amount).toLocaleString()}` : '\u2014'}</td>
+      </tr>`;
+    }).join('');
+  }).join('');
+}
 
 let hrReviewCandidates = [];
 async function loadHrReviewCandidates(){
