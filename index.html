@@ -4398,6 +4398,22 @@
         </div>
         <div class="empty" id="callBackMineEmpty" style="display:none;">You haven't claimed any call backs.</div>
       </div>
+      <!-- v724: owner / admin / team leader only -- every claimed call back,
+           who has it, and the two things a lead can do about it: pull it back
+           to Available to claim, or hand it to someone else (who gets a
+           notification). Server side: leads_callback_assign() -- the leads
+           RLS lets a non-admin touch only an unclaimed or own claim. -->
+      <div class="card" id="callBackTeamCard" style="margin-top:16px; display:none;">
+        <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Claimed by the team</h3>
+        <div style="font-size:11px; color:var(--text-dim); margin-bottom:12px;">Every call back someone has picked up, and who has it. <b>Pull back</b> returns it to Available to claim; <b>Reassign to</b> hands it to someone else, who gets a notification.</div>
+        <div style="overflow-x:auto;">
+        <table style="min-width:1100px;">
+          <thead><tr><th>Seller Name</th><th>Phone</th><th>Campaign Name</th><th>Reason</th><th>Claimed by</th><th>Claimed</th><th>Reassign to</th><th></th></tr></thead>
+          <tbody id="callBackTeamBody"></tbody>
+        </table>
+        </div>
+        <div class="empty" id="callBackTeamEmpty" style="display:none;">Nobody has claimed a call back right now.</div>
+      </div>
     </div>
 
     <!-- v326: List Builder -- browse/filter the properties table (free
@@ -12047,11 +12063,11 @@ function staffNotifKindAllowed(kind){
 // dialer follow-up coming due is the first -- so unread ones load at sign-in
 // and new ones arrive over realtime. Opening or clearing one marks it read,
 // so it does not come back at the next sign-in.
-const STAFF_NOTIF_KIND_ICONS = { dialer_follow_up: '📞', missed_call: '📞', dialer_handoff: '🤝', dialer_appointment: '📅', dialer_task: '✅', client_chat_queue: '💬', leads_import: '📥' };
+const STAFF_NOTIF_KIND_ICONS = { dialer_follow_up: '📞', missed_call: '📞', dialer_handoff: '🤝', dialer_appointment: '📅', dialer_task: '✅', client_chat_queue: '💬', leads_import: '📥', call_back_assigned: '↩️' };
 // v700: the kinds that need the person to act go to the Priority tab -- the
 // same set the dialer's bell uses (staff-shell.js KIND), plus a missed call
 // (written by the voice_calls_missed_notify trigger).
-const STAFF_NOTIF_PRIORITY_KINDS = new Set(['dialer_follow_up', 'dialer_handoff', 'dialer_appointment', 'dialer_task', 'missed_call', 'client_chat_queue']);
+const STAFF_NOTIF_PRIORITY_KINDS = new Set(['dialer_follow_up', 'dialer_handoff', 'dialer_appointment', 'dialer_task', 'missed_call', 'client_chat_queue', 'call_back_assigned']);
 const shownDurableNotifIds = new Set();
 function showDurableStaffNotification(row, silent){
   if(!row || shownDurableNotifIds.has(row.id)) return;
@@ -12072,6 +12088,8 @@ function showDurableStaffNotification(row, silent){
       if(row.kind === 'client_chat_queue' && row.ref_id && ciCanUseInbox()){ ciOpenFromElsewhere(row.ref_id); return; }
       // v711: a file import's one summary -- open the PrimeHome Buyers queue.
       if(row.kind === 'leads_import'){ activateTab('leads'); activateLeadsSection('queue_review_ispeedtolead'); return; }
+      // v724: a call back handed to you by a team leader -- open Call Back.
+      if(row.kind === 'call_back_assigned'){ leadsActiveSection = 'call_back'; activateTab('leads'); activateLeadsSection('call_back'); return; }
       // v702: a missed call -- click to call them back.
       if(row.kind === 'missed_call' && row.ref_id){ voiceCallBackFromCallId(row.ref_id); return; }
       // The dialer is its own origin, so a new tab rather than a tab switch.
@@ -17846,7 +17864,8 @@ function startPendingCounts(isNewLogin){
   document.addEventListener('visibilitychange', () => { if(!document.hidden) pendingCountsSoon(); });
   const ch = sb.channel('pending-counts');
   ['leads', 'lead_disputes', 'client_chat_threads'].forEach(table => {
-    ch.on('postgres_changes', { event: '*', schema: 'public', table }, pendingCountsSoon);
+    ch.on('postgres_changes', { event: '*', schema: 'public', table },
+      table === 'leads' ? () => { pendingCountsSoon(); callBackLiveSoon(); } : pendingCountsSoon);   // v724
   });
   ch.subscribe();
 }
@@ -38112,7 +38131,62 @@ async function loadCallBackQueue(){
     .order('submitted_at', { ascending: false });
   if(error){ console.error('Failed to load Call Back queue', error); return; }
   leadsCallBackRows = data || [];
+  if(callBackIsManager() && !callBackAssignees) await loadCallBackAssignees();   // v724
   renderCallBackTables();
+}
+// v724 (the owner: "in My claimed call backs, admin/owner/team leader can see
+// who claimed the call back and pull it and assign it to another"). The
+// "Claimed by the team" card, plus an Assign-to on Available rows, for these
+// three roles only -- leads_callback_assign() refuses anyone else anyway.
+function callBackIsManager(){
+  return myIsOwner || myRole === 'admin'
+    || String(myRole || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim() === 'team leader';
+}
+let callBackAssignees = null;   // [{ id, full_name, role }] from leads_callback_assignees()
+async function loadCallBackAssignees(){
+  const { data, error } = await sb.rpc('leads_callback_assignees');
+  if(error){ console.warn('call back assignees:', error.message); callBackAssignees = []; return; }
+  callBackAssignees = data || [];
+}
+function callBackPersonName(id){
+  if(!id) return '—';
+  if(id === myUserId) return 'You';
+  const a = (callBackAssignees || []).find(x => x.id === id);
+  if(a) return a.full_name;
+  const n = leadsAgentNameFn(id);
+  return n && n !== '—' ? n : 'Someone no longer on the list';
+}
+function callBackAssignSelectHtml(leadId, currentId){
+  const opts = (callBackAssignees || []).filter(a => a.id !== currentId)
+    .map(a => `<option value="${a.id}">${escapeHtml(a.full_name + (a.id === myUserId ? ' (you)' : ''))}</option>`).join('');
+  return `<select class="callback-assign-sel" data-id="${r_esc(leadId)}" style="width:auto; min-width:150px; padding:5px 8px; font-size:11px;"><option value="">${currentId ? 'Reassign to…' : 'Assign to…'}</option>${opts}</select>`;
+}
+function r_esc(v){ return escapeHtml(String(v || '')); }
+async function assignCallBackLead(leadId, toId){
+  const lead = leadsCallBackRows.find(r => r.id === leadId);
+  const label = (lead && lead.seller_investor_name) || 'this lead';
+  const who = toId ? callBackPersonName(toId) : '';
+  const ok = confirm(toId
+    ? `Give the call back for ${label} to ${who}?`
+    : `Pull the call back for ${label} back to "Available to claim"?`);
+  if(!ok){ renderCallBackTables(); return; }
+  const { data, error } = await sb.rpc('leads_callback_assign', { p_lead: leadId, p_to: toId || null });
+  if(error){ alert(error.message); await loadCallBackQueue(); return; }
+  const from = data && data.from ? callBackPersonName(data.from) : 'nobody';
+  logActivity(toId ? 'lead.call_back_assign' : 'lead.call_back_pull', 'lead', leadId,
+    toId ? `Call back for ${label} reassigned from ${from} to ${who}` : `Call back for ${label} pulled back from ${from}`);
+  await loadCallBackQueue();
+}
+// Someone else's claim, pull or confirm lands here within a couple of
+// seconds while the Call Back sub-tab is open (fed by the v723
+// pending-counts channel's leads binding).
+let callBackLiveTimer = null;
+function callBackLiveSoon(){
+  clearTimeout(callBackLiveTimer);
+  callBackLiveTimer = setTimeout(() => {
+    const panel = $('tab-leads');
+    if(!document.hidden && panel && panel.classList.contains('active') && leadsActiveSection === 'call_back') loadCallBackQueue();
+  }, 1500);
 }
 function callBackFieldsSummary(lead){
   const byKey = {};
@@ -38175,7 +38249,7 @@ function renderCallBackTables(){
       <td>${textPreviewCellHtml(r.callback_reason, 'Call back reason')}</td>
       <td style="max-width:200px;">${escapeHtml(callBackFieldsSummary(r))}</td>
       <td style="color:var(--text-2);">${new Date(r.submitted_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) })}</td>
-      <td><button class="btn-secondary callback-claim-btn" data-id="${r.id}" style="width:auto; padding:5px 10px; font-size:11px;">Pick up</button></td>
+      <td style="white-space:nowrap;"><button class="btn-secondary callback-claim-btn" data-id="${r.id}" style="width:auto; padding:5px 10px; font-size:11px;">Pick up</button>${callBackIsManager() ? ' ' + callBackAssignSelectHtml(r.id, null) : ''}</td>
     </tr>
   `).join('');
   availBody.querySelectorAll('.callback-claim-btn').forEach(btn => {
@@ -38213,6 +38287,37 @@ function renderCallBackTables(){
     });
   });
   updateCallBackBulkToolbar('mine');
+
+  // v724: Claimed by the team -- see callBackIsManager().
+  const teamCard = $('callBackTeamCard');
+  const manager = callBackIsManager();
+  if(teamCard) teamCard.style.display = manager ? '' : 'none';
+  if(teamCard && !manager) $('callBackTeamBody').innerHTML = '';
+  if(teamCard && manager){
+    const claimed = leadsCallBackRows.filter(r => r.callback_claimed_by)
+      .sort((a, b) => String(b.callback_claimed_at || '').localeCompare(String(a.callback_claimed_at || '')));
+    $('callBackTeamEmpty').style.display = claimed.length ? 'none' : 'block';
+    $('callBackTeamBody').innerHTML = claimed.map(r => `
+      <tr>
+        <td>${escapeHtml(r.seller_investor_name || '—')}</td>
+        <td class="mono">${escapeHtml(r.seller_phone || '—')}</td>
+        <td>${escapeHtml(formName(r.submission_form_id))}</td>
+        <td>${textPreviewCellHtml(r.callback_reason, 'Call back reason')}</td>
+        <td style="font-weight:600;">${escapeHtml(callBackPersonName(r.callback_claimed_by))}</td>
+        <td style="color:var(--text-2);">${r.callback_claimed_at ? new Date(r.callback_claimed_at).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) }) : '—'}</td>
+        <td>${callBackAssignSelectHtml(r.id, r.callback_claimed_by)}</td>
+        <td><button class="btn-secondary callback-pull-btn" data-id="${r.id}" style="width:auto; padding:5px 10px; font-size:11px;">Pull back</button></td>
+      </tr>
+    `).join('');
+    $('callBackTeamBody').querySelectorAll('.callback-pull-btn').forEach(btn => {
+      btn.addEventListener('click', () => assignCallBackLead(btn.dataset.id, null));
+    });
+  }
+  if(manager){
+    document.querySelectorAll('#leadsSection-call_back .callback-assign-sel').forEach(sel => {
+      sel.addEventListener('change', () => { if(sel.value) assignCallBackLead(sel.dataset.id, sel.value); });
+    });
+  }
 }
 $('callBackRefreshBtn').addEventListener('click', loadCallBackQueue);
 $('callBackAvailSelectAllCb').addEventListener('change', (e) => {
