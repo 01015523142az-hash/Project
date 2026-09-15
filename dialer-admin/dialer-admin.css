@@ -102,6 +102,19 @@
 #daHost .rule-codegrid label{display:flex;align-items:center;gap:6px;font-size:12.5px}
 #daHost .tpl-card{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--card)}
 #daHost .tpl-card textarea{width:100%;font-family:var(--sans)}
+/* v737: formatted email templates. The editor is white paper with the
+   email's own font, whatever the portal theme, so it looks like the email. */
+#daHost .tpl-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:6px}
+#daHost .tpl-tools .sm{min-width:34px}
+#daHost .tpl-tools select{width:auto;padding:4px 8px;font-size:12px}
+#daHost .tpl-color{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text-2);cursor:pointer}
+#daHost .tpl-color input{width:28px;height:24px;padding:0;border:1px solid var(--border);border-radius:6px;background:none;cursor:pointer}
+#daHost .tpl-editor{min-height:200px;max-height:520px;overflow:auto;padding:14px 16px;border:1px solid var(--border);
+  border-radius:8px;background:#ffffff;color:#222222;font:14px/1.5 Arial,Helvetica,sans-serif;outline:none}
+#daHost .tpl-editor:focus{border-color:var(--focus);box-shadow:0 0 0 3px rgba(80,140,255,.18)}
+#daHost .tpl-editor p{margin:0 0 .85em}
+#daHost .tpl-editor ul,#daHost .tpl-editor ol{margin:0 0 .85em;padding-left:24px}
+#daHost .tpl-editor a{color:#1155cc}
 #daHost .fb-check{display:inline-flex;align-items:center;gap:7px;font-family:var(--mono);
   font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-2);cursor:pointer}
 #daHost .fb-check input{width:15px;height:15px;accent-color:var(--focus)}

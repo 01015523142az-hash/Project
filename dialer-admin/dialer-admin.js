@@ -291,6 +291,179 @@ async function loadSettingsTab() {
 }
 
 // ------------------------------------------------ v669: message templates --
+// v737: email templates are FORMATTED. The body is edited as rich text --
+// bold, italic, colors, bullets, links, or pasted straight from Gmail with its
+// formatting -- and saved twice: body_html, what the email shows, and body, a
+// plain-text copy derived from it for mail apps that show text only (and for
+// the inbox snippet). dialer-outcome-rules sends both. Texts stay plain.
+const TPL_FIELDS = ['first_name', 'last_name', 'full_name', 'agent', 'agent_first_name', 'address', 'city', 'state', 'phone'];
+const TPL_OK_TAGS = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'P', 'DIV', 'BR', 'UL', 'OL', 'LI', 'A', 'SPAN',
+  'H1', 'H2', 'H3', 'H4', 'BLOCKQUOTE', 'HR']);
+const TPL_DROP_TAGS = new Set(['SCRIPT', 'STYLE', 'META', 'LINK', 'TITLE', 'HEAD', 'IFRAME', 'OBJECT', 'EMBED',
+  'FORM', 'INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'IMG', 'SVG', 'VIDEO', 'AUDIO']);
+
+// Near-black grey is the email's own text color already, so an explicit one
+// (Gmail pastes rgb(34,34,34) on everything) is dropped rather than stored.
+function tplGreyDark(color) {
+  const probe = document.createElement('span');
+  probe.style.color = color;
+  document.body.appendChild(probe);
+  const m = getComputedStyle(probe).color.match(/\d+(\.\d+)?/g);
+  probe.remove();
+  if (!m) return false;
+  const [r, g, b] = m.map(Number);
+  return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 < 0.25 && Math.max(r, g, b) - Math.min(r, g, b) < 40;
+}
+
+// Keeps what an email can carry -- structure, bold/italic/underline, colors,
+// links to web/mail/phone -- and drops the rest: fonts, sizes, classes,
+// images, scripts, comments.
+function tplCleanHtml(html) {
+  const doc = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
+  const unwrap = (node) => {
+    const frag = doc.createDocumentFragment();
+    while (node.firstChild) frag.appendChild(node.firstChild);
+    node.replaceWith(frag);
+  };
+  const walk = (parent) => {
+    [...parent.childNodes].forEach((ch) => {
+      if (ch.nodeType === 8) { ch.remove(); return; }
+      if (ch.nodeType !== 1) return;
+      const tag = ch.tagName;
+      if (TPL_DROP_TAGS.has(tag)) { ch.remove(); return; }
+      walk(ch);
+      let el = ch;
+      if (tag === 'FONT') {
+        const span = doc.createElement('span');
+        if (ch.getAttribute('color')) span.style.color = ch.getAttribute('color');
+        while (ch.firstChild) span.appendChild(ch.firstChild);
+        ch.replaceWith(span);
+        el = span;
+      } else if (!TPL_OK_TAGS.has(tag)) { unwrap(ch); return; }
+      // Google Docs wraps whole pastes in <b style="font-weight:normal">.
+      if ((tag === 'B' || tag === 'STRONG') && /^(normal|[1-4]00)$/.test(el.style.fontWeight)) { unwrap(el); return; }
+      const keep = {};
+      const st = el.style;
+      if (st.color && !tplGreyDark(st.color)) keep.color = st.color;
+      if (st.fontWeight === 'bold' || Number(st.fontWeight) >= 600) keep['font-weight'] = 'bold';
+      if (st.fontStyle === 'italic') keep['font-style'] = 'italic';
+      const deco = st.textDecorationLine || st.textDecoration || '';
+      if (/underline/.test(deco)) keep['text-decoration'] = 'underline';
+      else if (/line-through/.test(deco)) keep['text-decoration'] = 'line-through';
+      const href = el.tagName === 'A' ? String(el.getAttribute('href') || '').trim() : '';
+      [...el.attributes].forEach((a) => el.removeAttribute(a.name));
+      const css = Object.entries(keep).map(([k, v]) => `${k}:${v}`).join(';');
+      if (css) el.setAttribute('style', css);
+      if (el.tagName === 'A') {
+        if (/^(https?:|mailto:|tel:)/i.test(href) || /^\{\{\s*\w+\s*\}\}$/.test(href)) el.setAttribute('href', href);
+        else { unwrap(el); return; }
+      }
+      if (el.tagName === 'SPAN' && !css) unwrap(el);   // a span that carries nothing is noise
+    });
+  };
+  const root = doc.body.firstChild;
+  walk(root);
+  return root.innerHTML.trim();
+}
+
+// The plain-text copy: paragraphs as blank lines, list items as bullets, and
+// a link's address after its words when they differ.
+function tplHtmlToText(html) {
+  const doc = new DOMParser().parseFromString(`<div>${html || ''}</div>`, 'text/html');
+  const BLOCK = new Set(['P', 'DIV', 'UL', 'OL', 'H1', 'H2', 'H3', 'H4', 'BLOCKQUOTE', 'HR']);
+  let out = '';
+  const gap = () => { if (out && !/\n\n$/.test(out)) out += /\n$/.test(out) ? '\n' : '\n\n'; };
+  const walk = (node) => {
+    node.childNodes.forEach((ch) => {
+      if (ch.nodeType === 3) { out += ch.nodeValue.replace(/\s+/g, ' '); return; }
+      if (ch.nodeType !== 1) return;
+      const tag = ch.tagName;
+      if (tag === 'BR') { out += '\n'; return; }
+      if (tag === 'LI') {
+        out = out.replace(/[ \t]+$/, '');
+        if (out && !/\n$/.test(out)) out += '\n';
+        out += '• ';
+        walk(ch);
+        out += '\n';
+        return;
+      }
+      if (BLOCK.has(tag)) gap();
+      walk(ch);
+      if (tag === 'A') {
+        const href = String(ch.getAttribute('href') || '').replace(/^(tel:|mailto:)/i, '');
+        if (href && href !== ch.textContent.trim()) out += ` (${href})`;
+      }
+      if (BLOCK.has(tag)) gap();
+    });
+  };
+  walk(doc.body.firstChild);
+  return out.replace(/[ \t]+\n/g, '\n').replace(/\n[ \t]+/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// A template saved before v737 has only text: shown as paragraphs.
+function tplTextToHtml(text) {
+  return String(text || '').split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
+    .map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+}
+
+function wireTplEditor(editor, card, t) {
+  editor.innerHTML = t.body_html ? tplCleanHtml(t.body_html) : tplTextToHtml(t.body);
+  // The toolbar's color picker and field list take focus, so the selection
+  // is remembered and put back before each command.
+  let saved = null;
+  const remember = () => {
+    const s = window.getSelection();
+    if (s && s.rangeCount && editor.contains(s.anchorNode)) saved = s.getRangeAt(0).cloneRange();
+  };
+  const restore = () => {
+    editor.focus();
+    if (saved) { const s = window.getSelection(); s.removeAllRanges(); s.addRange(saved); }
+  };
+  ['keyup', 'mouseup', 'input'].forEach((ev) => editor.addEventListener(ev, remember));
+  card.querySelectorAll('[data-cmd]').forEach((b) => {
+    b.addEventListener('mousedown', (e) => e.preventDefault());
+    b.onclick = () => { restore(); document.execCommand(b.dataset.cmd, false, null); remember(); };
+  });
+  const color = card.querySelector('[data-color]');
+  color.onchange = () => {
+    restore();
+    document.execCommand('styleWithCSS', false, true);
+    document.execCommand('foreColor', false, color.value);
+    document.execCommand('styleWithCSS', false, false);
+    remember();
+  };
+  const link = card.querySelector('[data-link]');
+  link.addEventListener('mousedown', (e) => e.preventDefault());
+  link.onclick = () => {
+    remember();
+    const url = (prompt('Link address: https://…, mailto:… or tel:…') || '').trim();
+    if (!url) return;
+    if (!/^(https?:|mailto:|tel:)/i.test(url)) { alert('Start the link with https://, mailto: or tel:'); return; }
+    restore();
+    if (window.getSelection().isCollapsed) document.execCommand('insertHTML', false, `<a href="${esc(url)}">${esc(url)}</a>`);
+    else document.execCommand('createLink', false, url);
+    remember();
+  };
+  const field = card.querySelector('[data-field]');
+  field.onchange = () => {
+    if (!field.value) return;
+    restore();
+    document.execCommand('insertText', false, `{{${field.value}}}`);
+    field.value = '';
+    remember();
+  };
+  // Pasting from Gmail or Docs keeps the formatting (bold, colors, bullets,
+  // links) but not the sender's fonts, sizes, images or scripts.
+  editor.addEventListener('paste', (e) => {
+    const cd = e.clipboardData;
+    if (!cd) return;
+    e.preventDefault();
+    const html = cd.getData('text/html');
+    if (html) document.execCommand('insertHTML', false, tplCleanHtml(html));
+    else document.execCommand('insertText', false, cd.getData('text/plain'));
+  });
+}
+
 function tplCard(t) {
   const el = document.createElement('div');
   el.className = 'tpl-card';
@@ -307,7 +480,20 @@ function tplCard(t) {
         <input type="checkbox" data-t="is_active"${t.is_active !== false ? ' checked' : ''}> On</label>
     </div>
     ${sms ? '' : `<input data-t="subject" placeholder="Subject" style="width:100%;margin-bottom:8px" value="${esc(t.subject || '')}">`}
-    <textarea data-t="body" rows="${sms ? 3 : 7}" placeholder="Hi {{first_name}}, ...">${esc(t.body || '')}</textarea>
+    ${sms ? `<textarea data-t="body" rows="3" placeholder="Hi {{first_name}}, ...">${esc(t.body || '')}</textarea>`
+      : `<div class="tpl-tools" role="toolbar" aria-label="Formatting">
+          <button type="button" class="sm" data-cmd="bold" title="Bold (Ctrl+B)"><b>B</b></button>
+          <button type="button" class="sm" data-cmd="italic" title="Italic (Ctrl+I)"><i>I</i></button>
+          <button type="button" class="sm" data-cmd="underline" title="Underline (Ctrl+U)"><u>U</u></button>
+          <button type="button" class="sm" data-cmd="insertUnorderedList" title="Bulleted list">&bull; Bullets</button>
+          <button type="button" class="sm" data-cmd="insertOrderedList" title="Numbered list">1. Numbers</button>
+          <label class="tpl-color" title="Color for the selected text">Color <input type="color" data-color value="#9900ff"></label>
+          <button type="button" class="sm" data-link title="Make the selected text a link">Link</button>
+          <button type="button" class="sm" data-cmd="removeFormat" title="Remove formatting from the selected text">Clear</button>
+          <select data-field title="Insert a merge field"><option value="">Insert field…</option>${
+            TPL_FIELDS.map((f) => `<option value="${f}">{{${f}}}</option>`).join('')}</select>
+        </div>
+        <div class="tpl-editor" data-t="html" contenteditable="true" spellcheck="true"></div>`}
     <div class="hint" data-t-len style="margin:4px 0 8px"></div>
     <div class="row" style="margin-bottom:0;align-items:center">
       <button class="sm primary" data-t-save>Save</button>
@@ -318,20 +504,25 @@ function tplCard(t) {
     </div>
     <div data-t-msg class="msg hide" style="margin-top:8px"></div>`;
   const msg = el.querySelector('[data-t-msg]');
+  const bodyBox = el.querySelector('[data-t="body"]');   // texts
+  const editor = el.querySelector('[data-t="html"]');    // emails (v737)
   const len = () => {
-    const n = el.querySelector('[data-t="body"]').value.length;
     el.querySelector('[data-t-len]').textContent = sms
-      ? `${n} characters. One text is 160 — merge fields change the length, and one emoji drops it to 70.` : '';
+      ? `${bodyBox.value.length} characters. One text is 160 — merge fields change the length, and one emoji drops it to 70.`
+      : 'Select text and use the buttons, or paste from Gmail. A plain-text copy is saved with it for mail apps that only show text.';
   };
-  el.querySelector('[data-t="body"]').oninput = len;
+  if (bodyBox) bodyBox.oninput = len;
+  if (editor) wireTplEditor(editor, el, t);
   len();
   el.querySelector('[data-t-save]').onclick = async () => {
+    const html = editor ? tplCleanHtml(editor.innerHTML) : null;
     const row = {
       name: el.querySelector('[data-t="name"]').value.trim(),
       channel: t.channel,
       sender: sms ? 'rep' : el.querySelector('[data-t="sender"]').value,
       subject: sms ? null : (el.querySelector('[data-t="subject"]').value.trim() || null),
-      body: el.querySelector('[data-t="body"]').value.trim(),
+      body: sms ? bodyBox.value.trim() : tplHtmlToText(html),
+      body_html: sms ? null : (html || null),
       is_active: el.querySelector('[data-t="is_active"]').checked,
       updated_by: meId, updated_at: new Date().toISOString(),
     };
