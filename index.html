@@ -11542,7 +11542,11 @@ async function pmGoogleRefresh(){
 // awaiting staff review, tickets a client just accepted, and new client
 // dispute/feedback replies.
 let staffNotifications = [];
-const STAFF_NOTIF_MAX = 50;
+// v729: 300, not 50 -- room for the 30 days the bell promises (see
+// staffNotifSave below).
+const STAFF_NOTIF_MAX = 300;
+const STAFF_NC_KEEP_MS = 30 * 24 * 3600 * 1000;
+let staffNotifRestored = false;
 // v136: unread count (drives both the badge number and the ringing
 // animation) tracked separately from the full history above — same
 // pattern the client portal's own notification center already uses.
@@ -11552,16 +11556,19 @@ const STAFF_NOTIF_MAX = 50;
 let staffNotifUnread = 0;
 let staffNotifOpen = false;
 
-function pushStaffNotification({ icon, title, body, onClick, silent, durableId, at, priority }){
+function pushStaffNotification({ icon, title, body, onClick, silent, durableId, at, priority, readAt }){
   const id = `n${Date.now()}${Math.random().toString(36).slice(2, 6)}`;
   // v592: durableId ties an entry to its staff_notifications row, so
   // clicking or clearing it marks that row read.
   // v642: readAt makes per-item unread state possible (the dot and the
   // "Only show unread" filter); priority decides which tab it lands in.
-  staffNotifications.unshift({ id, icon, title, body, onClick, durableId, priority: priority === true, readAt: null, at: at || Date.now() });
+  staffNotifications.unshift({ id, icon, title, body, onClick, durableId, priority: priority === true, readAt: readAt || null, at: at || Date.now() });
+  // v729: restored history and 30 days of saved rows interleave by time.
+  staffNotifications.sort((a, b) => (b.at || 0) - (a.at || 0));
   if(staffNotifications.length > STAFF_NOTIF_MAX) staffNotifications.length = STAFF_NOTIF_MAX;
-  if(!staffNotifOpen) staffNotifUnread++;
+  if(!staffNotifOpen && !readAt) staffNotifUnread++;
   renderNotifCenter();
+  staffNotifSave();   // v729
   if(!silent) staffPlayOpsNotificationSound();
   // v492: every OTHER Notification Center alert (new lead, ticket, dispute
   // reply, billing activity, HR review, etc.) used to live ONLY in this
@@ -11593,6 +11600,46 @@ function pushSelfNotification({ title, body, tag }){
 }
 
 
+// v729 (the owner: "Notifications sent to this inbox can be viewed for up to
+// 30 days? -- they disappear; make them stay 30 days in both staff & client
+// portals"). The bell said 30 days but kept nothing past a reload: the list
+// was in-memory, and staff_notifications rows came back only while unread.
+// Now, for 30 days:
+//   - the list is saved in this browser per signed-in user
+//     ('ncHistory:staff:<user id>') and put back at sign-in;
+//   - server rows (missed calls, follow-ups, call backs handed over, ...) load
+//     back read or unread, on any device -- the server is their record, so
+//     they are left out of the browser copy.
+// A restored browser item that pointed somewhere cannot carry that link
+// across a reload (it was a function); it opens its detail card instead.
+// Nothing is saved until the history has been put back, so an early
+// notification at sign-in cannot overwrite it.
+function staffNotifKey(){ return myUserId ? 'ncHistory:staff:' + myUserId : null; }
+function staffNotifSave(){
+  const key = staffNotifKey();
+  if(!key || !staffNotifRestored) return;
+  const cutoff = Date.now() - STAFF_NC_KEEP_MS;
+  const keep = staffNotifications
+    .filter(n => !n.durableId && (n.at || 0) >= cutoff)
+    .map(n => ({ id: n.id, icon: n.icon || null, title: n.title || '', body: n.body || '', priority: n.priority === true, readAt: n.readAt || null, at: n.at || Date.now() }));
+  try{ localStorage.setItem(key, JSON.stringify(keep)); }catch(e){ /* full or blocked: the list still works this session */ }
+}
+function staffNotifRestore(){
+  const key = staffNotifKey();
+  if(!key || staffNotifRestored) return;
+  let saved = [];
+  try{ saved = JSON.parse(localStorage.getItem(key) || '[]'); }catch(e){ saved = []; }
+  const cutoff = Date.now() - STAFF_NC_KEEP_MS;
+  const have = new Set(staffNotifications.map(n => n.id));
+  (Array.isArray(saved) ? saved : []).filter(n => n && n.id && (n.at || 0) >= cutoff && !have.has(n.id))
+    .forEach(n => staffNotifications.push(n));
+  staffNotifications.sort((a, b) => (b.at || 0) - (a.at || 0));
+  if(staffNotifications.length > STAFF_NOTIF_MAX) staffNotifications.length = STAFF_NOTIF_MAX;
+  staffNotifRestored = true;
+  staffNotifSave();   // drops anything that has aged past 30 days
+  renderNotifCenter();
+}
+
 // v642: the staff portal's binding for the shared notification centre below.
 var NC_ADAPTER = {
   items: function(){ return staffNotifications; },
@@ -11611,10 +11658,12 @@ var NC_ADAPTER = {
   onRead: function(n){
     // markStaffNotificationsRead takes an ARRAY of durable row ids.
     if(n.durableId && typeof markStaffNotificationsRead === 'function') markStaffNotificationsRead([n.durableId]);
+    staffNotifSave();   // v729: remember it was read
   },
   onMarkAllRead: function(){
     var ids = (staffNotifications || []).map(function(n){ return n.durableId; }).filter(Boolean);
     if(ids.length && typeof markStaffNotificationsRead === 'function') markStaffNotificationsRead(ids);
+    staffNotifSave();   // v729
   },
   onClose: function(){ staffNotifOpen = false; }
 };
@@ -12085,6 +12134,7 @@ function showDurableStaffNotification(row, silent){
     durableId: row.id,
     priority: STAFF_NOTIF_PRIORITY_KINDS.has(row.kind),   // v700
     at: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+    readAt: row.read_at ? new Date(row.read_at).getTime() : null,   // v729: read rows come back too
     silent,
     onClick: () => {
       markStaffNotificationsRead([row.id]);
@@ -12105,10 +12155,11 @@ function showDurableStaffNotification(row, silent){
 }
 async function loadDurableStaffNotifications(){
   if(!myUserId) return;
+  // v729: the last 30 days, read ones included -- what the bell promises.
   const { data, error } = await sb.from('staff_notifications')
-    .select('id, kind, title, body, url, ref_id, created_at')   // v701: ref_id opens the client chat
-    .eq('user_id', myUserId).is('read_at', null)
-    .order('created_at', { ascending: true }).limit(STAFF_NOTIF_MAX);
+    .select('id, kind, title, body, url, ref_id, created_at, read_at')   // v701: ref_id opens the client chat
+    .eq('user_id', myUserId).gte('created_at', new Date(Date.now() - STAFF_NC_KEEP_MS).toISOString())
+    .order('created_at', { ascending: false }).limit(STAFF_NOTIF_MAX);
   if(error){ console.error('staff_notifications load failed', error); return; }
   // Silent: these are not new, they were waiting. They still count as unread.
   (data || []).forEach(row => showDurableStaffNotification(row, true));
@@ -12123,6 +12174,7 @@ function markStaffNotificationsRead(ids){
 let staffOpsChannel = null;
 async function subscribeStaffOpsRealtime(){
   if(staffOpsChannel) return;
+  staffNotifRestore();   // v729: this browser's 30-day history, before anything new is saved
   await fetchStaffNotifRolesConfig();
   loadDurableStaffNotifications();
   staffOpsChannel = sb.channel('staff-ops-notifications')
