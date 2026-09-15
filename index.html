@@ -17818,11 +17818,25 @@ function pendingCountsSoon(){
   clearTimeout(pendingCountsSettle);
   pendingCountsSettle = setTimeout(refreshPendingCounts, 1500);
 }
-// Called from establishSession() once the nav is permissioned. isNewLogin is
-// a real sign-in (not a refresh resuming the session) -- the only time
-// Desouky speaks up unasked.
+// Called from establishSession() once the nav is permissioned.
+//
+// v723b (the owner: "desouky is not working"). The reminder fired only when
+// isNewLogin was true -- but the owner's "Log in as" from User Management
+// opens the portal with isNewLogin false, exactly like a refresh, so opening
+// the portal as Maya (Quality) showed nothing. Now it fires the first time the
+// portal opens for this person in this browser tab -- a sign-in, a "Log in
+// as", or a new tab -- remembered per user in sessionStorage, so refreshing
+// that tab stays quiet. A real sign-in always shows it.
+function desoukyRemindFirstOpen(isNewLogin){
+  const key = 'desoukyRemindShown:' + myUserId;
+  try{
+    if(!isNewLogin && sessionStorage.getItem(key)) return false;
+    sessionStorage.setItem(key, '1');
+  }catch(e){ return !!isNewLogin; }   // no storage: fall back to sign-in only
+  return true;
+}
 function startPendingCounts(isNewLogin){
-  if(isNewLogin && desoukyRemindKeys().length) desoukyRemindDue = true;
+  if(desoukyRemindKeys().length && desoukyRemindFirstOpen(isNewLogin)) desoukyRemindDue = true;
   if(pendingCountsStarted){ refreshPendingCounts(); return; }
   const tabs = (myPermissions && myPermissions.allowedTabs) || [];
   if(!myIsOwner && !tabs.includes('leads') && !pendNavVisible('client_chat') && !pendNavVisible('client_disputes')) return;
