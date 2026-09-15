@@ -2848,6 +2848,24 @@
   .side-subnav .cc-subtab-btn.active{ color:var(--text); background:var(--card-hover); box-shadow:none; }
   .side-subnav .cc-subtab-btn::before, .side-subnav .cc-subtab-btn::after{ display:none !important; }
   .hr-rc-head td{ background:var(--inset); font-size:12.5px; }
+  /* v718: emoji reactions on chat messages (see the reactions helpers). */
+  .chat-rx{ display:flex; flex-wrap:wrap; gap:4px; margin:3px 2px 0; }
+  .chat-rx:empty{ display:none; }
+  .chat-rx.mine{ justify-content:flex-end; }
+  .chat-rx-chip{ display:inline-flex; align-items:center; gap:3px; width:auto; margin:0; padding:1px 7px; border-radius:999px;
+    border:1px solid var(--border-light); background:var(--inset); color:var(--text); font-family:var(--sans); font-size:12.5px;
+    line-height:1.5; cursor:pointer; }
+  .chat-rx-chip span{ font-family:var(--mono); font-size:10px; color:var(--text-2); }
+  .chat-rx-chip.me{ border-color:var(--focus); background:var(--focus-dim); }
+  .chat-rx-add{ margin-left:6px; cursor:pointer; font-family:var(--sans); font-size:11px; opacity:0; transition:opacity .12s; user-select:none; }
+  .chat-msg-row:hover .chat-rx-add, .chat-rx-add:focus-visible{ opacity:.85; }
+  @media (hover:none){ .chat-rx-add{ opacity:.6; } }
+  .chat-rx-picker{ position:fixed; z-index:10060; display:flex; gap:2px; padding:5px; border-radius:999px; background:var(--card);
+    border:1px solid var(--border-light); box-shadow:0 12px 30px -8px rgba(0,0,0,.55); }
+  .chat-rx-picker[hidden]{ display:none; }
+  .chat-rx-picker button{ width:32px; height:32px; margin:0; padding:0; border:none; border-radius:50%; background:none;
+    font-size:18px; line-height:1; cursor:pointer; transition:transform .1s; }
+  .chat-rx-picker button:hover{ background:var(--card-hover); transform:scale(1.15); }
 </style>
 </head>
 <body>
@@ -10990,6 +11008,7 @@ async function initChatWidget(){
   renderChatConvList($('chatSearchInput') ? $('chatSearchInput').value : '');
   subscribeChatRealtime();
   subscribeStaffOpsRealtime();
+  subscribeChatReactions();   // v718
   initNotifCenter();
   handleCallbackHash();   // v702: a missed-call notification opened from the dialer
   initPushToggle();
@@ -13732,7 +13751,8 @@ function renderClientChatMessages(clientId){
         ${headHtml}
         ${bodyHtml}
         ${attachmentHtml}
-        <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${ticksHtml ? ' ' + ticksHtml : ''}</div>
+        <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${ticksHtml ? ' ' + ticksHtml : ''}${chatRxAddHtml('client', m.id, clientId)}</div>
+        ${chatRxHtml('client', m.id, clientId, mine)}
       </div>
     `;
   }).join('') || '<div class="empty" style="padding:16px 0;">No messages yet.</div>');
@@ -13990,6 +14010,169 @@ function visibleChatThreadMessages(key, messages){
 // this scale (matches how every other chat re-render here already works).
 let chatEditingMessageId = null;
 
+// v718 (the owner: "add emoji reaction on messages"). Every chat message --
+// staff chat (team, DMs, groups) and client chat (the widget's client threads
+// and Client chat) -- gets a small ☺+ at the end of its time line that opens
+// eight emojis. Reactions show as chips under the message; clicking a chip
+// adds or takes back yours, hovering one shows who. Rows live in
+// chat_message_reactions / client_chat_message_reactions (v718 migration),
+// readable by exactly whoever can read the message. The renderers only emit
+// placeholders: a thread's reactions are fetched in one batch the first time
+// its messages are drawn, and realtime repaints the chips in place -- the
+// thread itself is never re-rendered for a reaction.
+const CHAT_RX_EMOJIS = ['👍', '❤️', '😂', '😮', '😢', '🙏', '🎉', '✅'];
+const CHAT_RX_TABLE = { staff: 'chat_message_reactions', client: 'client_chat_message_reactions' };
+const chatRx = { staff: new Map(), client: new Map() };          // message id -> [{ who, kind, emoji }]
+const chatRxFetched = { staff: new Set(), client: new Set() };
+const chatRxQueue = { staff: new Set(), client: new Set() };
+let chatRxTimer = null;
+function chatRxAttrs(kind, id, clientId){
+  return `data-rx-kind="${kind}" data-rx-id="${escapeHtml(id)}"${clientId ? ` data-rx-client="${escapeHtml(clientId)}"` : ''}`;
+}
+function chatRxAddHtml(kind, id, clientId){
+  return id ? `<span class="chat-rx-add" role="button" tabindex="0" title="React" ${chatRxAttrs(kind, id, clientId)}>&#9786;+</span>` : '';
+}
+function chatRxHtml(kind, id, clientId, mine){
+  if(!id) return '';
+  if(!chatRxFetched[kind].has(id)){ chatRxQueue[kind].add(id); if(!chatRxTimer) chatRxTimer = setTimeout(chatRxFlush, 60); }
+  return `<div class="chat-rx${mine ? ' mine' : ''}" ${chatRxAttrs(kind, id, clientId)}>${chatRxInner(kind, id, clientId)}</div>`;
+}
+function chatRxRow(kind, r){
+  return kind === 'staff' ? { who: r.user_id, kind: 'staff', emoji: r.emoji } : { who: r.reactor_id, kind: r.reactor_kind, emoji: r.emoji };
+}
+function chatRxAdd(kind, r){
+  const x = chatRxRow(kind, r);
+  const list = chatRx[kind].get(r.message_id) || [];
+  if(!list.some(y => y.who === x.who && y.emoji === x.emoji)) list.push(x);
+  chatRx[kind].set(r.message_id, list);
+}
+function chatRxRemove(kind, r){
+  const x = chatRxRow(kind, r);
+  chatRx[kind].set(r.message_id, (chatRx[kind].get(r.message_id) || []).filter(y => !(y.who === x.who && y.emoji === x.emoji)));
+}
+function chatRxName(r, clientId){
+  if(r.who === myUserId) return 'You';
+  if(r.kind === 'client') return clientId ? chatClientThreadName(clientId) : 'Client';
+  return chatContactName(r.who) || 'Someone';
+}
+function chatRxInner(kind, id, clientId){
+  const groups = new Map();
+  (chatRx[kind].get(id) || []).forEach(r => { if(!groups.has(r.emoji)) groups.set(r.emoji, []); groups.get(r.emoji).push(r); });
+  return [...groups.entries()].map(([emoji, rs]) => {
+    const me = rs.some(r => r.who === myUserId);
+    return `<button type="button" class="chat-rx-chip${me ? ' me' : ''}" data-emoji="${escapeHtml(emoji)}" title="${escapeHtml(rs.map(r => chatRxName(r, clientId)).join(', '))}">${escapeHtml(emoji)}<span>${rs.length}</span></button>`;
+  }).join('');
+}
+function chatRxPaint(kind, id){
+  document.querySelectorAll(`.chat-rx[data-rx-kind="${kind}"][data-rx-id="${CSS.escape(id)}"]`).forEach(el => {
+    el.innerHTML = chatRxInner(kind, id, el.dataset.rxClient || null);
+  });
+}
+async function chatRxFlush(){
+  chatRxTimer = null;
+  for(const kind of ['staff', 'client']){
+    const ids = [...chatRxQueue[kind]];
+    chatRxQueue[kind].clear();
+    if(!ids.length) continue;
+    ids.forEach(id => chatRxFetched[kind].add(id));
+    const cols = kind === 'staff' ? 'message_id, user_id, emoji' : 'message_id, reactor_id, reactor_kind, emoji';
+    const { data, error } = await selectInChunks(CHAT_RX_TABLE[kind], cols, 'message_id', ids);
+    if(error){ ids.forEach(id => chatRxFetched[kind].delete(id)); console.warn('[chat] reactions load failed', error); continue; }
+    ids.forEach(id => chatRx[kind].delete(id));
+    data.forEach(r => chatRxAdd(kind, r));
+    ids.forEach(id => chatRxPaint(kind, id));
+  }
+}
+async function chatRxToggle(kind, id, clientId, emoji){
+  if(!myUserId || !id) return;
+  const has = (chatRx[kind].get(id) || []).some(r => r.who === myUserId && r.emoji === emoji);
+  const row = kind === 'staff'
+    ? { message_id: id, user_id: myUserId, emoji }
+    : { message_id: id, client_id: clientId, reactor_id: myUserId, reactor_kind: 'staff', emoji };
+  if(has) chatRxRemove(kind, row); else chatRxAdd(kind, row);
+  chatRxPaint(kind, id);
+  const whoCol = kind === 'staff' ? 'user_id' : 'reactor_id';
+  const res = has
+    ? await sb.from(CHAT_RX_TABLE[kind]).delete().eq('message_id', id).eq(whoCol, myUserId).eq('emoji', emoji)
+    : await sb.from(CHAT_RX_TABLE[kind]).insert(row);
+  if(res.error && res.error.code !== '23505'){
+    if(has) chatRxAdd(kind, row); else chatRxRemove(kind, row);
+    chatRxPaint(kind, id);
+    alert('Could not save the reaction: ' + res.error.message);
+  }
+}
+let chatRxPickerFor = null;
+function chatRxOpenPicker(btn){
+  let p = document.getElementById('chatRxPicker');
+  if(!p){
+    p = document.createElement('div');
+    p.id = 'chatRxPicker';
+    p.className = 'chat-rx-picker';
+    p.hidden = true;
+    p.innerHTML = CHAT_RX_EMOJIS.map(e => `<button type="button" data-emoji="${e}" title="${e}">${e}</button>`).join('');
+    document.body.appendChild(p);
+  }
+  chatRxPickerFor = { kind: btn.dataset.rxKind, id: btn.dataset.rxId, clientId: btn.dataset.rxClient || null };
+  p.hidden = false;
+  const r = btn.getBoundingClientRect();
+  const w = p.offsetWidth, h = p.offsetHeight;
+  p.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
+  p.style.top = (r.top - h - 6 < 8 ? r.bottom + 6 : r.top - h - 6) + 'px';
+}
+function chatRxClosePicker(){
+  const p = document.getElementById('chatRxPicker');
+  if(p && !p.hidden) p.hidden = true;
+  chatRxPickerFor = null;
+}
+document.addEventListener('click', (e) => {
+  const pick = e.target.closest('#chatRxPicker button[data-emoji]');
+  if(pick){
+    e.stopPropagation();
+    const f = chatRxPickerFor;
+    chatRxClosePicker();
+    if(f) chatRxToggle(f.kind, f.id, f.clientId, pick.dataset.emoji);
+    return;
+  }
+  const add = e.target.closest('.chat-rx-add');
+  if(add){ e.stopPropagation(); chatRxOpenPicker(add); return; }
+  const chip = e.target.closest('.chat-rx-chip');
+  if(chip){
+    e.stopPropagation();
+    const box = chip.closest('.chat-rx');
+    chatRxToggle(box.dataset.rxKind, box.dataset.rxId, box.dataset.rxClient || null, chip.dataset.emoji);
+    return;
+  }
+  chatRxClosePicker();
+}, true);
+document.addEventListener('keydown', (e) => {
+  if(e.key === 'Escape') chatRxClosePicker();
+  else if((e.key === 'Enter' || e.key === ' ') && e.target && e.target.classList && e.target.classList.contains('chat-rx-add')){ e.preventDefault(); chatRxOpenPicker(e.target); }
+});
+document.addEventListener('scroll', chatRxClosePicker, true);
+// Its own channel, so a problem here can never take the chat channel down.
+let chatRxChannel = null;
+function subscribeChatReactions(){
+  if(chatRxChannel || !sb) return;
+  const ch = sb.channel('chat-reactions');
+  chatRxChannel = ch;
+  const handle = (kind) => (payload) => {
+    const r = payload.eventType === 'DELETE' ? payload.old : payload.new;
+    if(!r || !r.message_id || !chatRxFetched[kind].has(r.message_id)) return;   // not drawn yet: fetched when it is
+    if(payload.eventType === 'DELETE') chatRxRemove(kind, r); else chatRxAdd(kind, r);
+    chatRxPaint(kind, r.message_id);
+  };
+  ch.on('postgres_changes', { event: '*', schema: 'public', table: 'chat_message_reactions' }, handle('staff'))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'client_chat_message_reactions' }, handle('client'))
+    .subscribe((status) => {
+      if(ch !== chatRxChannel) return;
+      if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT'){
+        chatRxChannel = null;
+        try{ sb.removeChannel(ch); }catch(err){ /* already gone */ }
+        setTimeout(subscribeChatReactions, 5000);
+      }
+    });
+}
+
 function renderChatThread(){
   const conv = chatConversations[chatActiveConv] || { messages: [] };
   const box = $('chatMessages');
@@ -14047,7 +14230,8 @@ function renderChatThread(){
         ${headHtml}
         ${bodyHtml}
         ${attachmentHtml}
-        <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${ticksHtml ? ' ' + ticksHtml : ''}</div>
+        <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${ticksHtml ? ' ' + ticksHtml : ''}${chatRxAddHtml('staff', m.id, null)}</div>
+        ${chatRxHtml('staff', m.id, null, mine)}
       </div>
     `;
   }).join('') || '<div class="empty" style="padding:16px 0;">No messages yet — say hello!</div>');
@@ -14945,7 +15129,7 @@ function ciRenderMsgs(forceBottom){
       : '';
     const ticks = mine ? ' ' + chatTicksHtml(chatClientTickState(m)) : '';
     const edited = m.edited_at ? ' <span class="chat-edited-label">(edited)</span>' : '';
-    return `${sep}<div class="chat-msg-row ${mine ? 'mine' : 'theirs with-av'} from-${role}${seq ? ' seq' : ''}">${(!mine && !seq) ? chatMsgAvatarHtml(role, clientId, clientName) : ''}${head}${body}${att}<div class="chat-msg-meta">${escapeHtml(time)}${edited}${ticks}</div></div>`;
+    return `${sep}<div class="chat-msg-row ${mine ? 'mine' : 'theirs with-av'} from-${role}${seq ? ' seq' : ''}">${(!mine && !seq) ? chatMsgAvatarHtml(role, clientId, clientName) : ''}${head}${body}${att}<div class="chat-msg-meta">${escapeHtml(time)}${edited}${ticks}${chatRxAddHtml('client', m.id, clientId)}</div>${chatRxHtml('client', m.id, clientId, mine)}</div>`;
   }).join('');
   chatSwapHtml(box, (html || '<div class="ci-list-empty">No messages yet. Say hello.</div>') + (typing ? chatTypingBubbleHtml() : ''));   // v704
   if(wasAtBottom) chatPinToBottom(box);
