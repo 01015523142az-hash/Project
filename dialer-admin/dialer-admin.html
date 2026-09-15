@@ -928,7 +928,10 @@
         <b>rep</b> emails go from the rep's own connected Gmail. Texts always go from the rep's
         assigned number, and only to people who agreed to receive texts and are not on do-not-call.
         Merge fields: <span class="mono">{{first_name}} {{last_name}} {{full_name}} {{agent}}
-        {{agent_first_name}} {{address}} {{city}} {{state}} {{phone}}</span>.
+        {{agent_first_name}} {{agent_full_name}} {{agent_phone}} {{agent_email}}
+        {{address}} {{city}} {{state}} {{phone}}</span>.
+        {{agent_phone}} is the rep's own assigned line (Settings &rarr; Numbers) and {{agent_email}}
+        the address their email goes out from, so one signature works for every rep.
         {{agent}} and {{agent_first_name}} use the rep's American name when one is set
         (User Management &rarr; Users), their real name otherwise.
         <b>Emails are formatted</b>: select text and use the buttons above each email (bold, colors,

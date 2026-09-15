@@ -296,7 +296,9 @@ async function loadSettingsTab() {
 // formatting -- and saved twice: body_html, what the email shows, and body, a
 // plain-text copy derived from it for mail apps that show text only (and for
 // the inbox snippet). dialer-outcome-rules sends both. Texts stay plain.
-const TPL_FIELDS = ['first_name', 'last_name', 'full_name', 'agent', 'agent_first_name', 'address', 'city', 'state', 'phone'];
+const TPL_FIELDS = ['first_name', 'last_name', 'full_name', 'agent', 'agent_first_name',
+  'agent_full_name', 'agent_phone', 'agent_email',   // v741
+  'address', 'city', 'state', 'phone'];
 const TPL_OK_TAGS = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'S', 'P', 'DIV', 'BR', 'UL', 'OL', 'LI', 'A', 'SPAN',
   'H1', 'H2', 'H3', 'H4', 'BLOCKQUOTE', 'HR']);
 const TPL_DROP_TAGS = new Set(['SCRIPT', 'STYLE', 'META', 'LINK', 'TITLE', 'HEAD', 'IFRAME', 'OBJECT', 'EMBED',
