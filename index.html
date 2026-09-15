@@ -725,6 +725,42 @@
   }
   .desouky-teaser-close:hover{ color:var(--text); }
   @media (prefers-reduced-motion:reduce){ .desouky-teaser{ transition:none; } }
+  /* v723: the pending count beside a Leads sub-tab (the parent's total uses
+     .ci-nav-badge), and Desouky's sign-in reminder card. */
+  .pend-badge{
+    margin-left:auto; flex-shrink:0; min-width:18px; height:18px; padding:0 5px; border-radius:9px;
+    background:var(--danger); color:#fff; font-family:var(--mono); font-size:10px; font-weight:700;
+    letter-spacing:0; text-transform:none; display:inline-flex; align-items:center; justify-content:center;
+  }
+  .desouky-remind{
+    position:fixed; right:24px; bottom:96px; z-index:302; width:330px; max-width:calc(100vw - 32px);
+    background:var(--card); border:1px solid var(--border-light); border-radius:14px;
+    box-shadow:0 18px 40px rgba(0,0,0,0.4); padding:14px 14px 12px;
+    font-family:var(--sans); color:var(--text); animation:desoukyRemindIn .22s ease;
+  }
+  @keyframes desoukyRemindIn{ from{ opacity:0; transform:translateY(8px) scale(.97); } to{ opacity:1; transform:none; } }
+  .desouky-remind-head{ display:flex; align-items:center; gap:10px; margin-bottom:8px; }
+  .desouky-remind-face{ width:46px; flex-shrink:0; }
+  .desouky-remind-face svg{ width:46px; height:auto; overflow:visible; }
+  .desouky-remind-title{ font-size:13px; font-weight:700; line-height:1.3; }
+  .desouky-remind-sub{ font-size:11.5px; color:var(--text-dim); margin-top:2px; line-height:1.35; }
+  .desouky-remind-close{ margin-left:auto; align-self:flex-start; background:none; border:none; color:var(--text-dim); font-size:18px; line-height:1; cursor:pointer; padding:0; }
+  .desouky-remind-close:hover{ color:var(--text); }
+  .desouky-remind-row{
+    display:flex; align-items:center; gap:10px; width:100%; margin-top:6px; padding:8px 10px;
+    background:transparent; border:1px solid var(--border-light); border-radius:10px;
+    color:var(--text); font-family:inherit; text-align:left; cursor:pointer;
+  }
+  .desouky-remind-row:hover{ background:var(--card-hover); }
+  .desouky-remind-row.zero{ opacity:.55; }
+  .desouky-remind-label{ font-size:12.5px; font-weight:600; line-height:1.3; }
+  .desouky-remind-note{ font-size:11px; color:var(--text-dim); margin-top:1px; }
+  .desouky-remind-count{ margin-left:auto; flex-shrink:0; font-family:var(--mono); font-size:14px; font-weight:700; min-width:26px; text-align:right; }
+  .desouky-remind-row:not(.zero) .desouky-remind-count{ color:var(--danger); }
+  .desouky-remind-foot{ display:flex; justify-content:flex-end; margin-top:10px; }
+  .desouky-remind-ok{ background:var(--card-hover); border:1px solid var(--border-light); color:var(--text); border-radius:8px; padding:6px 14px; font-family:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+  @media (max-width:520px){ .desouky-remind{ right:16px; bottom:88px; } }
+  @media (prefers-reduced-motion:reduce){ .desouky-remind{ animation:none; } }
   .chat-unread-badge{
     position:absolute; top:-4px; right:-4px; min-width:20px; height:20px; padding:0 5px;
     border-radius:10px; background:var(--danger); color:#fff; font-family:var(--mono);
@@ -3206,14 +3242,14 @@
       </div>
     </div>
     <div class="side-nav-group">
-      <button class="tab-btn" data-tab="leads" title="Leads"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="0.8" fill="currentColor"/></svg><span>Leads</span></button>
+      <button class="tab-btn" data-tab="leads" title="Leads"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><circle cx="10" cy="10" r="7" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="3.5" stroke="currentColor" stroke-width="1.5"/><circle cx="10" cy="10" r="0.8" fill="currentColor"/></svg><span>Leads</span><span class="ci-nav-badge" id="leadsNavBadge" style="display:none;">0</span></button>
       <div class="tab-nav side-subnav" id="leadsSubNav">
       <button class="leads-subtab-btn active" data-leads-section="dashboard"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16V9M10 16V4M16 16v-6"/></svg>Leads Dashboard</button>
       <button class="leads-subtab-btn" data-leads-section="submission_forms"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5h7l3 3v12h-10z"/><path d="M7 9h6M7 12h6M7 15h3.5"/></svg>Submission Forms</button>
-      <button class="leads-subtab-btn" data-leads-section="queue_review"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12.5l1.8-6.5h10.4l1.8 6.5"/><path d="M3 12.5v3a1 1 0 001 1h12a1 1 0 001-1v-3"/><path d="M3 12.5h4l1 2h4l1-2h4"/></svg>Leads Queue Review</button>
-      <button class="leads-subtab-btn" data-leads-section="queue_review_ispeedtolead"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 9.5L10 4l6.5 5.5"/><path d="M5.5 8.5V16h9V8.5"/></svg>Leads Queue Review — PrimeHome Buyers</button>
-      <button class="leads-subtab-btn" data-leads-section="tickets_review"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8a2 2 0 010 4v3a1 1 0 001 1h13a1 1 0 001-1v-3a2 2 0 010-4V5a1 1 0 00-1-1h-13a1 1 0 00-1 1z"/></svg>Tickets Review</button>
-      <button class="leads-subtab-btn" data-leads-section="call_back"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5L3 6.5l3 3"/><path d="M3 6.5h9a4.5 4.5 0 014.5 4.5v0a4.5 4.5 0 01-4.5 4.5H7"/></svg>Call Back</button>
+      <button class="leads-subtab-btn" data-leads-section="queue_review"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12.5l1.8-6.5h10.4l1.8 6.5"/><path d="M3 12.5v3a1 1 0 001 1h12a1 1 0 001-1v-3"/><path d="M3 12.5h4l1 2h4l1-2h4"/></svg>Leads Queue Review<span class="pend-badge" style="display:none;">0</span></button>
+      <button class="leads-subtab-btn" data-leads-section="queue_review_ispeedtolead"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 9.5L10 4l6.5 5.5"/><path d="M5.5 8.5V16h9V8.5"/></svg>Leads Queue Review — PrimeHome Buyers<span class="pend-badge" style="display:none;">0</span></button>
+      <button class="leads-subtab-btn" data-leads-section="tickets_review"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 8a2 2 0 010 4v3a1 1 0 001 1h13a1 1 0 001-1v-3a2 2 0 010-4V5a1 1 0 00-1-1h-13a1 1 0 00-1 1z"/></svg>Tickets Review<span class="pend-badge" style="display:none;">0</span></button>
+      <button class="leads-subtab-btn" data-leads-section="call_back"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5L3 6.5l3 3"/><path d="M3 6.5h9a4.5 4.5 0 014.5 4.5v0a4.5 4.5 0 01-4.5 4.5H7"/></svg>Call Back<span class="pend-badge" style="display:none;">0</span></button>
       <button class="leads-subtab-btn" data-leads-section="all_queue"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 3l7 4-7 4-7-4z"/><path d="M3 11l7 4 7-4"/></svg>All Queue</button>
         </div>
     </div>
@@ -8470,6 +8506,21 @@
   </button>
 </div>
 
+<!-- v723: Desouky's sign-in reminder -- what is waiting on this person's
+     queues right now. Filled and shown by desoukyRemindShow(). -->
+<div id="desoukyRemind" class="desouky-remind" role="dialog" aria-label="Desouky: what is waiting for you" hidden>
+  <div class="desouky-remind-head">
+    <div class="desouky-remind-face" id="desoukyRemindFace" aria-hidden="true"></div>
+    <div>
+      <div class="desouky-remind-title" id="desoukyRemindTitle"></div>
+      <div class="desouky-remind-sub" id="desoukyRemindSub"></div>
+    </div>
+    <button type="button" class="desouky-remind-close" id="desoukyRemindClose" title="Dismiss">&times;</button>
+  </div>
+  <div id="desoukyRemindRows"></div>
+  <div class="desouky-remind-foot"><button type="button" class="desouky-remind-ok" id="desoukyRemindOk">Got it</button></div>
+</div>
+
 <!-- ---------- internal chat widget: floating button + panel, available from every tab ---------- -->
 <div id="chatWidget" style="display:none;">
   <!-- v179: now the same animated robot mascot as the Client Portal's
@@ -9977,6 +10028,7 @@ async function establishSession(user, { isNewLogin = true } = {}){
 
   applyRolePermissionsToNav();
   applyEditGating();
+  startPendingCounts(isNewLogin);   // v723: Leads sub-tab counts + Desouky's sign-in reminder
   // v96 item 4: Export CSV / Download buttons on Leads and Client
   // Submissions are Owner/Admin only, independent of any role's tab/section
   // Edit grants — applied once here for the static buttons; dynamically
@@ -17693,6 +17745,182 @@ $('desoukyTeaserCloseBtn').addEventListener('click', (e) => {
   e.stopPropagation();
   desoukyDismissTeaser();
 });
+
+// ---------- v723: pending counts + Desouky's sign-in reminder ----------
+// The owner: "add the pending number next to [each Leads] subtab ... and the
+// Leads tab should show (44)", and "I want Desouky to remind the quality team
+// when they sign in what's pending on their queue ... and the team lead with
+// Call Back". One RPC, staff_pending_counts() (supabase/v723-...sql), counts
+// every queue the way its own sub-tab does, and it is SECURITY INVOKER -- no
+// one is shown a number for rows RLS would not let them open:
+//   queue_review      pending; not PrimeHome, not a ticket in flight, not a
+//                     Sales conversion                 (renderLeadsQueueTable)
+//   primehome_unsent  pending PrimeHome Buyers leads with no successful send,
+//                     no delivery postback, no manual close
+//                     (renderIspdReviewTable's "Not sent")
+//   tickets_review    tickets awaiting staff Accept/Reject ('staff_review')
+//   call_back         Call Back leads nobody has picked up (+ call_back_mine)
+//   disputes_open     Dispute/Feedback still open
+//   chats_waiting     client chats routed to staff, not accepted yet
+// The Leads total is the three REVIEW queues, as the owner specified
+// (1 + 42 + 1 = 44). Call Back has its own badge but is a pickup queue, not a
+// review, so it stays out of that sum.
+//
+// Freshness: realtime on leads / lead_disputes / client_chat_threads (all in
+// supabase_realtime -- one unpublished table would silently kill the whole
+// channel), settled over 1.5 s, plus a 30 s poll for what realtime does not
+// carry (a PrimeHome send writes ispeedtolead_submissions, not published).
+const PEND_LEADS_SECTIONS = {
+  queue_review: 'queue_review',
+  queue_review_ispeedtolead: 'primehome_unsent',
+  tickets_review: 'tickets_review',
+  call_back: 'call_back',
+};
+const PEND_LEADS_TOTAL = ['queue_review', 'queue_review_ispeedtolead', 'tickets_review'];
+let pendingCounts = null;
+let pendingCountsStarted = false;
+let pendingCountsSettle = null;
+let desoukyRemindDue = false;
+let desoukyRemindAutoHide = null;
+
+function pendCanSeeLeads(section){
+  const tabs = (myPermissions && myPermissions.allowedTabs) || [];
+  return (myIsOwner || tabs.includes('leads')) && canViewLeadsSection(section);
+}
+// The same test applyRolePermissionsToNav() applies, read back off the button.
+function pendNavVisible(tab){
+  const b = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+  return !!b && b.style.display !== 'none';
+}
+function pendSetBadge(el, n){
+  if(!el) return;
+  el.textContent = n > 99 ? '99+' : String(n);
+  el.style.display = n > 0 ? '' : 'none';
+}
+function renderPendingBadges(){
+  if(!pendingCounts) return;
+  const seen = section => pendCanSeeLeads(section) ? Number(pendingCounts[PEND_LEADS_SECTIONS[section]] || 0) : 0;
+  Object.keys(PEND_LEADS_SECTIONS).forEach(section => {
+    pendSetBadge(document.querySelector(`.leads-subtab-btn[data-leads-section="${section}"] .pend-badge`), seen(section));
+  });
+  pendSetBadge($('leadsNavBadge'), PEND_LEADS_TOTAL.reduce((sum, section) => sum + seen(section), 0));
+}
+async function refreshPendingCounts(){
+  if(!sb || !myUserId) return;
+  const { data, error } = await sb.rpc('staff_pending_counts');
+  if(error){ console.warn('pending counts:', error.message); return; }
+  pendingCounts = data || {};
+  renderPendingBadges();
+  if(desoukyRemindDue){ desoukyRemindDue = false; setTimeout(desoukyRemindShow, 1200); }
+  else if(!$('desoukyRemind').hidden) desoukyRemindRender();
+}
+function pendingCountsSoon(){
+  clearTimeout(pendingCountsSettle);
+  pendingCountsSettle = setTimeout(refreshPendingCounts, 1500);
+}
+// Called from establishSession() once the nav is permissioned. isNewLogin is
+// a real sign-in (not a refresh resuming the session) -- the only time
+// Desouky speaks up unasked.
+function startPendingCounts(isNewLogin){
+  if(isNewLogin && desoukyRemindKeys().length) desoukyRemindDue = true;
+  if(pendingCountsStarted){ refreshPendingCounts(); return; }
+  const tabs = (myPermissions && myPermissions.allowedTabs) || [];
+  if(!myIsOwner && !tabs.includes('leads') && !pendNavVisible('client_chat') && !pendNavVisible('client_disputes')) return;
+  pendingCountsStarted = true;
+  refreshPendingCounts();
+  setInterval(() => { if(!document.hidden) refreshPendingCounts(); }, 30000);
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) pendingCountsSoon(); });
+  const ch = sb.channel('pending-counts');
+  ['leads', 'lead_disputes', 'client_chat_threads'].forEach(table => {
+    ch.on('postgres_changes', { event: '*', schema: 'public', table }, pendingCountsSoon);
+  });
+  ch.subscribe();
+}
+
+// Who Desouky reminds, and about which queues -- in the order they are listed.
+// A queue the person cannot open is left out rather than shown as 0.
+const DESOUKY_REMIND_ROLES = {
+  'quality': ['client_chat', 'client_disputes', 'queue_review', 'queue_review_ispeedtolead', 'tickets_review'],
+  'team leader': ['call_back'],
+  'team lead': ['call_back'],
+};
+const DESOUKY_REMIND_ITEMS = {
+  client_chat: { label: 'Client chat', key: 'chats_waiting',
+    note: n => `${n === 1 ? 'chat' : 'chats'} waiting to be accepted`,
+    can: () => pendNavVisible('client_chat'), go: () => pendOpenTab('client_chat') },
+  client_disputes: { label: 'Dispute/Feedback', key: 'disputes_open',
+    note: n => n === 1 ? 'open dispute or feedback' : 'open disputes and feedback',
+    can: () => pendNavVisible('client_disputes'), go: () => pendOpenTab('client_disputes') },
+  queue_review: { label: 'Leads Queue Review', key: 'queue_review',
+    note: n => `${n === 1 ? 'lead' : 'leads'} waiting for review`,
+    can: () => pendCanSeeLeads('queue_review'), go: () => pendOpenLeads('queue_review') },
+  queue_review_ispeedtolead: { label: 'Leads Queue Review — PrimeHome Buyers', key: 'primehome_unsent',
+    note: n => `pending ${n === 1 ? 'lead' : 'leads'} not sent yet`,
+    can: () => pendCanSeeLeads('queue_review_ispeedtolead'), go: () => pendOpenLeads('queue_review_ispeedtolead') },
+  tickets_review: { label: 'Tickets Review', key: 'tickets_review',
+    note: n => `${n === 1 ? 'ticket' : 'tickets'} waiting for staff review`,
+    can: () => pendCanSeeLeads('tickets_review'), go: () => pendOpenLeads('tickets_review') },
+  call_back: { label: 'Call Back', key: 'call_back',
+    note: (n, c) => `${n === 1 ? 'call back' : 'call backs'} waiting to be picked up`
+      + (Number(c.call_back_mine || 0) ? ` \u00b7 ${c.call_back_mine} picked up by you` : ''),
+    can: () => pendCanSeeLeads('call_back'), go: () => pendOpenLeads('call_back') },
+};
+function desoukyRemindKeys(){
+  const role = String(myRole || '').toLowerCase().replace(/[\s_-]+/g, ' ').trim();
+  return (DESOUKY_REMIND_ROLES[role] || []).filter(k => DESOUKY_REMIND_ITEMS[k].can());
+}
+function pendOpenTab(tab){
+  const b = document.querySelector(`.tab-btn[data-tab="${tab}"]`);
+  if(b) b.click();
+}
+function pendOpenLeads(section){
+  const panel = $('tab-leads');
+  if(panel && panel.classList.contains('active')){ activateLeadsSection(section); return; }
+  leadsActiveSection = section;   // initLeadsTab() opens this one
+  pendOpenTab('leads');
+}
+function desoukyRemindRender(){
+  const keys = desoukyRemindKeys();
+  const c = pendingCounts || {};
+  const total = keys.reduce((sum, k) => sum + Number(c[DESOUKY_REMIND_ITEMS[k].key] || 0), 0);
+  const first = String(myFullName || '').trim().split(/\s+/)[0] || 'there';
+  $('desoukyRemindTitle').textContent = total ? `Hi ${first}, here's what's waiting for you` : `Hi ${first}, your queues are clear`;
+  $('desoukyRemindSub').textContent = total
+    ? `${total} ${total === 1 ? 'item needs' : 'items need'} you right now. Click one to open it.`
+    : 'Nothing is waiting on your queues right now.';
+  $('desoukyRemindRows').innerHTML = keys.map(k => {
+    const it = DESOUKY_REMIND_ITEMS[k];
+    const n = Number(c[it.key] || 0);
+    return `<button type="button" class="desouky-remind-row${n ? '' : ' zero'}" data-k="${k}">
+        <div><div class="desouky-remind-label">${escapeHtml(it.label)}</div><div class="desouky-remind-note">${escapeHtml(it.note(n, c))}</div></div>
+        <span class="desouky-remind-count">${n > 999 ? '999+' : n}</span>
+      </button>`;
+  }).join('');
+  $('desoukyRemindRows').querySelectorAll('.desouky-remind-row').forEach(b => {
+    b.addEventListener('click', () => { desoukyRemindHide(); DESOUKY_REMIND_ITEMS[b.dataset.k].go(); });
+  });
+  return total;
+}
+function desoukyRemindShow(){
+  if(!desoukyRemindKeys().length) return;
+  const face = $('desoukyRemindFace');
+  const art = document.querySelector('#desoukyMascotBtn svg');
+  // His own artwork, with its gradient ids renamed: the original sits in a
+  // display:none wrapper, and a url(#id) that resolves into a hidden SVG
+  // paints nothing in some browsers.
+  if(face && !face.firstChild && art) face.innerHTML = art.outerHTML.replace(/id="dsk/g, 'id="dskRm').replace(/#dsk/g, '#dskRm');
+  const total = desoukyRemindRender();
+  $('desoukyRemind').hidden = false;
+  clearTimeout(desoukyRemindAutoHide);
+  if(!total) desoukyRemindAutoHide = setTimeout(desoukyRemindHide, 12000);   // all clear: say so, then get out of the way
+}
+function desoukyRemindHide(){
+  clearTimeout(desoukyRemindAutoHide);
+  $('desoukyRemind').hidden = true;
+}
+$('desoukyRemindClose').addEventListener('click', desoukyRemindHide);
+$('desoukyRemindOk').addEventListener('click', desoukyRemindHide);
+$('chatFabBtn').addEventListener('click', desoukyRemindHide);
 
 $('chatCloseBtn').addEventListener('click', () => {
   $('chatPanel').style.display = 'none';
