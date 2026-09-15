@@ -4861,7 +4861,7 @@
       <div class="card" style="margin-top:16px;">
         <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Client notifications — activity, SMS &amp; email</h3>
         <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.4;">
-          Turn each client-facing notification on/off and edit its wording — SMS goes out through Telnyx from <strong id="clientSmsFromNumber">our client notification number</strong>, email goes out through Resend. Available placeholders: <code>{client_name}</code> everywhere, plus <code>{campaign}</code> or <code>{password}</code> where noted. Turning a kind off skips BOTH the SMS and the email for it.
+          Turn each client-facing notification on/off and edit its wording — SMS goes out through Telnyx from <strong id="clientSmsFromNumber">our client notification number</strong>, email goes out through Resend. Texts only reach clients who turned on text notifications themselves (the unticked box at signup, or the bell's Settings in their portal). Available placeholders: <code>{client_name}</code> everywhere, plus <code>{campaign}</code> or <code>{password}</code> where noted. Turning a kind off skips BOTH the SMS and the email for it.
         </div>
         <div id="clientNotifList"><div class="empty">Loading…</div></div>
         <div class="msg" id="clientNotifMsg" style="margin-top:10px;"></div>
@@ -22257,27 +22257,27 @@ if($('ghlClientSmsLocationSaveBtn')) $('ghlClientSmsLocationSaveBtn').addEventLi
 // staff caller). Keep all these copies in sync if a new kind is added.
 const SMS_TEMPLATE_META = [
   { key: 'ticket_received', settingKey: 'client_sms_template_ticket_received', label: 'Ticket sent to client ("Awaiting client Yes/No")', placeholders: '{client_name}, {campaign}',
-    default: 'Hi {client_name}, you have a new lead ticket to review ({campaign}) — please log in to your portal to say Yes or No.',
+    default: 'PropTech AI: Hi {client_name}, you have a new lead ticket to review ({campaign}) — please log in to your portal to say Yes or No. Reply STOP to opt out.',
     emailSubjectDefault: 'A new lead ticket needs your review',
     emailBodyDefault: 'Hi {client_name},\n\nYou have a new lead ticket to review for {campaign}. Please log in to your portal to say Yes or No.' },
   { key: 'lead_received', settingKey: 'client_sms_template_lead_received', label: 'Lead accepted (pushed to client)', placeholders: '{client_name}, {campaign}',
-    default: 'Hi {client_name}, a new lead has been added to your campaign ({campaign}). Log in to your portal to view it.',
+    default: 'PropTech AI: Hi {client_name}, a new lead has been added to your campaign ({campaign}). Log in to your portal to view it. Reply STOP to opt out.',
     emailSubjectDefault: 'A new lead was added to your campaign',
     emailBodyDefault: 'Hi {client_name},\n\nA new lead has been added to your campaign ({campaign}). Log in to your portal to view it.' },
   { key: 'dispute_response', settingKey: 'client_sms_template_dispute_response', label: 'Staff replied to a lead dispute', placeholders: '{client_name}',
-    default: "Hi {client_name}, we've replied to your lead dispute. Log in to your portal to view it.",
+    default: "PropTech AI: Hi {client_name}, we've replied to your lead dispute. Log in to your portal to view it. Reply STOP to opt out.",
     emailSubjectDefault: 'We replied to your lead dispute',
     emailBodyDefault: "Hi {client_name},\n\nWe've replied to your lead dispute. Log in to your portal to view it." },
   { key: 'feedback_response', settingKey: 'client_sms_template_feedback_response', label: 'Staff replied to feedback', placeholders: '{client_name}',
-    default: "Hi {client_name}, we've replied to your feedback. Log in to your portal to view it.",
+    default: "PropTech AI: Hi {client_name}, we've replied to your feedback. Log in to your portal to view it. Reply STOP to opt out.",
     emailSubjectDefault: 'We replied to your feedback',
     emailBodyDefault: "Hi {client_name},\n\nWe've replied to your feedback. Log in to your portal to view it." },
   { key: 'account_password', settingKey: 'client_sms_template_account_password', label: 'Account created / password reset (opt-in)', placeholders: '{client_name}, {password}',
-    default: "Hi {client_name}, your Client Portal password is {password}. Log in and you’ll be asked to set your own.",
+    default: "PropTech AI: Hi {client_name}, your Client Portal password is {password}. Log in and you’ll be asked to set your own. Reply STOP to opt out.",
     emailSubjectDefault: 'Your Client Portal account',
     emailBodyDefault: 'Hi {client_name},\n\nYour Client Portal password is {password}. Log in and you’ll be asked to set your own.' },
   { key: 'campaign_confirm', settingKey: 'client_sms_template_campaign_confirm', label: '"Text client directly" button (Client Chats)', placeholders: '{client_name}, {campaign}',
-    default: 'Hi {client_name}, our team wants to connect with you for your campaign ({campaign}) — please log in https://clientportal.proptechnologyai.com/ > click on ask me button > to respond to the team.',
+    default: 'PropTech AI: Hi {client_name}, our team wants to connect with you for your campaign ({campaign}) — please log in https://clientportal.proptechnologyai.com/ > click on ask me button > to respond to the team. Reply STOP to opt out.',
     emailSubjectDefault: 'Our team wants to connect about your campaign',
     emailBodyDefault: 'Hi {client_name},\n\nOur team wants to connect with you about your campaign ({campaign}). Please log in to your portal and click "Ask me" to respond.' },
   // v276: sent by supabase/functions/public-skiptrace/index.ts's
@@ -22287,7 +22287,7 @@ const SMS_TEMPLATE_META = [
   // Still stored under the same app_settings key convention so it's
   // editable from this same panel.
   { key: 'portal_signup_welcome', settingKey: 'client_sms_template_portal_signup_welcome', label: 'Self-serve signup welcome (client portal "Sign up")', placeholders: '{client_name}',
-    default: 'Hi {client_name}, your Client Portal account is ready! Log in anytime to place skip trace orders, buy a list, and track your account.',
+    default: 'PropTech AI: Hi {client_name}, your Client Portal account is ready! Log in anytime to place skip trace orders, buy a list, and track your account. Reply STOP to opt out.',
     emailSubjectDefault: 'Your Client Portal account is ready',
     emailBodyDefault: 'Hi {client_name},\n\nYour Client Portal account is ready! Log in anytime to place skip trace orders, buy a list, and track your account.' },
   // v305: sent by handleStripeWebhook (public-skiptrace/index.ts) the
@@ -22295,7 +22295,7 @@ const SMS_TEMPLATE_META = [
   // staff caller" reasoning as portal_signup_welcome above for why it's
   // sent directly rather than through send-client-sms.
   { key: 'payment_failed', settingKey: 'client_sms_template_payment_failed', label: 'Subscription payment failed (card declined)', placeholders: '{client_name}, {campaign}',
-    default: "Hi {client_name}, we weren't able to process your latest payment for {campaign}. Please log in to update your card so your leads keep flowing without interruption: https://clientportal.proptechnologyai.com/",
+    default: "PropTech AI: Hi {client_name}, we weren't able to process your latest payment for {campaign}. Please log in to update your card so your leads keep flowing without interruption: https://clientportal.proptechnologyai.com/ Reply STOP to opt out.",
     emailSubjectDefault: 'Action needed: your payment failed',
     emailBodyDefault: "Hi {client_name},\n\nWe weren't able to process your latest payment for {campaign}. Please log in to update your card so your leads keep flowing without interruption." },
   // v365: fires when staff clicks "Upload list"/"Replace list" on a "Buy a
@@ -22303,7 +22303,7 @@ const SMS_TEMPLATE_META = [
   // and the file finishes uploading -- previously silent, the client had no
   // idea their list was ready short of checking the portal themselves.
   { key: 'list_request', settingKey: 'client_sms_template_list_request', label: 'Your list request (list uploaded by staff)', placeholders: '{client_name}',
-    default: "Hi {client_name}, your requested list is ready! Log in to your portal to download it.",
+    default: "PropTech AI: Hi {client_name}, your requested list is ready! Log in to your portal to download it. Reply STOP to opt out.",
     emailSubjectDefault: 'Your list is ready',
     emailBodyDefault: "Hi {client_name},\n\nYour requested list is ready! Log in to your portal to download it." },
   // v365: fires once staff imports the Ninja results file for a skip trace
@@ -22313,7 +22313,7 @@ const SMS_TEMPLATE_META = [
   // sendResultEmailForOrder in public-skiptrace/index.ts; folded into the
   // same editable-template/on-off/channel system as every other kind here.
   { key: 'skiptrace_request', settingKey: 'client_sms_template_skiptrace_request', label: 'Your skip trace request (file imported by staff)', placeholders: '{client_name}',
-    default: "Hi {client_name}, your skip trace results are ready! Log in to your portal to download them.",
+    default: "PropTech AI: Hi {client_name}, your skip trace results are ready! Log in to your portal to download them. Reply STOP to opt out.",
     emailSubjectDefault: 'Your skip trace results are ready',
     emailBodyDefault: "Hi {client_name},\n\nYour skip trace order is complete. Results are attached as a CSV, and also available any time by logging in to your portal." },
 ];
