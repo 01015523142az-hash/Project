@@ -1076,6 +1076,8 @@
   .chat-edited-label{ font-style:italic; opacity:0.8; }
   .chat-msg-edit-btn{ cursor:pointer; margin-left:5px; opacity:0.6; }
   .chat-msg-edit-btn:hover{ opacity:1; }
+  .chat-msg-del-btn{ cursor:pointer; margin-left:6px; opacity:0.5; }   /* v726: owner only */
+  .chat-msg-del-btn:hover{ opacity:1; }
   .chat-msg-ticks-row{ font-family:var(--mono); font-size:10px; margin:2px 4px 0; display:flex; justify-content:flex-end; }
   .chat-tick.sent, .chat-tick.delivered{ color:var(--text-dim); }
   .chat-tick.read{ color:var(--focus); }
@@ -14300,7 +14302,7 @@ function renderChatThread(){
         ${headHtml}
         ${bodyHtml}
         ${attachmentHtml}
-        <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${ticksHtml ? ' ' + ticksHtml : ''}${chatRxAddHtml('staff', m.id, null)}</div>
+        <div class="chat-msg-meta">${senderLabel}${time}${editedLabel}${editBtnHtml}${myIsOwner ? `<span class="chat-msg-del-btn" data-msg-id="${m.id}" title="Delete for everyone (owner only)">&#128465;</span>` : ''}${ticksHtml ? ' ' + ticksHtml : ''}${chatRxAddHtml('staff', m.id, null)}</div>
         ${chatRxHtml('staff', m.id, null, mine)}
       </div>
     `;
@@ -14315,6 +14317,9 @@ function renderChatThread(){
     box.insertAdjacentHTML('beforeend', `<div class="chat-offline-hint">${line}${hs ? ' Their status: ' + escapeHtml(((hs.emoji ? hs.emoji + ' ' : '') + (hs.text || '')).trim()) : ''}</div>`);   // v704: += would rebuild every node
   }
   if(chatIsPeerTyping(chatActiveConv)) box.insertAdjacentHTML('beforeend', chatTypingBubbleHtml());   // v704
+  // v726: the owner's rule -- Communication keeps 10 days (the hourly cron
+  // clear-communication-chat-10d deletes anything older). Said up front.
+  if(chatActiveConv === 'team') box.insertAdjacentHTML('afterbegin', '<div class="chat-offline-hint" style="margin:0 0 8px;">\u{1F4E3} Announcements here clear automatically after 10 days.</div>');
   // v632: see chatAtBottom().
   if(wasAtBottom) chatPinToBottom(box);
   Promise.resolve(chatResolveVisibleAttachments(box))
@@ -14326,6 +14331,9 @@ function renderChatThread(){
 // — same convention chatResolveVisibleAttachments already uses for this
 // same container.
 function chatWireEditControls(box){
+  box.querySelectorAll('.chat-msg-del-btn').forEach(el => {   // v726
+    el.addEventListener('click', () => chatDeleteMessage(el.dataset.msgId));
+  });
   box.querySelectorAll('.chat-msg-edit-btn').forEach(el => {
     el.addEventListener('click', () => { chatEditingMessageId = el.dataset.msgId; renderChatThread(); });
   });
@@ -14342,6 +14350,47 @@ function chatWireEditControls(box){
   if(saveBtn) saveBtn.addEventListener('click', () => chatSaveEditedMessage(saveBtn.dataset.msgId, input ? input.value : ''));
   const cancelBtn = box.querySelector('.chat-msg-edit-cancel-btn');
   if(cancelBtn) cancelBtn.addEventListener('click', () => { chatEditingMessageId = null; renderChatThread(); });
+}
+
+// v726 (the owner: "how can I delete messages in staff to staff chat --
+// please enable it for owner only"). Owner only, in every staff thread
+// (Communication, DMs, groups) and in Audit Log > Chat Logs. The database
+// agrees: the chat_messages delete policy is is_owner() alone
+// (supabase/v726-...sql), so nobody else gets a button or could use one.
+// Deletes the attachment file too, and every open portal drops the message
+// over realtime (the DELETE handler in subscribeChatRealtime).
+async function chatDeleteMessage(id){
+  if(!myIsOwner || !id) return false;
+  if(!confirm('Delete this message for everyone? This cannot be undone.')) return false;
+  const { data, error } = await sb.from('chat_messages').delete().eq('id', id).select('id, attachment_path');
+  if(error){ alert(error.message); return false; }
+  if(!data || !data.length){ alert('That message could not be deleted -- it may already be gone.'); return false; }
+  const path = data[0].attachment_path;
+  if(path){
+    sb.storage.from('chat-attachments').remove([path])
+      .then(({ error: e }) => { if(e) console.warn('chat attachment not removed:', e.message); });
+  }
+  chatRemoveMessageFromState(id);
+  logActivity('chat.message_delete', 'chat_message', id, 'Deleted a staff chat message');
+  return true;
+}
+// Takes a deleted message out of whichever staff conversation holds it, and
+// recounts that conversation's unread the same way chatAddMessageToState does.
+function chatRemoveMessageFromState(id){
+  let touched = null;
+  Object.entries(chatConversations).forEach(([key, conv]) => {
+    if(touched || key.startsWith('client:') || key.startsWith('sms:')) return;
+    const idx = conv.messages.findIndex(x => x.id === id);
+    if(idx === -1) return;
+    conv.messages.splice(idx, 1);
+    const lastReadMs = chatLastRead[key] ? new Date(chatLastRead[key]).getTime() : 0;
+    conv.unread = conv.messages.filter(x => x.sender_id !== myUserId && new Date(x.created_at).getTime() > lastReadMs).length;
+    touched = key;
+  });
+  if(!touched) return;
+  updateChatUnreadBadge();
+  if(chatActiveConv === touched && $('chatPanel').style.display !== 'none') renderChatThread();
+  else if(!chatActiveConv) renderChatConvList($('chatSearchInput').value);
 }
 
 async function chatSaveEditedMessage(id, newBody){
@@ -14714,6 +14763,12 @@ function subscribeChatRealtime(){
         if(idx !== -1) conv.messages[idx] = m;
       }
       if(chatActiveConv === key) renderChatThread();
+    })
+    // v726: an owner's delete, or the hourly Communication clear-out. A
+    // DELETE event carries only the id -- enough to find and drop it.
+    .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'chat_messages' }, (payload) => {
+      const id = payload.old && payload.old.id;
+      if(id) chatRemoveMessageFromState(id);
     })
     // v314: someone (me included, from another tab) marked a conversation
     // read — refresh so ticks/"seen by" reflect it live. No usable
@@ -21842,13 +21897,17 @@ $('chatLogsConvSelect').addEventListener('change', async () => {
       : '';
     return `
       <div class="chat-msg-row theirs">
-        <div class="chat-msg-meta">${escapeHtml(sender)} \u00b7 ${time}</div>
+        <div class="chat-msg-meta">${escapeHtml(sender)} \u00b7 ${time}${myIsOwner ? ` <span class="chat-msg-del-btn" data-msg-id="${m.id}" title="Delete for everyone (owner only)">&#128465;</span>` : ''}</div>
         ${bodyHtml}
         ${attachmentHtml}
       </div>
     `;
   }).join('') || '<div class="empty" style="padding:16px;">No messages in this conversation.</div>';
   chatResolveVisibleAttachments(box);
+  // v726: the owner can delete from here too -- any staff conversation.
+  box.querySelectorAll('.chat-msg-del-btn').forEach(el => {
+    el.addEventListener('click', async () => { if(await chatDeleteMessage(el.dataset.msgId)) el.closest('.chat-msg-row').remove(); });
+  });
 });
 
 
