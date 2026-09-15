@@ -4620,19 +4620,41 @@ async function openThread(row) {
 }
 
 let cvContactEmail = null;
+// v744: an email from this screen goes from the sender's own Gmail (the
+// default) or the shared mailbox -- the same choice the dialer's email window
+// offers. dialer-conversations checks it again and sends over SMTP for shared.
+let cvShared;   // { address, name } | null, read once from dialer_settings
+async function cvFillFrom() {
+  if (cvShared === undefined) {
+    const { data } = await sb.from('dialer_settings').select('value').eq('key', 'shared_email').maybeSingle();
+    const v = data && data.value;
+    cvShared = v && v.from_address ? { address: String(v.from_address), name: String(v.from_name || '') } : null;
+  }
+  const sel = $('cvReplyFrom');
+  const keep = sel.value;
+  sel.innerHTML = '<option value="rep">From my Gmail</option>'
+    + (cvShared ? `<option value="shared">From ${esc(cvShared.address)}</option>` : '');
+  if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
+}
 function applyReplyChannel() {
   const row = cvActive;
   const email = $('cvReplyChannel').value === 'email';
   show($('cvSubject'), email);
+  show($('cvReplyFrom'), email);   // v744
   const blocked = !row || !canManage || (!email && row.on_dnc) || (email && !cvContactEmail);
   $('inboxBody').disabled = blocked;
   $('inboxSend').disabled = blocked;
   $('inboxBody').placeholder = !row ? 'Pick a conversation.'
     : !canManage ? 'View only — your role cannot send from here.'
-    : email ? (cvContactEmail ? 'Write an email… it goes from your own connected Gmail.' : 'This contact has no email address.')
+    : email ? (cvContactEmail
+        ? ($('cvReplyFrom').value === 'shared'
+            ? `Write an email… it goes from ${(cvShared && cvShared.address) || 'the shared mailbox'}.`
+            : 'Write an email… it goes from your own connected Gmail.')
+        : 'This contact has no email address.')
     : row.on_dnc ? 'This number is on do-not-call and cannot be texted.' : 'Reply by SMS…';
 }
 $('cvReplyChannel').addEventListener('change', applyReplyChannel);
+$('cvReplyFrom').addEventListener('change', applyReplyChannel);   // v744
 
 $('inboxBody').addEventListener('input', () => {
   const t = $('inboxBody').value;
@@ -4654,7 +4676,10 @@ $('inboxSend').onclick = async () => {
     // shows in the thread straight away.
     const subject = $('cvSubject').value.trim();
     if (!subject) { $('inboxSend').disabled = false; $('inboxLen').textContent = 'Add a subject.'; return; }
-    const r = await callFn('dialer-conversations', { action: 'send_email', contact_id: cvActive.contact_id, subject, body: text });
+    const r = await callFn('dialer-conversations', {
+      action: 'send_email', contact_id: cvActive.contact_id, subject, body: text,
+      sender: $('cvReplyFrom').value || 'rep',   // v744
+    });
     $('inboxSend').disabled = false;
     if (!r?.ok) { $('inboxLen').textContent = r?.error || 'Email not sent.'; return; }
     $('inboxLen').textContent = `Email sent from ${r.from || 'your Gmail'}.`;
@@ -4678,6 +4703,7 @@ $('inboxSend').onclick = async () => {
 
 // v677: email arrives by dialer-email-sync every 5 minutes; this pulls now.
 async function loadEmailStatus() {
+  cvFillFrom();   // v744: fill the "From" picker while the status loads
   const r = await callFn('dialer-email-sync', { action: 'status' }).catch(() => null);
   if (!r?.ok) { $('cvEmailStatus').textContent = ''; return; }
   const readable = (r.mailboxes || []).filter((m) => m.can_read);
