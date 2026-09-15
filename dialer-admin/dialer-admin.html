@@ -237,6 +237,10 @@
         those before the first dial, at $0.0015 each. Skipping it costs one wasted dial
         per dead number — the call log retires them automatically when the carrier
         answers "unallocated".
+        <br><br>
+        <strong>Deactivate</strong> takes a list out of dialing without deleting anything: its
+        numbers are skipped until you <strong>Reactivate</strong> it, and the date it was
+        switched off shows beside it.
       </p>
       <div class="scroll">
         <table>
@@ -925,6 +929,8 @@
         assigned number, and only to people who agreed to receive texts and are not on do-not-call.
         Merge fields: <span class="mono">{{first_name}} {{last_name}} {{full_name}} {{agent}}
         {{agent_first_name}} {{address}} {{city}} {{state}} {{phone}}</span>.
+        {{agent}} and {{agent_first_name}} use the rep's American name when one is set
+        (User Management &rarr; Users), their real name otherwise.
       </p>
       <div id="tplList"><p class="hint">Loading…</p></div>
       <div class="btn-row" style="margin-top:6px">

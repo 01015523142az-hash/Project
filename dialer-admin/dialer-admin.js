@@ -3341,7 +3341,7 @@ $('cCreate').onclick = async () => {
 // ----------------------------------------------------------------- lists --
 async function loadLists() {
   const { data } = await sb.from('dialer_lists')
-    .select('id, name, campaign_id, status, loaded_rows, readymode_scrubbed_at')
+    .select('id, name, campaign_id, status, loaded_rows, readymode_scrubbed_at, is_active, deactivated_at')
     .order('created_at', { ascending: false }).limit(50);
 
   // The column that matters is no longer "has this been paid for" but "can
@@ -3361,14 +3361,17 @@ async function loadLists() {
     ? rows.map((l) => `<tr>
         <td>${esc(l.name)}</td>
         <td>${esc(campaigns.find((c) => c.id === l.campaign_id)?.name || '—')}</td>
-        <td><span class="tag ${l.status === 'ready' ? 't-active' : 't-resting'}">${esc(l.status)}</span></td>
+        <td>${l.is_active === false
+            ? `<span class="tag t-resting">deactivated</span> <span style="font-size:11px;opacity:.75;white-space:nowrap">on ${esc(listDateMdy(l.deactivated_at))}</span>`
+            : `<span class="tag ${l.status === 'ready' ? 't-active' : 't-resting'}">${esc(l.status)}</span>`}</td>
         <td class="num">${(l.loaded_rows ?? 0).toLocaleString()}</td>
         <td class="num ${l.blocked ? 'gap' : ''}">${l.blocked.toLocaleString()}</td>
         <td>${l.readymode_scrubbed_at ? esc(l.readymode_scrubbed_at.slice(0, 10)) : '—'}</td>
         <td style="white-space:nowrap">${canManage ? (l.blocked
             ? `<button class="sm" data-val="${esc(l.id)}" data-tz="1">Resolve ${l.blocked.toLocaleString()} time zones</button>`
             : `<button class="sm" data-val="${esc(l.id)}">Carrier check</button>`)
-            + ` <button class="sm" data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button> ` : ''}<button class="sm" data-lsdl="${esc(l.id)}" data-lsname="${esc(l.name)}">Download</button></td>
+            + ` <button class="sm" data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button> `
+            + `<button class="sm" data-lact="${esc(l.id)}" data-lname="${esc(l.name)}" data-on="${l.is_active === false ? '1' : '0'}">${l.is_active === false ? 'Reactivate' : 'Deactivate'}</button> ` : ''}<button class="sm" data-lsdl="${esc(l.id)}" data-lsname="${esc(l.name)}">Download</button></td>
       </tr>`).join('')
     : '<tr><td colspan="7">No lists yet.</td></tr>';
 
@@ -3381,6 +3384,31 @@ async function loadLists() {
   $('listRows').querySelectorAll('button[data-rq]').forEach((b) => {
     b.onclick = () => openListRequeue(b.dataset.rq, b.dataset.rqname);
   });
+  $('listRows').querySelectorAll('button[data-lact]').forEach((b) => {
+    b.onclick = () => setListActive(b.dataset.lact, b.dataset.lname, b.dataset.on === '1', b);
+  });
+}
+
+// v727 (the owner: "allow the option to deactivate lists on campaign and
+// reactivate it when needed, and mention when it was deactivated, like
+// 'deactivated on 9-15-2026'"). Deactivating deletes nothing and touches no
+// contact: dialer_claim_next_contact() skips a switched-off list's numbers
+// until it is reactivated, when they are all back exactly as they were.
+function listDateMdy(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}-${d.getDate()}-${d.getFullYear()}`;
+}
+async function setListActive(id, name, on, btn) {
+  if (!on && !confirm(`Deactivate "${name}"?\n\nIts numbers stop being dialled until you reactivate it. Nothing is deleted.`)) return;
+  btn.disabled = true;
+  const patch = on
+    ? { is_active: true, deactivated_at: null, deactivated_by: null }
+    : { is_active: false, deactivated_at: new Date().toISOString(), deactivated_by: meId || null };
+  const { error } = await sb.from('dialer_lists').update(patch).eq('id', id);
+  btn.disabled = false;
+  if (error) { alert('Could not change the list: ' + error.message); return; }
+  loadLists();
 }
 
 // ------------------------------------------------------ v679: download a list --

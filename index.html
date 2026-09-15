@@ -3471,6 +3471,10 @@
             <input type="text" id="acctTitle" placeholder="e.g. Quality Specialist">
           </div>
         </div>
+        <!-- v727: the name the dialer's automatic emails and texts sign with
+             ({{agent}} / {{agent_first_name}}), and the call script reads. -->
+        <label>American name <span style="font-weight:400; color:var(--text-dim);">— used in the dialer's automatic emails, texts and call script</span></label>
+        <input type="text" id="acctAmericanName" maxlength="60" placeholder="e.g. Mike Adams — leave blank to use their real name">
         <label>Seniority</label>
         <select id="acctGrade">
           <option value="">— not set —</option>
@@ -18868,7 +18872,7 @@ async function loadTeam(){
   // instead of being re-read on every dashboard refresh.
   const teamStatic = loadTeamStatic();
   const [agents, { minVersionRow, scheduleRows, dialerTaskRows, dialerDomainRows, categorizedTaskRows }] = await Promise.all([
-    fetchAllRows((from, to) => sb.from('profiles').select('id, full_name, email, role, extension_version, extension_version_at, is_active, department, title, grade').order('full_name').range(from, to)),
+    fetchAllRows((from, to) => sb.from('profiles').select('id, full_name, email, role, extension_version, extension_version_at, is_active, department, title, grade, american_name').order('full_name').range(from, to)),
     teamStatic,
   ]);
   const minVersion = (minVersionRow && minVersionRow.value && minVersionRow.value !== '0.0.0') ? minVersionRow.value : null;
@@ -20076,7 +20080,7 @@ async function loadUmUsersList(){
   // pass fixed elsewhere, so paginated for consistency/future-proofing;
   // see fetchAllRows()'s own comment.
   const [profiles, assignments, tasks, scheduleRows] = await Promise.all([
-    fetchAllRows((from, to) => sb.from('profiles').select('id, full_name, email, role, extension_version, extension_version_at, created_at, is_active, department, title, grade').order('full_name').range(from, to)),
+    fetchAllRows((from, to) => sb.from('profiles').select('id, full_name, email, role, extension_version, extension_version_at, created_at, is_active, department, title, grade, american_name').order('full_name').range(from, to)),
     fetchAllRows((from, to) => sb.from('task_assignments').select('task_id, user_id').order('user_id', { ascending: true }).range(from, to)),
     fetchAllRows((from, to) => sb.from('tasks').select('id, name').order('id', { ascending: true }).range(from, to)),
     fetchAllRows((from, to) => sb.from('schedules').select('user_id, timezone').order('user_id', { ascending: true }).range(from, to)),
@@ -39380,6 +39384,7 @@ async function openDetail(agent, { fromUsersTab = false } = {}){
   $('acctEmailInput').value = agent.email || '';
   $('acctTitle').value = agent.title || '';           // v643
   $('acctGrade').value = agent.grade || '';           // v643
+  $('acctAmericanName').value = agent.american_name || '';   // v727
   await fillDepartmentSelect('acctDepartment', agent.department); // v643
   $('acctNewPassword').value = '';
   $('acctMsg').textContent = '';
@@ -39396,6 +39401,7 @@ async function openDetail(agent, { fromUsersTab = false } = {}){
   // (fromUsersTab === true), regardless of the viewer's canManageUsers
   // permission. Owner/Admin included: review here, edit there.
   const canEdit = fromUsersTab && myPermissions.canManageUsers;
+  $('acctAmericanName').disabled = !(canEdit && (myIsOwner || myRole === 'admin'));   // v727: set_staff_american_name is Owner/Admin
   ['acctFullName', 'acctRole', 'acctEmailInput', 'acctSaveBtn', 'acctNewPassword', 'acctSetPasswordBtn', 'acctDeleteBtn', 'acctToggleActiveBtn',
    'acctDepartment', 'acctTitle', 'acctGrade'].forEach(id => { // v643
     $(id).disabled = !canEdit;
@@ -41875,6 +41881,20 @@ $('acctSaveBtn').addEventListener('click', async () => {
     detailSetTitleDept(currentDetailAgent); // refresh the line under the name
   }
 
+  // v727: the American name, through its own Owner/Admin RPC for the same
+  // reason as the org info above. Only sent when it changed.
+  const americanName = $('acctAmericanName').value.trim();
+  if(!$('acctAmericanName').disabled && americanName !== (currentDetailAgent.american_name || '')){
+    const { error: anErr } = await sb.rpc('set_staff_american_name', { target: currentDetailAgent.id, p_name: americanName || null });
+    if(anErr){
+      msg.textContent = `Everything else was saved, but the American name was not: ${anErr.message}`;
+      msg.className = 'msg error';
+    }else{
+      currentDetailAgent.american_name = americanName || null;
+      logActivity('user.american_name', 'agent', currentDetailAgent.id, americanName ? `American name set to "${americanName}"` : 'American name cleared');
+    }
+  }
+
   const wasRole = currentDetailAgent.role;
   currentDetailAgent.full_name = full_name;
   currentDetailAgent.role = role;
@@ -43546,7 +43566,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '702'; // 702: follow-ups may have no date (697: coverage leaves out test campaigns; 692: light theme)
+const DIALER_ADMIN_VERSION = '727'; // 727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
