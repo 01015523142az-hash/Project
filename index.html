@@ -4861,7 +4861,7 @@
       <div class="card" style="margin-top:16px;">
         <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;">Client notifications — activity, SMS &amp; email</h3>
         <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.4;">
-          Turn each client-facing notification on/off and edit its wording — SMS goes out through the connected GoHighLevel number (see Client SMS location under Integrations), email goes out through Resend. Available placeholders: <code>{client_name}</code> everywhere, plus <code>{campaign}</code> or <code>{password}</code> where noted. Turning a kind off skips BOTH the SMS and the email for it.
+          Turn each client-facing notification on/off and edit its wording — SMS goes out through Telnyx from <strong id="clientSmsFromNumber">our client notification number</strong>, email goes out through Resend. Available placeholders: <code>{client_name}</code> everywhere, plus <code>{campaign}</code> or <code>{password}</code> where noted. Turning a kind off skips BOTH the SMS and the email for it.
         </div>
         <div id="clientNotifList"><div class="empty">Loading…</div></div>
         <div class="msg" id="clientNotifMsg" style="margin-top:10px;"></div>
@@ -11569,6 +11569,7 @@ function pushStaffNotification({ icon, title, body, onClick, silent, durableId, 
   if(!staffNotifOpen && !readAt) staffNotifUnread++;
   renderNotifCenter();
   staffNotifSave();   // v729
+  if(!durableId) staffNotifPersist(staffNotifications.find(n => n.id === id));   // v730: on the server too -- any device
   if(!silent) staffPlayOpsNotificationSound();
   // v492: every OTHER Notification Center alert (new lead, ticket, dispute
   // reply, billing activity, HR review, etc.) used to live ONLY in this
@@ -11638,6 +11639,42 @@ function staffNotifRestore(){
   staffNotifRestored = true;
   staffNotifSave();   // drops anything that has aged past 30 days
   renderNotifCenter();
+  staffNotifications.filter(n => !n.durableId).forEach(staffNotifPersist);   // v730: history kept only in this browser goes to the server once
+}
+
+// v730 (the owner: "make notifications stay on any device too"). Every
+// notification this page raises is also written to staff_notifications as
+// kind 'portal' (RLS lets a user insert only their own rows, only that kind),
+// so the 30-day history loads on any device -- and in the dialer's bell. The
+// row id is made here and registered as already shown BEFORE the insert, so
+// the realtime echo of our own row is ignored; the same event raised in a
+// second open tab is folded into the first by staffNotifDuplicate().
+function staffNotifPersist(n){
+  if(!n || n.durableId || n.persisting || !myUserId || !(window.crypto && crypto.randomUUID)) return;
+  n.persisting = true;
+  const rowId = crypto.randomUUID();
+  shownDurableNotifIds.add(rowId);
+  sb.from('staff_notifications').insert({
+    id: rowId, user_id: myUserId, kind: 'portal',
+    title: String(n.title || '').slice(0, 300),
+    body: n.body ? String(n.body).slice(0, 2000) : null,
+    icon: n.icon || null, priority: n.priority === true,
+    created_at: new Date(n.at || Date.now()).toISOString(),
+    read_at: n.readAt ? new Date(n.readAt).toISOString() : null,
+  }).then(({ error }) => {
+    n.persisting = false;
+    if(error){ console.warn('notification not saved to the server:', error.message); return; }
+    n.durableId = rowId;
+    if(n.readAt) markStaffNotificationsRead([rowId]);   // read while the insert was in flight
+    staffNotifSave();   // on the server now -- the browser copy drops it
+  });
+}
+// The same title and body within two minutes is the same event.
+function staffNotifDuplicate(row){
+  const at = row.created_at ? new Date(row.created_at).getTime() : Date.now();
+  return staffNotifications.find(n => n.durableId !== row.id
+    && (n.title || '') === (row.title || '') && (n.body || '') === (row.body || '')
+    && Math.abs((n.at || 0) - at) < 120000) || null;
 }
 
 // v642: the staff portal's binding for the shared notification centre below.
@@ -11657,11 +11694,14 @@ var NC_ADAPTER = {
   },
   onRead: function(n){
     // markStaffNotificationsRead takes an ARRAY of durable row ids.
-    if(n.durableId && typeof markStaffNotificationsRead === 'function') markStaffNotificationsRead([n.durableId]);
+    // v730: plus any copy of the same event folded into this one.
+    var ids = [n.durableId].concat(n.dupIds || []).filter(Boolean);
+    if(ids.length && typeof markStaffNotificationsRead === 'function') markStaffNotificationsRead(ids);
     staffNotifSave();   // v729: remember it was read
   },
   onMarkAllRead: function(){
-    var ids = (staffNotifications || []).map(function(n){ return n.durableId; }).filter(Boolean);
+    var ids = [];
+    (staffNotifications || []).forEach(function(n){ if(n.durableId) ids.push(n.durableId); (n.dupIds || []).forEach(function(d){ ids.push(d); }); });
     if(ids.length && typeof markStaffNotificationsRead === 'function') markStaffNotificationsRead(ids);
     staffNotifSave();   // v729
   },
@@ -12127,16 +12167,30 @@ const shownDurableNotifIds = new Set();
 function showDurableStaffNotification(row, silent){
   if(!row || shownDurableNotifIds.has(row.id)) return;
   shownDurableNotifIds.add(row.id);
+  // v730: the same event saved by two open tabs shows once; read on either
+  // copy counts as read on both.
+  const dup = staffNotifDuplicate(row);
+  if(dup){
+    (dup.dupIds = dup.dupIds || []).push(row.id);
+    if(dup.readAt && !row.read_at) markStaffNotificationsRead([row.id]);
+    else if(row.read_at && !dup.readAt){
+      dup.readAt = new Date(row.read_at).getTime();
+      if(dup.durableId) markStaffNotificationsRead([dup.durableId]);
+      renderNotifCenter();
+    }
+    return;
+  }
   pushStaffNotification({
-    icon: STAFF_NOTIF_KIND_ICONS[row.kind] || '🔔',
+    icon: row.icon || STAFF_NOTIF_KIND_ICONS[row.kind] || '🔔',
     title: row.title,
     body: row.body || '',
     durableId: row.id,
-    priority: STAFF_NOTIF_PRIORITY_KINDS.has(row.kind),   // v700
+    priority: row.priority === true || STAFF_NOTIF_PRIORITY_KINDS.has(row.kind),   // v700; v730: portal rows carry their own
     at: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
     readAt: row.read_at ? new Date(row.read_at).getTime() : null,   // v729: read rows come back too
     silent,
-    onClick: () => {
+    // v730: a saved 'portal' row has no link to rebuild -- it opens its card.
+    onClick: row.kind === 'portal' ? undefined : () => {
       markStaffNotificationsRead([row.id]);
       // v701: a client waiting (or a chat handed to you) opens that
       // conversation in the Client Inbox here -- not the portal again in a
@@ -12157,7 +12211,7 @@ async function loadDurableStaffNotifications(){
   if(!myUserId) return;
   // v729: the last 30 days, read ones included -- what the bell promises.
   const { data, error } = await sb.from('staff_notifications')
-    .select('id, kind, title, body, url, ref_id, created_at, read_at')   // v701: ref_id opens the client chat
+    .select('id, kind, title, body, url, ref_id, created_at, read_at, icon, priority')   // v701: ref_id opens the client chat
     .eq('user_id', myUserId).gte('created_at', new Date(Date.now() - STAFF_NC_KEEP_MS).toISOString())
     .order('created_at', { ascending: false }).limit(STAFF_NOTIF_MAX);
   if(error){ console.error('staff_notifications load failed', error); return; }
@@ -22342,6 +22396,14 @@ async function loadClientNotifSettings(){
   const { data: rows, error } = await sb.from('app_settings').select('key, value').in('key', allKeys);
   if(error){ list.innerHTML = `<div class="msg error">${escapeHtml(error.message)}</div>`; return; }
   const valueByKey = {}; (rows || []).forEach(r => { valueByKey[r.key] = r.value; });
+  // v730: the number client texts actually go from (send-client-sms reads
+  // app_settings.client_sms_from_number), shown in the intro above.
+  sb.from('app_settings').select('value').eq('key', 'client_sms_from_number').maybeSingle().then(({ data }) => {
+    const el = $('clientSmsFromNumber');
+    const d = String((data && data.value) || '').replace(/\D/g, '');
+    if(el && d.length === 11 && d[0] === '1') el.textContent = `+1 (${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}`;
+    else if(el && data && data.value) el.textContent = data.value;
+  });
   list.innerHTML = SMS_TEMPLATE_META.map(t => {
     const enabled = valueByKey[clientNotifEnabledSettingKey(t.key)] !== 'false';
     const channels = parseClientNotifChannels(valueByKey[clientNotifChannelSettingKey(t.key)]);
