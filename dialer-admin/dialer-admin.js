@@ -5140,7 +5140,10 @@ $('ctASave').onclick = async () => {
   const first = $('ctAFirst').value.trim();
   const last = $('ctALast').value.trim();
   const phone = toE164($('ctAPhone').value);
-  if (!first && !last) { $('ctMsg').textContent = 'A name is required.'; return; }
+  // Only the phone is required here, matching the list upload: every
+  // dialer_field_defs entry except the number is optional (owner's rule,
+  // 2026-09-16). A contact can be nothing but a number -- ctName() already
+  // renders a blank one as an em dash.
   if (!phone) { $('ctMsg').textContent = 'A valid phone is required — 10 digits for US, or with the country code.'; return; }
   const { data: existing } = await sb.from('dialer_contacts').select('id, contact_name').eq('phone_e164', phone).limit(1);
   if (existing && existing.length) {
@@ -5151,7 +5154,7 @@ $('ctASave').onclick = async () => {
   $('ctASave').disabled = true;
   const { data, error } = await sb.from('dialer_contacts').insert({
     first_name: first || null, last_name: last || null,
-    contact_name: [first, last].filter(Boolean).join(' '),
+    contact_name: [first, last].filter(Boolean).join(' ') || null,
     phone_e164: phone,
     email: $('ctAEmail').value.trim() || null,
     address: $('ctAAddr').value.trim() || null,
