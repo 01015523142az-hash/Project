@@ -4470,6 +4470,20 @@ $('cvSearch').addEventListener('input', renderInbox);
 // The same history the agent console shows: every text, call and note for the
 // contact (dialer_contact_timeline), or just the texts when the number is not a
 // dialer contact.
+// v747: every stored email with one address, for a thread that has no contact.
+async function fetchEmailTimeline(addr) {
+  const { data, error } = await sb.from('dialer_email_messages')
+    .select('id, message_at, direction, subject, snippet, from_address, to_address, mailbox, provider, delivery_status, delivery_detail')
+    .eq('contact_email', addr).order('message_at', { ascending: false }).limit(100);
+  if (error) throw error;
+  return (data || []).map((e) => ({
+    kind: 'email', at: e.message_at, direction: e.direction,
+    title: e.subject || '(no subject)', body: e.snippet, actor: null, ref_id: e.id,
+    meta: { from: e.from_address, to: e.to_address, mailbox: e.mailbox, provider: e.provider,
+            delivery: e.delivery_status, delivery_detail: e.delivery_detail },
+  }));
+}
+
 async function fetchTimeline(contactId, phone) {
   if (contactId) {
     const { data, error } = await sb.rpc('dialer_contact_timeline', { p_contact: contactId });
@@ -4525,8 +4539,14 @@ function timelineHtml(items, kind, newestFirst) {
         : 'Accepted by the mail server. Email gives no delivery receipt; a bounce would show here.';
       const badge = label
         ? `<span class="tl-status ${esc(st)}" title="${esc(why)}">${label}</span>` : '';
+      // v747: open the person this email is with -- their contact card, or the
+      // address's own conversation when nobody has it yet.
+      const addr = ((String((out ? m.to : m.from) || '')
+        .match(/[A-Z0-9._%+'-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [''])[0]).toLowerCase();
+      const open = addr
+        ? `<button class="sm" data-open="${esc(addr)}" title="Open ${esc(addr)}" style="margin-left:8px">Open</button>` : '';
       return `<div class="tl email ${out ? 'out' : ''}"><div class="tl-b">
-        <div>✉️ <b>${esc(i.title || '(no subject)')}</b>${badge}</div>
+        <div>✉️ <b>${esc(i.title || '(no subject)')}</b>${badge}${open}</div>
         ${i.body ? `<div class="tl-body">${esc(i.body)}</div>` : ''}
         <div class="tl-foot">${esc(out ? 'to ' + (m.to || '') : 'from ' + (m.from || ''))} · ${foot}</div></div></div>`;
     }
@@ -4566,7 +4586,32 @@ async function cvLoadDelivery() {
   return changed;
 }
 
+// v747: "Open" on an email. A contact with that address opens their card;
+// otherwise the address's own conversation, which is where it can be answered
+// and turned into a contact.
+function wireOpenEmail(root) {
+  root.querySelectorAll('[data-open]').forEach((b) => {
+    b.onclick = async (ev) => {
+      ev.stopPropagation();
+      const addr = String(b.dataset.open || '').toLowerCase();
+      if (!addr) return;
+      b.disabled = true;
+      const { data } = await sb.from('dialer_contacts').select('id, email').ilike('email', addr).limit(5);
+      b.disabled = false;
+      const hit = (data || []).find((c) => String(c.email || '').trim().toLowerCase() === addr);
+      if (hit) { openContactDrawer(hit.id); return; }
+      closeContactDrawer();
+      if (daPane !== 'inbox') await showSection('conversations/inbox');
+      let row = cvRows.find((r) => r.phone_key === 'email:' + addr);
+      if (!row) { await loadInbox(); row = cvRows.find((r) => r.phone_key === 'email:' + addr); }
+      if (row) openThread(row);
+      else $('inboxMsg').textContent = `Nothing stored yet for ${addr}.`;
+    };
+  });
+}
+
 function wireRecordings(root) {
+  wireOpenEmail(root);   // v747
   root.querySelectorAll('[data-rec]').forEach((b) => {
     b.onclick = async () => {
       b.disabled = true; b.textContent = '…';
@@ -4604,41 +4649,68 @@ $('cvTabs').querySelectorAll('[data-cv]').forEach((b) => {
 async function openThread(row) {
   if (!row) return;
   cvActive = row;
+  // v747: a thread keyed 'email:<address>' is email with somebody who is not a
+  // contact. It has no number, so texting, dialling and mark-as-read are off
+  // until "Add as contact" gives it one.
+  const emailOnly = String(row.phone_key || '').startsWith('email:');
+  const onlyAddr = emailOnly ? row.phone_key.slice(6) : null;
   inboxPhone = row.contact_phone;
   inboxName = row.contact_name || null;
   renderInbox();
   $('cvHead').innerHTML = `<div style="min-width:0">
       <div class="da-drawer-title">${esc(row.contact_name || row.contact_phone)}</div>
-      <div class="hint" style="margin:2px 0 0"><span class="mono">${esc(row.contact_phone)}</span>
+      <div class="hint" style="margin:2px 0 0">${emailOnly
+        ? `<span class="mono">${esc(onlyAddr)}</span> · email only`
+        : `<span class="mono">${esc(row.contact_phone)}</span>`}
         ${row.campaign_name ? ' · ' + esc(row.campaign_name) : ''}
         ${(row.reps || []).length ? ' · worked by ' + esc(row.reps.join(', ')) : ''}</div>
     </div>
     <div class="btn-row">
       ${row.on_dnc ? '<span class="chip bad">Do not call</span>' : ''}
-      ${row.contact_id ? '<button class="sm" id="cvProfile">Contact profile</button>' : '<span class="chip">Not a dialer contact</span>'}
+      ${row.contact_id ? '<button class="sm" id="cvProfile">Contact profile</button>'
+        : emailOnly ? '<span class="chip">No contact yet</span><button class="sm" id="cvAddContact">Add as contact</button>'
+        : '<span class="chip">Not a dialer contact</span>'}
     </div>`;
   if ($('cvProfile')) $('cvProfile').onclick = () => openContactDrawer(row.contact_id);
+  // v747: one click to make them a contact -- a mobile number is what turns on
+  // calls, texts, WhatsApp and appointments. The stored emails attach
+  // themselves to the new contact on the next email sync.
+  if ($('cvAddContact')) $('cvAddContact').onclick = async () => {
+    await showSection('conversations/contacts');
+    show($('ctAddWrap'), true);
+    $('ctAEmail').value = onlyAddr;
+    const guess = onlyAddr.split('@')[0].replace(/[._+-]+/g, ' ').replace(/\d+/g, '').trim().split(/\s+/).filter(Boolean);
+    const cap = (w) => (w ? w[0].toUpperCase() + w.slice(1) : '');
+    $('ctAFirst').value = cap(guess[0] || '');
+    $('ctALast').value = cap(guess[1] || '');
+    $('ctMsg').textContent = 'Add their mobile number to finish. That is what turns on calls, texts, WhatsApp and appointments; the emails already stored attach to them within a few minutes.';
+    $('ctAPhone').focus();
+  };
   show($('cvTabs'), true);
   $('inboxThread').innerHTML = '<div class="da-empty">Loading…</div>';
   try {
-    cvItems = await fetchTimeline(row.contact_id, row.contact_phone);
+    cvItems = emailOnly ? await fetchEmailTimeline(onlyAddr) : await fetchTimeline(row.contact_id, row.contact_phone);
   } catch (e) {
     $('inboxThread').innerHTML = `<div class="da-empty">${esc(e.message)}</div>`;
     return;
   }
   if (cvActive !== row) return;          // they clicked on while it loaded
   renderThread();
-  // Opening a thread is reading it.
-  if (Number(row.unread) > 0) {
+  // Opening a thread is reading it. An email-only thread has no phone to mark.
+  if (Number(row.unread) > 0 && !emailOnly) {
     sb.rpc('dialer_mark_thread_read', { p_phone: row.contact_phone }).then(() => {
       row.unread = 0; updateInboxBadge(); renderInbox();
     });
   }
-  cvContactEmail = null;
+  cvContactEmail = emailOnly ? onlyAddr : null;
   if (row.contact_id) {
     const { data: c } = await sb.from('dialer_contacts').select('email').eq('id', row.contact_id).maybeSingle();
     cvContactEmail = c && /@/.test(c.email || '') ? c.email : null;
   }
+  // v747: no number, so email is the only channel here.
+  const smsOpt = $('cvReplyChannel').querySelector('option[value="sms"]');
+  if (smsOpt) smsOpt.disabled = emailOnly;
+  if (emailOnly) $('cvReplyChannel').value = 'email';
   if (cvActive !== row) return;
   const emailOpt = $('cvReplyChannel').querySelector('option[value="email"]');
   emailOpt.disabled = !cvContactEmail;
@@ -4704,8 +4776,9 @@ $('inboxBody').addEventListener('input', () => {
 
 $('inboxSend').onclick = async () => {
   const text = $('inboxBody').value.trim();
-  if (!inboxPhone || !text || !canManage) return;
   const byEmail = $('cvReplyChannel').value === 'email';
+  if (!text || !canManage) return;
+  if (!byEmail && !inboxPhone) return;   // v747: no number on an email-only thread
   $('inboxSend').disabled = true;
   if (byEmail) {
     // v677: sent AS the signed-in person from their own Gmail (the address is
@@ -4714,7 +4787,9 @@ $('inboxSend').onclick = async () => {
     const subject = $('cvSubject').value.trim();
     if (!subject) { $('inboxSend').disabled = false; $('inboxLen').textContent = 'Add a subject.'; return; }
     const r = await callFn('dialer-conversations', {
-      action: 'send_email', contact_id: cvActive.contact_id, subject, body: text,
+      action: 'send_email', subject, body: text,
+      contact_id: cvActive.contact_id || undefined,          // v747
+      to_email: cvActive.contact_id ? undefined : cvContactEmail,
       sender: $('cvReplyFrom').value || 'rep',   // v744
     });
     $('inboxSend').disabled = false;
