@@ -5189,8 +5189,8 @@
       </div>
       <div class="card" style="padding:0; overflow-x:auto;">
         <table class="data-table" id="csubCampaignTable">
-          <thead><tr id="csubCampaignTableHead"><th>Submitted</th><th>Campaign Name</th><th>Client Details</th><th>Dialer</th><th>Data Source</th><th>Caller Staffing</th><th>Package</th><th>Active Until</th><th>Status</th><th>Accepted / Rejected</th><th>Accept Rate</th></tr></thead>
-          <tbody id="csubCampaignTableBody"><tr><td colspan="11" style="color:var(--text-dim);">Loading…</td></tr></tbody>
+          <thead><tr id="csubCampaignTableHead"><th>Submitted</th><th>Campaign Name</th><th>Client Details</th><th>Dialer</th><th>Data Source</th><th>Caller Staffing</th><th>Package</th><th>Active Until</th><th>Status</th><th>Accepted / Rejected</th><th>Accept Rate</th><th>Email Marketing</th></tr></thead>
+          <tbody id="csubCampaignTableBody"><tr><td colspan="12" style="color:var(--text-dim);">Loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -31939,6 +31939,49 @@ function csubFieldValueByLabel(row, label){
 // subscription system, or ones whose subscription row was since deleted).
 let csubCampaignSubsByNorm = {};
 let csubCampaignClientById = {};   // v680: client_accounts by id, for Client Details
+// v762: Email Marketing standing per client, for the Campaign Details
+// column. marketing_access() is the one source of truth for seats and the
+// monthly allowance (never re-derive it here), and staff may call it.
+// Cached by client id because one client can own several campaigns -- the
+// table would otherwise ask the same question once per row.
+let csubMarketingByClient = {};    // client_id -> marketing_access() jsonb
+let csubMarketingLoading = false;
+async function csubLoadMarketingAccess(ids){
+  // Only ever fetch what is missing, and never re-enter while in flight --
+  // this is called from the renderer, which the load itself re-triggers.
+  const want = [...new Set(ids.filter(Boolean))].filter(id => !(id in csubMarketingByClient));
+  if(!want.length || csubMarketingLoading) return;
+  csubMarketingLoading = true;
+  try{
+    await Promise.all(want.map(async (id) => {
+      const { data, error } = await sb.rpc('marketing_access', { p_client: id });
+      // null marks it as asked-and-unavailable, so a failure does not make
+      // every later render retry it forever.
+      csubMarketingByClient[id] = (error || !data) ? null : data;
+    }));
+  } finally { csubMarketingLoading = false; }
+  if(csubActiveSection === 'campaign') renderCsubCampaignTable();
+}
+// What one client's standing reads as in the table.
+function csubMarketingCell(clientId){
+  if(!clientId) return '<span style="color:var(--text-dim);">&mdash;</span>';
+  if(!(clientId in csubMarketingByClient)) return '<span style="color:var(--text-dim);">Loading&hellip;</span>';
+  const a = csubMarketingByClient[clientId];
+  if(!a) return '<span style="color:var(--text-dim);">&mdash;</span>';
+  const seats = Number(a.seats || 0);
+  if(!seats) return '<span style="color:var(--text-dim);">No seat</span>';
+  const paid = Number(a.paid_seats || 0), extra = Number(a.extra_seats || 0);
+  // Where the seats came from: earned by a paid Full-time caller on our
+  // data, granted by staff, or a mix of both.
+  const origin = paid && extra ? `${paid} with campaign + ${extra} free`
+    : paid ? 'with campaign' : 'free (added by staff)';
+  // Setup is what actually decides whether they can send yet, so a seat
+  // that cannot send should not read as if it can.
+  const ready = !!a.setup_complete;
+  return `<span class="mono" style="color:var(--good); font-size:11px;">${seats} seat${seats === 1 ? '' : 's'} &middot; ${Number(a.monthly_limit || 0).toLocaleString()}/mo</span>`
+    + `<div style="font-size:10px; color:var(--text-2);">${escapeHtml(origin)}</div>`
+    + (ready ? '' : '<div style="font-size:10px; color:var(--away);">setup incomplete</div>');
+}
 let csubCampaignRequestByNorm = {}; // v681: each campaign's first request, whatever the date filter
 // v395: normName -> { accepted, rejected, pending, total } lead outcome
 // counts, keyed the same way csubCampaignSubsByNorm is (csubNormalizeLabel
@@ -32206,12 +32249,15 @@ function renderCsubCampaignTable(){
       return packageFilterVal === 'complimentary' ? !!sub.is_complimentary : !sub.is_complimentary;
     });
   }
-  if(headEl) headEl.innerHTML = '<th>Submitted</th><th>Campaign Name</th><th>Client Details</th><th>Dialer</th><th>Data Source</th><th>Caller Staffing</th><th>Package</th><th>Active Until</th><th>Status</th><th>Accepted / Rejected</th><th>Accept Rate</th>' + (myIsOwner ? '<th>Delete</th>' : '');
+  if(headEl) headEl.innerHTML = '<th>Submitted</th><th>Campaign Name</th><th>Client Details</th><th>Dialer</th><th>Data Source</th><th>Caller Staffing</th><th>Package</th><th>Active Until</th><th>Status</th><th>Accepted / Rejected</th><th>Accept Rate</th><th>Email Marketing</th>' + (myIsOwner ? '<th>Delete</th>' : '');
   if(!rows.length){
-    bodyEl.innerHTML = `<tr><td colspan="${myIsOwner ? 12 : 11}" style="color:var(--text-dim);">No campaigns match this filter.</td></tr>`;
+    bodyEl.innerHTML = `<tr><td colspan="${myIsOwner ? 13 : 12}" style="color:var(--text-dim);">No campaigns match this filter.</td></tr>`;
     return;
   }
   const csubCampaignTz = nonAgentDisplayTz();
+  // v762: ask for any client standing this table does not have yet; the
+  // loader re-renders once the answers are in.
+  csubLoadMarketingAccess(rows.map(r => (csubCampaignSubsByNorm[csubNormalizeLabel(csubCampaignNameValue(r))] || {}).client_id));
   bodyEl.innerHTML = rows.map(r => {
     // v681: a placeholder falls back to the campaign's first request when that
     // request sits outside the date window.
@@ -32250,6 +32296,7 @@ function renderCsubCampaignTable(){
       <td><span class="mono" style="color:${statusInfo.color}; font-size:11px;">${escapeHtml(statusInfo.label)}</span></td>
       <td class="mono">${acceptedRejectedLabel}</td>
       <td class="mono" style="color:${acceptRateColor};">${acceptRateLabel}</td>
+      <td>${csubMarketingCell((csubCampaignSubsByNorm[csubNormalizeLabel(csubCampaignNameValue(r))] || {}).client_id)}</td>
       ${deleteCell}
     </tr>`;
   }).join('');
@@ -44335,7 +44382,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '761'; // 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
+const DIALER_ADMIN_VERSION = '762'; // 762: Campaign Details shows each client's Email Marketing standing; 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
