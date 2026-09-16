@@ -10638,13 +10638,329 @@ function mktRender(clientId){
         <div style="align-self:flex-end;"><button class="btn-primary" id="mktCreateBtn"${ready ? '' : ' disabled'}>Create list</button></div>
         <div style="align-self:flex-end; font-size:12px; color:var(--text-2);" id="mktMsg"></div>
       </div>
+    </div>
+    <div class="card" style="margin-bottom:16px;" id="mktCampaignsCard">
+      <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:10px; text-transform:uppercase; letter-spacing:1px;">Campaigns</h3>
+      <div id="mktCampaignsBody" style="font-size:13px; color:var(--text-2);">Loading…</div>
+      <div id="mktCampEditor"></div>
     </div>`;
 
+  mktCampaignsLoad(clientId);   // v758
   document.getElementById('mktCreateBtn').addEventListener('click', ()=>mktCreate(clientId));
   const seatsBtn = document.getElementById('mktSeatsSaveBtn');
   if(seatsBtn) seatsBtn.addEventListener('click', ()=>mktSaveSeats(clientId));
   document.querySelectorAll('.mkt-upload').forEach(b=>b.addEventListener('click', ()=>mktShowUpload(b.dataset.id, b.dataset.name)));
   document.querySelectorAll('.mkt-del').forEach(b=>b.addEventListener('click', ()=>mktDelete(b.dataset.id, b.dataset.name)));
+}
+
+// ---------------------------------------------------------------------------
+// v758: CAMPAIGNS (staff side).
+//
+// Write a campaign for the picked client, preview it exactly as it will be
+// sent (the server renders both), send a test, then schedule it. The
+// marketing-campaigns sweep does the sending every minute, from the client's
+// own domain, within their monthly allowance. Numbers come from the recipient
+// rows themselves and refresh every 15 seconds while anything is sending.
+// ---------------------------------------------------------------------------
+let mktCampaigns = [];
+let mktSenders = [];
+let mktCampTimer = null;
+let mktCampEditing = null;   // the campaign open in the editor, or {} for a new one
+
+async function mktCampCall(action, payload){
+  const { data, error } = await sb.functions.invoke('marketing-campaigns', { body: { action, ...payload } });
+  if (data && data.ok === false) throw new Error(data.error || 'Request failed.');
+  if (error) {
+    if (error.context && typeof error.context.json === 'function') {
+      try { const b = await error.context.json(); if (b && b.error) throw new Error(b.error); } catch(e){ if(e instanceof Error && e.message && !/json/i.test(e.message)) throw e; }
+    }
+    throw new Error(error.message || 'Request failed.');
+  }
+  return data;
+}
+
+const MKT_CAMP_STATUS = {
+  draft: ['Draft', 'var(--text-2)'], scheduled: ['Scheduled', '#3B82F6'], sending: ['Sending', '#E38B2E'],
+  paused: ['Paused', '#E38B2E'], sent: ['Sent', 'var(--good)'], cancelled: ['Cancelled', 'var(--text-2)'],
+};
+function mktChip(text, color){
+  return `<span class="mono" style="display:inline-block; font-size:10px; letter-spacing:.06em; text-transform:uppercase; border:1px solid ${color}; color:${color}; border-radius:999px; padding:1px 8px;">${escapeHtml(text)}</span>`;
+}
+function mktWhen(iso){ return iso ? new Date(iso).toLocaleString([], { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' }) : ''; }
+function mktPct(n, of){ return of ? ` <span style="color:var(--text-2); font-size:11px;">${Math.round(100 * n / of)}%</span>` : ''; }
+
+async function mktCampaignsLoad(clientId){
+  clearTimeout(mktCampTimer);
+  const box = document.getElementById('mktCampaignsBody');
+  if (!box) return;
+  try {
+    const [c, snd] = await Promise.all([
+      mktCampCall('list', { client_id: clientId }),
+      mktCall('senders_list', { client_id: clientId }),
+    ]);
+    if (document.getElementById('mktClientSel').value !== clientId) return;   // switched client meanwhile
+    mktCampaigns = c.campaigns || [];
+    mktSenders = snd.senders || [];
+    mktCampaignsRender(clientId);
+    if (mktCampaigns.some(x => ['scheduled','sending'].includes(x.status))) {
+      mktCampTimer = setTimeout(() => {
+        const panel = document.getElementById('tab-marketing');
+        if (panel && panel.classList.contains('active') && document.getElementById('mktClientSel').value === clientId && !mktCampEditing) {
+          mktCampaignsLoad(clientId);
+        }
+      }, 15000);
+    }
+  } catch(e){
+    box.innerHTML = `<span style="color:var(--danger)">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function mktCampaignsRender(clientId){
+  const box = document.getElementById('mktCampaignsBody');
+  const a = mktAccess || {};
+  const canWrite = ['owner','admin'].includes(myRole);
+  const ready = Boolean(a.setup_complete);
+  const rows = mktCampaigns.length ? mktCampaigns.map(c => {
+    const st = c.stats || {};
+    const [label, color] = MKT_CAMP_STATUS[c.status] || [c.status, 'var(--text-2)'];
+    const when = c.status === 'scheduled' ? 'Starts ' + mktWhen(c.scheduled_at)
+      : c.finished_at ? mktWhen(c.finished_at) : c.started_at ? 'Started ' + mktWhen(c.started_at) : 'Created ' + mktWhen(c.created_at);
+    const acts = [];
+    acts.push(`<button class="btn-secondary mkt-camp-act" data-act="preview" data-id="${c.id}">Preview</button>`);
+    if (canWrite) {
+      if (c.status === 'draft' || c.status === 'scheduled' || (c.status === 'paused' && !c.started_at)) acts.push(`<button class="btn-secondary mkt-camp-act" data-act="edit" data-id="${c.id}">Edit</button>`);
+      if (['scheduled','sending'].includes(c.status)) acts.push(`<button class="btn-secondary mkt-camp-act" data-act="pause" data-id="${c.id}">Pause</button>`);
+      if (c.status === 'paused') acts.push(`<button class="btn-secondary mkt-camp-act" data-act="resume" data-id="${c.id}">Resume</button>`);
+      if (['scheduled','sending','paused'].includes(c.status)) acts.push(`<button class="btn-secondary mkt-camp-act" data-act="cancel" data-id="${c.id}">Cancel</button>`);
+      if (c.status === 'draft' || (c.status === 'cancelled' && !c.started_at)) acts.push(`<button class="btn-secondary mkt-camp-act" data-act="delete" data-id="${c.id}">Delete</button>`);
+    }
+    const sent = st.sent || 0;
+    return `<tr style="border-top:1px solid var(--border);">
+      <td style="padding:8px 10px 8px 0; vertical-align:top;"><b>${escapeHtml(c.name)}</b>
+        <div style="font-size:11.5px; color:var(--text-2);">${escapeHtml(c.subject || '')}</div>
+        ${c.last_error ? `<div style="font-size:11.5px; color:${c.status === 'paused' ? '#E38B2E' : 'var(--danger)'}; margin-top:3px;">${escapeHtml(c.last_error)}</div>` : ''}</td>
+      <td style="padding:8px 10px 8px 0; vertical-align:top; white-space:nowrap;">${mktChip(label, color)}${c.dry_run ? ' ' + mktChip('dry run', 'var(--text-2)') : ''}
+        <div style="font-size:11px; color:var(--text-2); margin-top:3px;">${escapeHtml(when)}</div></td>
+      <td class="mono" style="padding:8px 10px 8px 0; vertical-align:top;">${Number(st.total || c.recipient_count || 0).toLocaleString()}</td>
+      <td class="mono" style="padding:8px 10px 8px 0; vertical-align:top;">${sent.toLocaleString()}${st.queued ? `<div style="font-size:11px; color:var(--text-2);">${st.queued.toLocaleString()} to go</div>` : ''}</td>
+      <td class="mono" style="padding:8px 10px 8px 0; vertical-align:top;">${(st.delivered||0).toLocaleString()}${mktPct(st.delivered||0, sent)}</td>
+      <td class="mono" style="padding:8px 10px 8px 0; vertical-align:top;">${(st.opened||0).toLocaleString()}${mktPct(st.opened||0, sent)}</td>
+      <td class="mono" style="padding:8px 10px 8px 0; vertical-align:top;">${(st.clicked||0).toLocaleString()}${mktPct(st.clicked||0, sent)}</td>
+      <td class="mono" style="padding:8px 10px 8px 0; vertical-align:top;">${(st.unsubscribed||0).toLocaleString()}</td>
+      <td class="mono" style="padding:8px 10px 8px 0; vertical-align:top;">${(st.bounced||0).toLocaleString()}${st.complained ? `<div style="font-size:11px; color:var(--danger);">${st.complained} spam</div>` : ''}</td>
+      <td style="padding:8px 0; vertical-align:top; text-align:right; white-space:nowrap;">${acts.join(' ')}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="10" style="padding:8px 0; color:var(--text-2);">No campaigns yet.</td></tr>';
+
+  box.innerHTML = `
+    ${ready ? '' : '<div style="font-size:12.5px; color:#E38B2E; margin-bottom:10px;">Campaigns open once the client finishes setup in their portal.</div>'}
+    <div style="overflow-x:auto;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:860px;">
+        <thead><tr style="text-align:left; color:var(--text-2); font-size:10.5px; text-transform:uppercase; letter-spacing:1px;">
+          <th style="padding:0 10px 6px 0;">Campaign</th><th style="padding:0 10px 6px 0;">Status</th><th style="padding:0 10px 6px 0;">Recipients</th>
+          <th style="padding:0 10px 6px 0;">Sent</th><th style="padding:0 10px 6px 0;">Delivered</th><th style="padding:0 10px 6px 0;">Opened</th>
+          <th style="padding:0 10px 6px 0;">Clicked</th><th style="padding:0 10px 6px 0;">Unsub</th><th style="padding:0 10px 6px 0;">Bounced</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      ${canWrite ? `<button class="btn-primary" id="mktCampNewBtn"${ready ? '' : ' disabled'}>New campaign</button>` : ''}
+      <span id="mktCampMsg" style="font-size:12px; color:var(--text-2);"></span>
+    </div>`;
+  const nb = document.getElementById('mktCampNewBtn');
+  if (nb) nb.addEventListener('click', () => mktCampOpenEditor(clientId, null));
+  box.querySelectorAll('.mkt-camp-act').forEach(b => b.addEventListener('click', () => mktCampAction(clientId, b.dataset.act, b.dataset.id)));
+}
+
+async function mktCampAction(clientId, act, id){
+  const c = mktCampaigns.find(x => x.id === id);
+  const msg = document.getElementById('mktCampMsg');
+  if (act === 'edit') return mktCampOpenEditor(clientId, c);
+  if (act === 'preview') return mktCampPreview({ id });
+  if (act === 'cancel' && !window.confirm(`Cancel “${c.name}”? Anyone not emailed yet will not be. This cannot be undone.`)) return;
+  if (act === 'delete' && !window.confirm(`Delete the draft “${c.name}”?`)) return;
+  try {
+    msg.style.color = 'var(--text-2)'; msg.textContent = 'Working…';
+    await mktCampCall(act, { id, confirm: act === 'delete' ? true : undefined });
+    msg.textContent = '';
+    await mktCampaignsLoad(clientId);
+  } catch(e){ msg.style.color = 'var(--danger)'; msg.textContent = e.message; }
+}
+
+// Rendered by the server, shown in a sandboxed frame: no scripts, and nothing
+// in it can reach the portal.
+async function mktCampPreview(payload){
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px;';
+  overlay.innerHTML = `<div class="card" style="width:min(760px,100%); max-height:92vh; display:flex; flex-direction:column; gap:8px;">
+      <div style="display:flex; gap:10px; align-items:center;"><b id="mktPrevSubject" style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Loading…</b>
+        <button class="btn-secondary" id="mktPrevClose">Close</button></div>
+      <div id="mktPrevMeta" style="font-size:12px; color:var(--text-2);"></div>
+      <iframe id="mktPrevFrame" sandbox="" style="width:100%; height:70vh; border:1px solid var(--border); border-radius:8px; background:#fff;"></iframe>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', e => { if (e.target === overlay) close(); });
+  overlay.querySelector('#mktPrevClose').addEventListener('click', close);
+  try {
+    const r = await mktCampCall('preview', payload);
+    overlay.querySelector('#mktPrevSubject').textContent = r.subject || '(no subject)';
+    overlay.querySelector('#mktPrevMeta').textContent = `As ${r.sample_email || 'a sample contact'} will see it.` + (r.has_design ? '' : ' The client has not saved an email design yet.');
+    overlay.querySelector('#mktPrevFrame').srcdoc = r.html;
+  } catch(e){
+    overlay.querySelector('#mktPrevSubject').textContent = e.message;
+  }
+}
+
+function mktCampOpenEditor(clientId, c){
+  clearTimeout(mktCampTimer);
+  mktCampEditing = c || {};
+  const e = mktCampEditing;
+  const box = document.getElementById('mktCampEditor');
+  const senderOpts = mktSenders.map(s => `<option value="${escapeHtml(s.id)}"${(e.sender_id ? e.sender_id === s.id : s.is_default) ? ' selected' : ''}>${escapeHtml(s.from_name)} &lt;${escapeHtml(s.from_local)}@${escapeHtml((mktDomains.find(d => d.id === s.domain_id) || mktDomains[0] || {}).domain || '')}&gt;</option>`).join('');
+  const chosen = new Set(e.audience_ids || []);
+  const lists = mktAudiences.length ? mktAudiences.map(a => `<label style="display:flex; gap:8px; align-items:center; font-size:13px; margin:4px 0; text-transform:none; letter-spacing:0;">
+      <input type="checkbox" class="mkt-camp-aud" value="${escapeHtml(a.id)}"${chosen.has(a.id) ? ' checked' : ''} style="width:auto;">
+      ${escapeHtml(a.name)} <span class="mono" style="color:var(--text-2);">${Number(a.contact_count).toLocaleString()}</span></label>`).join('')
+    : '<div style="color:var(--text-2); font-size:12.5px;">No lists yet — upload one above first.</div>';
+  const isOwner = ['owner','admin'].includes(myRole);
+  box.innerHTML = `
+    <div style="margin-top:18px; padding:16px; border:1px solid var(--border); border-radius:10px;">
+      <div style="font-size:14px; font-weight:700; margin-bottom:12px;">${e.id ? 'Edit campaign' : 'New campaign'}</div>
+      <div class="filter-row">
+        <div style="min-width:220px; flex:1;"><label>Campaign name (internal)</label><input type="text" id="mktCampName" maxlength="150" value="${escapeHtml(e.name || '')}" placeholder="September cash-offer blast"></div>
+        <div style="min-width:260px; flex:1;"><label>Send from</label><select id="mktCampSender">${senderOpts || '<option value="">No sending address</option>'}</select></div>
+      </div>
+      <div style="margin-top:10px;"><label>Send to</label>${lists}
+        <div id="mktCampEstimate" style="font-size:12px; color:var(--text-2); margin-top:4px;"></div></div>
+      <div class="filter-row" style="margin-top:10px;">
+        <div style="min-width:260px; flex:2;"><label>Subject</label><input type="text" id="mktCampSubject" maxlength="250" value="${escapeHtml(e.subject || '')}" placeholder="{{first_name|Hi}}, a cash offer for your property"></div>
+        <div style="min-width:220px; flex:1;"><label>Preview text (optional)</label><input type="text" id="mktCampPre" maxlength="250" value="${escapeHtml(e.preheader || '')}" placeholder="Shown after the subject in most inboxes"></div>
+      </div>
+      <div style="margin-top:10px;"><label>Message</label>
+        <textarea id="mktCampBody" rows="10" style="width:100%; font-family:inherit;" placeholder="We are local buyers and can make you a fair cash offer…">${escapeHtml(e.body || '')}</textarea>
+        <div style="font-size:11.5px; color:var(--text-2); margin-top:4px; line-height:1.5;">
+          The client's greeting, logo, sign-off and footer are added around this automatically. Blank line = new paragraph ·
+          <span class="mono">**bold**</span> · <span class="mono">[link text](https://…)</span> ·
+          <span class="mono">{{first_name}}</span> <span class="mono">{{last_name}}</span> <span class="mono">{{company}}</span>, with a fallback like <span class="mono">{{first_name|there}}</span>.
+        </div></div>
+      <div class="filter-row" style="margin-top:10px;">
+        <div style="min-width:180px; flex:1;"><label>Button text (optional)</label><input type="text" id="mktCampBtnText" maxlength="80" value="${escapeHtml(e.button_text || '')}" placeholder="Get my offer"></div>
+        <div style="min-width:260px; flex:2;"><label>Button link</label><input type="text" id="mktCampBtnUrl" maxlength="1000" value="${escapeHtml(e.button_url || '')}" placeholder="https://…"></div>
+      </div>
+      <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <button class="btn-secondary" id="mktCampSaveBtn">Save draft</button>
+        <button class="btn-secondary" id="mktCampPreviewBtn">Preview</button>
+        <button class="btn-secondary" id="mktCampCloseBtn">Close</button>
+        <span id="mktCampEdMsg" style="font-size:12px; color:var(--text-2);"></span>
+      </div>
+      <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
+        <div class="filter-row">
+          <div style="min-width:260px; flex:2;"><label>Send a test to (up to 5, comma separated)</label><input type="text" id="mktCampTestTo" placeholder="you@yourcompany.com"></div>
+          <div style="align-self:flex-end;"><button class="btn-secondary" id="mktCampTestBtn">Send test</button></div>
+        </div>
+        <div style="font-size:11.5px; color:var(--text-2); margin-top:4px;">A test is a real email and counts toward the client's monthly allowance.</div>
+      </div>
+      <div style="margin-top:16px; padding-top:14px; border-top:1px solid var(--border);">
+        <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:center; font-size:13px;">
+          <label style="display:flex; gap:6px; align-items:center; text-transform:none; letter-spacing:0; font-size:13px;"><input type="radio" name="mktCampWhen" value="now" checked style="width:auto;"> Send now</label>
+          <label style="display:flex; gap:6px; align-items:center; text-transform:none; letter-spacing:0; font-size:13px;"><input type="radio" name="mktCampWhen" value="later" style="width:auto;"> Send at</label>
+          <input type="datetime-local" id="mktCampAt" style="max-width:220px;">
+          ${isOwner ? `<label style="display:flex; gap:6px; align-items:center; text-transform:none; letter-spacing:0; font-size:13px;" title="Runs every step at Telnyx in sandbox mode. Nothing is delivered or billed."><input type="checkbox" id="mktCampDry" style="width:auto;"> Dry run (delivers nothing, no charge)</label>` : ''}
+        </div>
+        <div style="margin-top:10px;"><button class="btn-primary" id="mktCampScheduleBtn">Save and schedule</button></div>
+      </div>
+    </div>`;
+
+  const refreshEstimate = async () => {
+    const ids = [...box.querySelectorAll('.mkt-camp-aud:checked')].map(x => x.value);
+    const el = document.getElementById('mktCampEstimate');
+    if (!ids.length) { el.textContent = 'Choose at least one list.'; return; }
+    el.textContent = 'Counting…';
+    try {
+      const r = await mktCampCall('estimate', { client_id: clientId, audience_ids: ids });
+      const over = r.recipients > r.remaining;
+      el.innerHTML = `<b>${r.recipients.toLocaleString()}</b> people will receive it (duplicates, unsubscribes and bounces left out) · ${r.remaining.toLocaleString()} emails left this month`
+        + (over ? ' · <span style="color:var(--danger)">not enough allowance</span>' : '');
+    } catch(err){ el.textContent = err.message; }
+  };
+  box.querySelectorAll('.mkt-camp-aud').forEach(x => x.addEventListener('change', refreshEstimate));
+  refreshEstimate();
+  document.getElementById('mktCampCloseBtn').addEventListener('click', () => { box.innerHTML = ''; mktCampEditing = null; mktCampaignsLoad(clientId); });
+  document.getElementById('mktCampSaveBtn').addEventListener('click', () => mktCampSave(clientId, false));
+  document.getElementById('mktCampScheduleBtn').addEventListener('click', () => mktCampSave(clientId, true));
+  document.getElementById('mktCampPreviewBtn').addEventListener('click', () => mktCampPreview({ client_id: clientId, ...mktCampFields() }));
+  document.getElementById('mktCampTestBtn').addEventListener('click', () => mktCampTest(clientId));
+  document.getElementById('mktCampAt').addEventListener('focus', () => { const r = box.querySelector('input[name="mktCampWhen"][value="later"]'); if (r) r.checked = true; });
+  box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function mktCampFields(){
+  return {
+    name: document.getElementById('mktCampName').value,
+    sender_id: document.getElementById('mktCampSender').value,
+    audience_ids: [...document.querySelectorAll('#mktCampEditor .mkt-camp-aud:checked')].map(x => x.value),
+    subject: document.getElementById('mktCampSubject').value,
+    preheader: document.getElementById('mktCampPre').value,
+    body: document.getElementById('mktCampBody').value,
+    button_text: document.getElementById('mktCampBtnText').value,
+    button_url: document.getElementById('mktCampBtnUrl').value,
+  };
+}
+
+async function mktCampSaveDraft(clientId){
+  const r = await mktCampCall('save', { id: mktCampEditing && mktCampEditing.id, client_id: clientId, ...mktCampFields() });
+  mktCampEditing = r.campaign;
+  return r.campaign;
+}
+
+async function mktCampSave(clientId, schedule){
+  const msg = document.getElementById('mktCampEdMsg');
+  const setMsg = (t, c) => { msg.style.color = c || 'var(--text-2)'; msg.textContent = t; };
+  try {
+    let sendAt = null;
+    if (schedule) {
+      const later = document.querySelector('#mktCampEditor input[name="mktCampWhen"]:checked').value === 'later';
+      if (later) {
+        const v = document.getElementById('mktCampAt').value;
+        if (!v) return setMsg('Pick the date and time to send.', 'var(--danger)');
+        sendAt = new Date(v).toISOString();
+      }
+    }
+    setMsg('Saving…');
+    const c = await mktCampSaveDraft(clientId);
+    if (!schedule) { setMsg('Draft saved.', 'var(--good)'); return; }
+    const dry = Boolean(document.getElementById('mktCampDry') && document.getElementById('mktCampDry').checked);
+    const est = await mktCampCall('estimate', { client_id: clientId, audience_ids: c.audience_ids });
+    const sender = mktSenders.find(s => s.id === c.sender_id);
+    const question = dry
+      ? `Dry run “${c.name}” for ${est.recipients.toLocaleString()} contacts?\n\nEvery step runs, but nothing is delivered and nothing is charged.`
+      : `Send “${c.name}” to ${est.recipients.toLocaleString()} people${sendAt ? ' at ' + new Date(sendAt).toLocaleString() : ' now'}?\n\n`
+        + `From: ${sender ? sender.from_name : ''}\nSubject: ${c.subject}\n\n`
+        + `This uses ${est.recipients.toLocaleString()} of the ${est.remaining.toLocaleString()} emails left this month. Sent email cannot be recalled.`;
+    if (!window.confirm(question)) { setMsg('Saved as a draft; not scheduled.'); return; }
+    setMsg('Scheduling…');
+    await mktCampCall('schedule', { id: c.id, send_at: sendAt, dry_run: dry });
+    document.getElementById('mktCampEditor').innerHTML = '';
+    mktCampEditing = null;
+    await mktCampaignsLoad(clientId);
+    const m = document.getElementById('mktCampMsg');
+    if (m) { m.style.color = 'var(--good)'; m.textContent = sendAt ? 'Scheduled.' : 'Scheduled — sending starts within a minute.'; }
+  } catch(e){ setMsg(e.message, 'var(--danger)'); }
+}
+
+async function mktCampTest(clientId){
+  const msg = document.getElementById('mktCampEdMsg');
+  const to = document.getElementById('mktCampTestTo').value.trim();
+  if (!to) { msg.style.color = 'var(--danger)'; msg.textContent = 'Enter an address for the test.'; return; }
+  if (!window.confirm(`Send a real test email to ${to}? It counts toward the client's allowance.`)) return;
+  try {
+    msg.style.color = 'var(--text-2)'; msg.textContent = 'Saving and sending test…';
+    const c = await mktCampSaveDraft(clientId);
+    const r = await mktCampCall('test_send', { id: c.id, to });
+    msg.style.color = r.errors && r.errors.length ? '#E38B2E' : 'var(--good)';
+    msg.textContent = `Test sent to ${r.sent}.` + (r.errors && r.errors.length ? ' Problems: ' + r.errors.join('; ') : '');
+  } catch(e){ msg.style.color = 'var(--danger)'; msg.textContent = e.message; }
 }
 
 async function mktCreate(clientId){
