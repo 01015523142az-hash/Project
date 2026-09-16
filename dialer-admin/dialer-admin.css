@@ -100,6 +100,11 @@
 #daHost .rule-codegrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:2px 12px;
   padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:var(--inset);margin:4px 0 8px}
 #daHost .rule-codegrid label{display:flex;align-items:center;gap:6px;font-size:12.5px}
+/* v746: delivery status on a sent email in the conversation timeline */
+#daHost .tl-status{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:999px;
+  font-size:10.5px;font-weight:700;letter-spacing:.3px;vertical-align:middle;
+  background:var(--inset);color:var(--text-2);border:1px solid var(--border)}
+#daHost .tl-status.bounced,#daHost .tl-status.failed{color:#fff;background:var(--danger,#b3261e);border-color:transparent}
 #daHost .tpl-card{border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-bottom:10px;background:var(--card)}
 #daHost .tpl-card textarea{width:100%;font-family:var(--sans)}
 /* v737: formatted email templates. The editor is white paper with the

@@ -4515,8 +4515,18 @@ function timelineHtml(items, kind, newestFirst) {
     }
     if (i.kind === 'email') {
       const out = i.direction !== 'inbound';
+      // v746: what is actually known about delivery. Email has no delivery
+      // receipt, so "Sent" means the mail server accepted it; only a bounce
+      // proves it did not arrive.
+      const st = out ? String(m.delivery || 'sent') : '';
+      const label = st === 'bounced' ? 'Bounced' : st === 'failed' ? 'Failed' : st ? 'Sent' : '';
+      const why = st === 'bounced' ? (m.delivery_detail || 'A failure notice came back.')
+        : st === 'failed' ? (m.delivery_detail || 'The mail server refused it.')
+        : 'Accepted by the mail server. Email gives no delivery receipt; a bounce would show here.';
+      const badge = label
+        ? `<span class="tl-status ${esc(st)}" title="${esc(why)}">${label}</span>` : '';
       return `<div class="tl email ${out ? 'out' : ''}"><div class="tl-b">
-        <div>✉️ <b>${esc(i.title || '(no subject)')}</b></div>
+        <div>✉️ <b>${esc(i.title || '(no subject)')}</b>${badge}</div>
         ${i.body ? `<div class="tl-body">${esc(i.body)}</div>` : ''}
         <div class="tl-foot">${esc(out ? 'to ' + (m.to || '') : 'from ' + (m.from || ''))} · ${foot}</div></div></div>`;
     }
@@ -4534,6 +4544,26 @@ function timelineHtml(items, kind, newestFirst) {
       <div class="tl-body">${esc(i.body || '')}</div>
       <div class="tl-foot">${foot}</div></div></div>`;
   }).join('');
+}
+
+// v746: the delivery status of each email in the open conversation. Read here
+// rather than through the timeline RPC, so the rule on who may read an email
+// row (dialer_email_messages' own policy) still decides what comes back.
+async function cvLoadDelivery() {
+  const ids = (cvItems || []).filter((i) => i.kind === 'email' && i.ref_id).map((i) => i.ref_id);
+  if (!ids.length) return false;
+  const { data, error } = await sb.from('dialer_email_messages')
+    .select('id, delivery_status, delivery_detail').in('id', ids);
+  if (error) { console.warn('delivery status:', error.message); return false; }
+  const by = new Map((data || []).map((r) => [r.id, r]));
+  let changed = false;
+  cvItems.forEach((i) => {
+    const r = i.kind === 'email' ? by.get(i.ref_id) : null;
+    if (!r) return;
+    i.meta = { ...(i.meta || {}), delivery: r.delivery_status, delivery_detail: r.delivery_detail };
+    changed = true;
+  });
+  return changed;
 }
 
 function wireRecordings(root) {
@@ -4555,6 +4585,13 @@ function renderThread() {
   wireRecordings($('inboxThread'));
   const wrap = $('inboxThreadWrap');
   wrap.scrollTop = wrap.scrollHeight;   // newest at the bottom, like any chat
+  // v746: delivery status arrives a moment later and repaints, so the thread
+  // is never held up waiting for it.
+  cvLoadDelivery().then((changed) => {
+    if (!changed) return;
+    $('inboxThread').innerHTML = timelineHtml(cvItems, cvKind, false);
+    wireRecordings($('inboxThread'));
+  });
 }
 $('cvTabs').querySelectorAll('[data-cv]').forEach((b) => {
   b.onclick = () => {
