@@ -3346,6 +3346,7 @@
          multi-subtab tab, defaults off until an Owner explicitly checks it
          -- same "real money" reasoning Finance itself uses. -->
     <div class="side-nav-group">
+      <button class="tab-btn" data-tab="marketing" title="Marketing"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M2.5 5.5h15v9a1 1 0 01-1 1h-13a1 1 0 01-1-1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M2.5 6l7.5 5 7.5-5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>Marketing</span></button>
       <button class="tab-btn" data-tab="taxes" title="Taxes"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M6 2.5h8v15H6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6 6.5h8M8.5 9.5h3M8.5 12.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M3 6v9a1.5 1.5 0 001.5 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Taxes</span></button>
       <div class="tab-nav side-subnav" id="taxesSubNav">
       <button class="taxes-subtab-btn active" data-taxes-section="spending"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12.5l1.8-6.5h10.4l1.8 6.5"/><path d="M3 12.5v3a1 1 0 001 1h12a1 1 0 001-1v-3"/><path d="M3 12.5h4l1 2h4l1-2h4"/></svg>Spending</button>
@@ -6991,6 +6992,26 @@
       </div>
     </div>
   </div>
+  <!-- v756: EMAIL MARKETING, staff side. The client owns the sending domain
+       and connects it themselves in their own portal; this is where staff do
+       the list work on their behalf, across any client, without impersonating
+       them. Everything goes through marketing-audiences with a client_id, so
+       the same validation and suppression rules apply either way. -->
+  <div class="tab-panel" id="tab-marketing">
+    <div class="ts-header">
+      <h2 class="mono ts-title">Marketing</h2>
+    </div>
+    <div class="card" style="margin-bottom:16px;">
+      <div class="filter-row">
+        <div style="min-width:300px;">
+          <label>Client account</label>
+          <select id="mktClientSel"><option value="">Loading…</option></select>
+        </div>
+      </div>
+    </div>
+    <div id="mktBody"></div>
+  </div>
+
   <div class="tab-panel" id="tab-taxes">
     <div class="ts-header">
       <h2 class="mono ts-title">Taxes</h2>
@@ -10419,6 +10440,238 @@ function staffPageRestore(){
 
 // Shared by the nav click handler and the login flow above — switches
 // panels and runs whatever that tab's data-load function is.
+
+// ---------------------------------------------------------------------------
+// v756: MARKETING (staff side).
+//
+// The client connects their own sending domain in their portal; staff do the
+// list work here, for any client, without signing in as them. Same edge
+// functions, same validation, same suppression -- the only difference is that
+// a client_id is passed explicitly.
+// ---------------------------------------------------------------------------
+let mktClients = [];
+let mktAudiences = [];
+let mktDomains = [];
+let mktCsv = null;
+
+async function mktCall(action, payload){
+  const AUD = ['audience_list','audience_create','audience_delete','contacts_import'];
+  const fn = AUD.includes(action) ? 'marketing-audiences' : 'marketing-domains';
+  const { data, error } = await sb.functions.invoke(fn, { body: { action, ...payload } });
+  if (data && data.ok === false) throw new Error(data.error || 'Request failed.');
+  if (error) {
+    // invoke() leaves the body unread on a non-2xx, so the only message it
+    // offers is "non-2xx status code". The real one is in the response.
+    if (error.context && typeof error.context.json === 'function') {
+      try { const b = await error.context.json(); if (b && b.error) throw new Error(b.error); } catch(e){ if(e instanceof Error && e.message && !/json/i.test(e.message)) throw e; }
+    }
+    throw new Error(error.message || 'Request failed.');
+  }
+  return data;
+}
+
+function mktParseCsv(text){
+  const rows=[]; let row=[], field='', q=false;
+  const s=String(text).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  for(let i=0;i<s.length;i++){
+    const c=s[i];
+    if(q){ if(c==='"'){ if(s[i+1]==='"'){ field+='"'; i++; } else q=false; } else field+=c; }
+    else if(c==='"') q=true;
+    else if(c===','){ row.push(field); field=''; }
+    else if(c==='\n'){ row.push(field); rows.push(row); row=[]; field=''; }
+    else field+=c;
+  }
+  if(field.length||row.length){ row.push(field); rows.push(row); }
+  return rows.filter(r=>r.some(v=>String(v).trim()!==''));
+}
+function mktGuess(headers, kind){
+  const want={ email:['email','e-mail','email address','emailaddress','mail'],
+    first_name:['first name','firstname','first','given name','fname'],
+    last_name:['last name','lastname','last','surname','lname'],
+    company:['company','business','organisation','organization','company name'] }[kind]||[];
+  const n=headers.map(h=>String(h).trim().toLowerCase());
+  for(const w of want){ const i=n.indexOf(w); if(i>=0) return i; }
+  for(let i=0;i<n.length;i++) if(want.some(w=>n[i].includes(w))) return i;
+  return -1;
+}
+function mktSel(id, headers, sel){
+  return `<select id="${id}"><option value="-1">— none —</option>${
+    headers.map((h,i)=>`<option value="${i}"${i===sel?' selected':''}>${escapeHtml(h||('Column '+(i+1)))}</option>`).join('')}</select>`;
+}
+
+async function initMarketingTab(){
+  const sel = document.getElementById('mktClientSel');
+  if (!sel) return;
+  if (!mktClients.length){
+    const { data } = await sb.from('client_accounts').select('id, email, company_name').order('email');
+    mktClients = data || [];
+    sel.innerHTML = '<option value="">— pick a client —</option>' + mktClients.map(c =>
+      `<option value="${escapeHtml(c.id)}">${escapeHtml(c.company_name || c.email)}</option>`).join('');
+    sel.addEventListener('change', mktLoad);
+  }
+  if (sel.value) mktLoad();
+}
+
+async function mktLoad(){
+  const clientId = document.getElementById('mktClientSel').value;
+  const body = document.getElementById('mktBody');
+  if (!clientId){ body.innerHTML = ''; return; }
+  body.innerHTML = '<div class="card">Loading…</div>';
+  try {
+    const [d, a] = await Promise.all([
+      mktCall('list', { client_id: clientId }),
+      mktCall('audience_list', { client_id: clientId }),
+    ]);
+    mktDomains = d.domains || [];
+    mktAudiences = a.audiences || [];
+    mktRender(clientId);
+  } catch(e){
+    body.innerHTML = `<div class="card" style="color:var(--danger)">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function mktRender(clientId){
+  const dom = mktDomains[0];
+  const domLine = !dom
+    ? 'No sending domain connected. The client connects one from their own portal — staff cannot do it for them here.'
+    : dom.usable_for_sending
+      ? `<b style="color:var(--good)">${escapeHtml(dom.domain)}</b> — verified, ready to send.`
+      : `<b>${escapeHtml(dom.domain)}</b> — <span style="color:#E38B2E">${escapeHtml(dom.status)}</span>, not ready to send yet.`;
+
+  const rows = mktAudiences.length ? mktAudiences.map(a=>`<tr>
+      <td style="padding:7px 10px 7px 0;"><b>${escapeHtml(a.name)}</b>
+        <div style="font-size:11px; color:var(--text-2);">${escapeHtml(a.source||'')}</div></td>
+      <td style="padding:7px 10px 7px 0;" class="mono">${Number(a.contact_count).toLocaleString()}</td>
+      <td style="padding:7px 0; text-align:right;">
+        <button class="btn-secondary mkt-upload" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="font-size:11px; padding:3px 9px;">Upload CSV</button>
+        <button class="btn-secondary mkt-del" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="font-size:11px; padding:3px 9px;">Delete</button>
+      </td></tr>`).join('')
+    : '<tr><td colspan="3" style="padding:8px 0; color:var(--text-2);">No lists yet.</td></tr>';
+
+  document.getElementById('mktBody').innerHTML = `
+    <div class="card" style="margin-bottom:16px;">
+      <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:10px; text-transform:uppercase; letter-spacing:1px;">Sending domain</h3>
+      <div style="font-size:13px;">${domLine}</div>
+    </div>
+    <div class="card" style="margin-bottom:16px;">
+      <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:10px; text-transform:uppercase; letter-spacing:1px;">Lists</h3>
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead><tr style="text-align:left; color:var(--text-2); font-size:10.5px; text-transform:uppercase; letter-spacing:1px;">
+          <th style="padding:0 10px 6px 0;">List</th><th style="padding:0 10px 6px 0;">Contacts</th><th></th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div id="mktUploadArea" style="margin-top:14px;"></div>
+      <div class="filter-row" style="margin-top:16px;">
+        <div style="min-width:200px;"><label>New list name</label><input type="text" id="mktNewName" placeholder="Chicago investors – Sept"></div>
+        <div style="min-width:240px;"><label>Where did it come from?</label><input type="text" id="mktNewSource" placeholder="Conference sign-up, Sept 2026"></div>
+        <div style="align-self:flex-end;"><button class="btn-primary" id="mktCreateBtn">Create list</button></div>
+        <div style="align-self:flex-end; font-size:12px; color:var(--text-2);" id="mktMsg"></div>
+      </div>
+    </div>`;
+
+  document.getElementById('mktCreateBtn').addEventListener('click', ()=>mktCreate(clientId));
+  document.querySelectorAll('.mkt-upload').forEach(b=>b.addEventListener('click', ()=>mktShowUpload(b.dataset.id, b.dataset.name)));
+  document.querySelectorAll('.mkt-del').forEach(b=>b.addEventListener('click', ()=>mktDelete(b.dataset.id, b.dataset.name)));
+}
+
+async function mktCreate(clientId){
+  const msg=document.getElementById('mktMsg'), btn=document.getElementById('mktCreateBtn');
+  btn.disabled=true; msg.style.color='var(--text-2)'; msg.textContent='Creating…';
+  try{
+    await mktCall('audience_create', { client_id: clientId,
+      name: document.getElementById('mktNewName').value,
+      source: document.getElementById('mktNewSource').value });
+    await mktLoad();
+  }catch(e){ msg.style.color='var(--danger)'; msg.textContent=e.message; btn.disabled=false; }
+}
+
+async function mktDelete(id, name){
+  if(!window.confirm(`Delete the list “${name}” and all its contacts?`)) return;
+  try{ await mktCall('audience_delete', { id, confirm:true }); await mktLoad(); }
+  catch(e){ const m=document.getElementById('mktMsg'); if(m){ m.style.color='var(--danger)'; m.textContent=e.message; } }
+}
+
+function mktShowUpload(id, name){
+  mktCsv=null;
+  document.getElementById('mktUploadArea').innerHTML = `
+    <div style="padding:12px; border:1px solid var(--border); border-radius:8px;">
+      <div style="font-size:12.5px; font-weight:700; margin-bottom:8px;">Upload contacts into “${escapeHtml(name)}”</div>
+      <div style="font-size:11.5px; color:var(--text-2); margin-bottom:10px;">
+        CSV with a header row. Anyone who unsubscribed, bounced or complained is skipped automatically,
+        and uploading the same file twice is harmless.</div>
+      <input type="file" id="mktCsvFile" accept=".csv,text/csv" style="max-width:320px;">
+      <div id="mktMapArea" style="margin-top:10px;"></div>
+      <div style="margin-top:12px; display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button class="btn-primary" id="mktImportBtn" data-id="${escapeHtml(id)}" disabled>Import</button>
+        <button class="btn-secondary" id="mktCancelBtn">Cancel</button>
+        <span id="mktImportMsg" style="font-size:12px; color:var(--text-2);"></span>
+      </div>
+      <div id="mktResult" style="margin-top:10px;"></div>
+    </div>`;
+  document.getElementById('mktCsvFile').addEventListener('change', mktFilePicked);
+  document.getElementById('mktCancelBtn').addEventListener('click', ()=>{ document.getElementById('mktUploadArea').innerHTML=''; });
+  document.getElementById('mktImportBtn').addEventListener('click', e=>mktImport(e.target.dataset.id));
+}
+
+function mktFilePicked(ev){
+  const f = ev.target.files && ev.target.files[0];
+  if(!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    const all = mktParseCsv(r.result);
+    if(all.length < 2){
+      document.getElementById('mktMapArea').innerHTML = '<div style="font-size:12px; color:var(--danger)">That file has no data rows under its header.</div>';
+      return;
+    }
+    mktCsv = { headers: all[0], rows: all.slice(1) };
+    const h = mktCsv.headers;
+    document.getElementById('mktMapArea').innerHTML = `
+      <div style="font-size:12px; margin-bottom:8px;">${mktCsv.rows.length.toLocaleString()} rows found. Which column is which?</div>
+      <div class="filter-row">
+        <div><label>Email *</label>${mktSel('mktColEmail', h, mktGuess(h,'email'))}</div>
+        <div><label>First name</label>${mktSel('mktColFirst', h, mktGuess(h,'first_name'))}</div>
+        <div><label>Last name</label>${mktSel('mktColLast', h, mktGuess(h,'last_name'))}</div>
+        <div><label>Company</label>${mktSel('mktColCompany', h, mktGuess(h,'company'))}</div>
+      </div>`;
+    document.getElementById('mktImportBtn').disabled = false;
+  };
+  r.readAsText(f);
+}
+
+async function mktImport(audienceId){
+  const ec = Number(document.getElementById('mktColEmail').value);
+  const msg = document.getElementById('mktImportMsg'), btn = document.getElementById('mktImportBtn');
+  if(ec < 0){ msg.style.color='var(--danger)'; msg.textContent='Pick the email column.'; return; }
+  const c = { first_name:Number(document.getElementById('mktColFirst').value),
+              last_name:Number(document.getElementById('mktColLast').value),
+              company:Number(document.getElementById('mktColCompany').value) };
+  const rows = mktCsv.rows.map(r=>({ email:r[ec],
+    first_name: c.first_name>=0 ? r[c.first_name] : '',
+    last_name:  c.last_name>=0  ? r[c.last_name]  : '',
+    company:    c.company>=0    ? r[c.company]    : '' }));
+  btn.disabled = true;
+  const t = { imported:0, already_on_list:0, duplicates_in_file:0, blank:0, invalid:0, suppressed:0 };
+  try{
+    for(let i=0;i<rows.length;i+=2000){
+      msg.style.color='var(--text-2)';
+      msg.textContent = `Importing ${Math.min(i+2000, rows.length).toLocaleString()} of ${rows.length.toLocaleString()}…`;
+      const r = await mktCall('contacts_import', { audience_id: audienceId, rows: rows.slice(i, i+2000) });
+      for(const k of Object.keys(t)) t[k] += Number(r[k]||0);
+    }
+    msg.textContent='';
+    document.getElementById('mktResult').innerHTML = `
+      <div style="font-size:13px; line-height:1.7;">
+        <b style="color:var(--good)">${t.imported.toLocaleString()} imported.</b><br>
+        ${t.already_on_list?`${t.already_on_list.toLocaleString()} were already on this list.<br>`:''}
+        ${t.duplicates_in_file?`${t.duplicates_in_file.toLocaleString()} appeared more than once in the file.<br>`:''}
+        ${t.suppressed?`<span style="color:#E38B2E">${t.suppressed.toLocaleString()} skipped — they unsubscribed, bounced or complained.</span><br>`:''}
+        ${t.invalid?`<span style="color:var(--danger)">${t.invalid.toLocaleString()} were not valid email addresses.</span><br>`:''}
+        ${t.blank?`${t.blank.toLocaleString()} rows had no email.<br>`:''}
+      </div>`;
+    await mktLoad();
+  }catch(e){ msg.style.color='var(--danger)'; msg.textContent=e.message; btn.disabled=false; }
+}
+
 function activateTab(tabKey){
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabKey));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `tab-${tabKey}`));
@@ -10442,6 +10695,7 @@ function activateTab(tabKey){
   // via initTimeManagementTab() below, same as Timesheets/Reports/Flags.
   if(tabKey === 'time_management') initTimeManagementTab();
   if(tabKey === 'leads') initLeadsTab();
+  if(tabKey === 'marketing') initMarketingTab();
   if(tabKey === 'call_activity') initActivityTab();
   if(tabKey === 'client_chat') ciInitTab();   // v701
   if(tabKey === 'client_disputes') initClientDisputesTab();   // v717
@@ -21074,6 +21328,9 @@ const DASHBOARD_TAB_KEYS = [
   // elements in any of them), so no editable:true either — same reasoning
   // as Data Science above, just nothing to opt into editing yet.
   { key: 'taxes', label: 'Taxes' },
+  // v756: staff-side list management for client email marketing. Off for
+  // custom roles until an Owner grants it, like every other tab here.
+  { key: 'marketing', label: 'Marketing' },
   // 'activity' (Audit Log) is deliberately absent — it's Owner-only always
   // (see applyRolePermissionsToNav), not something any role, even Admin,
   // can be granted through this picker.
