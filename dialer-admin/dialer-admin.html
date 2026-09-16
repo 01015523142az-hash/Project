@@ -61,6 +61,33 @@
   <!-- ================================================ NUMBERS ========== -->
   <section id="tab-numbers" class="hide">
     <div class="panel">
+      <h2>Price a market</h2>
+      <p class="hint">
+        What a market would cost <em>before</em> you buy into it. Asks Telnyx what numbers
+        it actually has there, works out how big the pool needs to be, and prices it at
+        today's rates. This changes nothing and buys nothing &mdash; it only tells you.
+      </p>
+      <p class="hint" style="margin:0 0 10px">
+        Two things set the pool size and the larger one wins: the dial volume
+        (dials a day &divide; dials allowed per number), and one number for every area code
+        you want a local caller ID in. That is why a market spread thinly across many
+        area codes costs more than a concentrated one for exactly the same dialling.
+      </p>
+      <div class="row" style="align-items:flex-end">
+        <div class="field"><label for="mpState">State</label>
+          <input type="text" id="mpState" maxlength="2" placeholder="IL" style="width:80px"></div>
+        <div class="field"><label for="mpAreas">or area codes</label>
+          <input type="text" id="mpAreas" placeholder="847, 708, 773" style="width:220px"></div>
+        <div class="field"><label for="mpDials">Dials per day</label>
+          <input type="number" id="mpDials" min="1" max="5000" value="465" style="width:110px"></div>
+        <div class="field"><label for="mpCap">Dials per number</label>
+          <input type="number" id="mpCap" min="1" max="500" value="15" style="width:110px"></div>
+        <button class="sm" id="mpRun">Price it</button>
+        <span id="mpMsg" class="muted"></span>
+      </div>
+      <div id="mpOut" style="margin-top:14px"></div>
+    </div>
+    <div class="panel">
       <h2>Coverage</h2>
       <p class="hint">
         Where your dialable queue actually is, against the area codes you own numbers in.
@@ -76,9 +103,9 @@
       </p>
       <div class="row" style="align-items:flex-end">
         <div class="field"><label for="covDials">Dials per rep per day</label>
-          <input type="number" id="covDials" min="1" max="2000" value="350" style="width:120px"></div>
+          <input type="number" id="covDials" min="1" max="2000" value="465" style="width:120px"></div>
         <div class="field"><label for="covCap">Dials per number per day</label>
-          <input type="number" id="covCap" min="1" max="500" value="80" style="width:120px"></div>
+          <input type="number" id="covCap" min="1" max="500" value="15" style="width:120px"></div>
         <span id="covPlanMsg" class="muted"></span>
       </div>
       <div id="covPlan" style="margin-bottom:14px"></div>

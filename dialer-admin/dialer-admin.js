@@ -4610,6 +4610,88 @@ function wireOpenEmail(root) {
   });
 }
 
+// v750: PRICE A MARKET BEFORE BUYING INTO IT.
+//
+// The old Coverage panel answers "where is my queue against what I own",
+// which only works for a list already loaded. Choosing next quarter's market
+// is the opposite question -- nothing is loaded yet -- so this asks Telnyx
+// what is actually purchasable and prices the pool it would take.
+const mpMoney = (n) => '$' + Number(n || 0).toFixed(2);
+
+function mpRender(r) {
+  const cost = r.cost_usd || {};
+  const rows = (r.areas || []).map((a) => {
+    const state = a.available < 1 ? '<span class="chip bad">none</span>'
+                : a.available < 10 ? '<span class="chip">thin</span>'
+                : '<span class="chip good">ok</span>';
+    return `<tr><td class="mono">${esc(a.area_code)}</td>
+      <td>${esc(a.state || '')}</td>
+      <td class="num">${Number(a.available).toLocaleString()}</td>
+      <td>${state}</td></tr>`;
+  }).join('');
+
+  const verdict = r.inventory_sufficient
+    ? '<span class="chip good">Telnyx has enough numbers</span>'
+    : '<span class="chip bad">Not enough numbers available</span>';
+
+  $('mpOut').innerHTML = `
+    <div class="fb-label" style="margin:0 0 6px">${esc(String(r.market))}</div>
+    <p style="margin:0 0 10px">
+      Needs <b>${r.numbers_needed}</b> numbers &mdash; set by
+      <b>${esc(String(r.pool_set_by))}</b> &mdash; at
+      ${r.assumptions.dials_per_day} dials a day and
+      ${r.assumptions.dials_per_did_per_day} per number. ${verdict}
+    </p>
+    <table style="max-width:460px;margin-bottom:14px">
+      <tbody>
+        <tr><td>Numbers, monthly</td><td class="num">${mpMoney(cost.numbers_monthly)}</td></tr>
+        <tr><td>Caller ID name (CNAM)</td><td class="num">${mpMoney(cost.cnam_monthly)}</td></tr>
+        <tr><td>Texting activation</td><td class="num">${mpMoney(cost.messaging_monthly)}</td></tr>
+        <tr><td><b>Total monthly</b></td><td class="num"><b>${mpMoney(cost.total_monthly)}</b></td></tr>
+        <tr><td>One-off setup</td><td class="num">${mpMoney(cost.setup_once)}</td></tr>
+      </tbody>
+    </table>
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Area code</th><th>State</th>
+          <th class="num">Available at Telnyx</th><th>Stock</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4">No area codes found.</td></tr>'}</tbody>
+      </table>
+    </div>
+    ${(r.notes || []).length
+      ? '<ul class="hint" style="margin:12px 0 0;padding-left:18px">'
+        + r.notes.map((n) => `<li>${esc(n)}</li>`).join('') + '</ul>'
+      : ''}`;
+}
+
+if ($('mpRun')) $('mpRun').onclick = async () => {
+  const state = ($('mpState').value || '').trim().toUpperCase();
+  const areas = ($('mpAreas').value || '').split(/[^0-9]+/).filter((a) => a.length === 3);
+  if (!state && !areas.length) {
+    $('mpMsg').textContent = 'Enter a state or some area codes.';
+    return;
+  }
+  $('mpRun').disabled = true;
+  $('mpMsg').textContent = 'Asking Telnyx…';
+  $('mpOut').innerHTML = '';
+  try {
+    const r = await callFn('dialer-pool', {
+      action: 'market_plan',
+      state: areas.length ? undefined : state,
+      area_codes: areas.length ? areas : undefined,
+      dials_per_day: Number($('mpDials').value) || 465,
+      dials_per_did_per_day: Number($('mpCap').value) || 15,
+    });
+    if (!r || r.ok === false) throw new Error((r && r.error) || 'Could not price that market.');
+    $('mpMsg').textContent = '';
+    mpRender(r);
+  } catch (e) {
+    $('mpMsg').textContent = e.message;
+  } finally {
+    $('mpRun').disabled = false;
+  }
+};
+
 function wireRecordings(root) {
   wireOpenEmail(root);   // v747
   root.querySelectorAll('[data-rec]').forEach((b) => {
