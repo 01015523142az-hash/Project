@@ -7310,6 +7310,11 @@
       </div>
       <div style="margin-top:14px; font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.5px;">Criteria answers (all required)</div>
       <div id="csubNewCampaignQaFields" style="margin-top:6px;"></div>
+      <div style="margin-top:10px;">
+        <label style="font-size:11px;">Caller script (optional)</label>
+        <input type="file" id="csubNewCampaignScript" accept=".pdf,.doc,.docx,.txt,.rtf,.odt" style="width:100%; font-size:12px;">
+        <div style="font-size:10px; color:var(--text-dim); margin-top:3px;">Attached to the campaign guide. Uploaded into the client&rsquo;s own folder, so they can see it too. Max 10&nbsp;MB.</div>
+      </div>
       <div class="msg error" id="csubNewCampaignMsg" style="display:none;"></div>
       <div class="modal-actions">
         <button class="btn-secondary" id="csubNewCampaignCancelBtn">Cancel</button>
@@ -29495,11 +29500,42 @@ function campaignGuideFieldIsAmbiguous(meta, value){
 function csubIsAttachmentField(key){
   return csubNormalizeLabel(key) === csubNormalizeLabel('File Upload (Skiptracing)');
 }
+// v763: the optional caller script a client uploads while creating a
+// campaign. Unlike the Skiptracing upload above, the value is a PATH in the
+// private campaign-attachments bucket, not a URL -- so it cannot be rendered
+// as a plain href. The button below is signed on click instead.
+function csubIsCallerScriptField(key){
+  return csubNormalizeLabel(key) === csubNormalizeLabel('Caller Script (attachment)');
+}
+// One delegated listener rather than per-card wiring: these buttons are
+// rebuilt on every guide render, and a signed URL is short-lived so it has to
+// be minted at click time anyway.
+document.addEventListener('click', async (e) => {
+  const b = e.target && e.target.closest ? e.target.closest('.csub-script-open') : null;
+  if(!b) return;
+  e.preventDefault();
+  const path = b.dataset.path;
+  if(!path) return;
+  const label = b.textContent;
+  b.disabled = true; b.textContent = 'Opening…';
+  const { data, error } = await sb.storage.from('campaign-attachments').createSignedUrl(path, 3600);
+  b.disabled = false; b.textContent = label;
+  if(error || !data || !data.signedUrl){
+    alert('Could not open the caller script: ' + ((error && error.message) || 'unknown error'));
+    return;
+  }
+  window.open(data.signedUrl, '_blank', 'noopener');
+});
 // v152: `editable`/`rowId` are optional — every pre-existing caller that
 // doesn't pass them keeps behaving exactly as before (plain escaped text).
 // Attachment fields (Skiptracing file uploads) are deliberately never made
 // editable here — those are download links, not text a person retypes.
 function csubFieldValueHtml(key, value, editable, rowId){
+  if(csubIsCallerScriptField(key)){
+    const pth = Array.isArray(value) ? value[0] : value;
+    if(pth == null || String(pth).trim() === '') return '—';
+    return `<button type="button" class="btn-secondary csub-script-open" data-path="${escapeHtml(String(pth).trim())}" style="width:auto; padding:4px 10px; font-size:10px; margin:2px 6px 2px 0;">Open caller script</button>`;
+  }
   if(csubIsAttachmentField(key)){
     if(value == null || value === '' || (Array.isArray(value) && !value.length)) return '—';
     const urls = (Array.isArray(value) ? value : String(value).split(/[\n,]+/))
@@ -29604,7 +29640,7 @@ async function loadCampaignGuide(){
   // A campaign with an override but no Client Qualification Form
   // submission at all yet (override created from scratch) still needs an
   // entry here, not just a patch onto one that already exists.
-  const { data: overrideRows } = await sb.from('campaign_guide_overrides').select('campaign_norm_name, campaign_display_name, fields, updated_at');
+  const { data: overrideRows } = await sb.from('campaign_guide_overrides').select('campaign_norm_name, campaign_display_name, fields, updated_at, ai_draft, ai_generated_at, ai_model');
   (overrideRows || []).forEach(o => {
     guides[o.campaign_norm_name] = {
       displayName: o.campaign_display_name,
@@ -29618,6 +29654,11 @@ async function loadCampaignGuide(){
       fields: (o.fields || []).map(f => ({ normLabel: f.normLabel || csubNormalizeLabel(f.label), label: f.label, value: f.value })),
       overridden: true,
       overrideUpdatedAt: o.updated_at,
+      // v763: an AI-written guide awaiting sign-off. Callers should not work
+      // from it until a human approves, so the card says so loudly.
+      aiDraft: !!o.ai_draft,
+      aiGeneratedAt: o.ai_generated_at,
+      aiModel: o.ai_model,
     };
   });
 
@@ -30850,6 +30891,22 @@ function renderCampaignGuideList(){
   applyOwnerAdminExportGating(listEl);
 }
 
+// v763: an "Other industry" campaign is one whose submission carried the
+// industry / data-criteria / market-coverage answers instead of the fixed
+// real-estate questionnaire. Those three are also the only input the AI
+// drafter has, so their presence is exactly the condition for offering it.
+function cgOtherIndustrySource(g){
+  const pick = (needle) => {
+    const f = (g.fields || []).find(x =>
+      csubNormalizeLabel(x.label).indexOf(csubNormalizeLabel(needle)) === 0);
+    return f ? String(f.value == null ? '' : f.value).trim() : '';
+  };
+  const industry = pick('Industry');
+  const dataCriteria = pick('Data Criteria');
+  const marketCoverage = pick('Market Coverage');
+  if(!industry && !dataCriteria && !marketCoverage) return null;
+  return { industry, dataCriteria, marketCoverage };
+}
 function buildCampaignGuideCard(g){
   const card = document.createElement('div');
   card.className = 'card';
@@ -30946,11 +31003,48 @@ function buildCampaignGuideCard(g){
   header.innerHTML = `
     <span class="mono" style="font-size:13px; font-weight:700; flex:1;">${escapeHtml(g.displayName)}</span>
     ${g.overridden ? '<span style="font-size:10px; color:var(--focus);">Manually edited</span>' : ''}
+    ${g.aiDraft ? '<span style="font-size:10px; color:var(--away); font-weight:700;">&#9888; AI draft &mdash; not yet reviewed</span>' : ''}
     <span style="font-size:10px; color:var(--text-dim);">${g.overridden ? 'Last edited' : 'From submission'}: ${new Date(g.overridden ? g.overrideUpdatedAt : g.submittedAt).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric', ...(nonAgentDisplayTz() ? { timeZone: nonAgentDisplayTz() } : {}) })}</span>
     <button class="edit-only btn-secondary cg-edit-btn" style="width:auto; padding:6px 14px; font-size:11px;">Edit</button>
+    ${cgOtherIndustrySource(g) ? '<button class="edit-only btn-secondary cg-ai-btn" style="width:auto; padding:6px 14px; font-size:11px;">' + (g.aiDraft ? 'Regenerate with AI' : 'Generate with AI') + '</button>' : ''}
+    ${g.aiDraft ? '<button class="edit-only btn-secondary cg-approve-btn" style="width:auto; padding:6px 14px; font-size:11px; color:var(--good); border-color:var(--good);">Approve</button>' : ''}
     ${g.overridden ? '<button class="edit-only owner-admin-export-only btn-secondary cg-reset-btn" style="width:auto; padding:6px 14px; font-size:11px;">Delete (reset to auto)</button>' : ''}
     ${myIsOwner ? '<button class="btn-secondary cg-delete-campaign-btn" style="width:auto; padding:6px 14px; font-size:11px; color:var(--danger); border-color:var(--danger);">Delete campaign</button>' : ''}
   `;
+  // v763: approving clears the draft flag only -- the guide text itself is
+  // whatever is in the table, edited or not. Reviewing IS the approval, so
+  // there is no separate "publish" step to forget.
+  // v763: writes a fresh AI draft over this campaign's guide. It always lands
+  // as ai_draft = true, so regenerating an already-approved guide puts it back
+  // into review rather than quietly changing what the floor works from.
+  const aiBtn = header.querySelector('.cg-ai-btn');
+  if(aiBtn) aiBtn.addEventListener('click', async () => {
+    const src = cgOtherIndustrySource(g);
+    if(!src) return;
+    if(g.overridden && !g.aiDraft && !confirm(`"${g.displayName}" already has an approved guide. Replacing it with an AI draft puts it back into review until somebody approves it again. Continue?`)) return;
+    const label = aiBtn.textContent;
+    aiBtn.disabled = true; aiBtn.textContent = 'Writing…';
+    const { data, error } = await sb.functions.invoke('campaign-guide-ai-draft', {
+      body: { campaignNormName: g.normName, campaignDisplayName: g.displayName, ...src },
+    });
+    aiBtn.disabled = false; aiBtn.textContent = label;
+    if(error || !data || data.ok === false){
+      alert('Could not write the draft: ' + ((data && data.error) || (error && error.message) || 'unknown error'));
+      return;
+    }
+    await loadCampaignGuide();
+  });
+  const approveBtn = header.querySelector('.cg-approve-btn');
+  if(approveBtn) approveBtn.addEventListener('click', async () => {
+    approveBtn.disabled = true;
+    const { error } = await sb.from('campaign_guide_overrides')
+      .update({ ai_draft: false, reviewed_by: myUserId, reviewed_at: new Date().toISOString() })
+      .eq('campaign_norm_name', g.normName);
+    approveBtn.disabled = false;
+    if(error){ alert('Could not approve it: ' + error.message); return; }
+    logActivity('campaign_guide_override.approve', null, null, `Approved the AI-drafted Campaign Guide for "${g.displayName}"`);
+    await loadCampaignGuide();
+  });
   header.querySelector('.cg-edit-btn').addEventListener('click', () => {
     campaignGuideEditDrafts[g.normName] = {
       displayName: g.displayName,
@@ -32868,7 +32962,21 @@ if($('csubCampaignTableBody')) $('csubCampaignTableBody').addEventListener('clic
 // asterisk in each label below is real -- see REQUIRED_CAMP_FIELDS-style
 // check in the submit handler).
 const CSUB_YES_NO = ['Yes', 'No'];
+function csubSelectedCampaignKind(){
+  const c = document.querySelector('input[name="csubNewCampaignQaRadio-campaignKind"]:checked');
+  return (c && c.value === 'Other industry') ? 'other' : 'real_estate';
+}
+function csubApplyCampaignKind(){
+  const kind = csubSelectedCampaignKind();
+  document.querySelectorAll('#csubNewCampaignQaFields .csub-qa-field').forEach(el => {
+    const k = el.dataset.qaKind || 'real_estate';
+    el.style.display = (k === 'both' || k === kind) ? '' : 'none';
+  });
+}
 const CSUB_NEW_CAMPAIGN_QA_FIELDS = [
+  // v763: mirrors the client portal. 'both' shows on either kind; everything
+  // without a kind is real-estate-only, which is every pre-existing field.
+  { key: 'campaignKind', label: 'Campaign type *', type: 'radio', options: ['Real estate', 'Other industry'], kind: 'both' },
   { key: 'typeOfLeads', label: 'Type of Leads *', type: 'checkbox', options: ['Absentee Owner', 'High Equity', 'Tired Landlord', 'Pre-Probate (Senior Owners)', 'Pre-foreclosure', 'Tax Delinquent', 'Divorce'] },
   { key: 'propertyType', label: 'Property Type *', type: 'checkbox', options: ['Single Family Home', 'Multi- Family Home 2-4', 'Townhouse', 'Condo', 'Vacant lots', 'Mobile Homes', 'Land', 'Multi- Family Home 5+ (commercial)', 'Commercial', 'Agriculture'] },
   { key: 'targetMarket', label: 'Target Market *', type: 'textarea' },
@@ -32884,6 +32992,9 @@ const CSUB_NEW_CAMPAIGN_QA_FIELDS = [
   { key: 'acceptOutsideReferrals', label: 'Accept referrals outside target market? *', type: 'radio', options: CSUB_YES_NO },
   { key: 'askSellerEmail', label: "Ask for seller's email? *", type: 'radio', options: CSUB_YES_NO },
   { key: 'otherDetails', label: 'Other details *', type: 'textarea' },
+  { key: 'industry', label: 'Industry *', type: 'textarea', kind: 'other' },
+  { key: 'dataCriteria', label: 'Data criteria *', type: 'textarea', kind: 'other' },
+  { key: 'marketCoverage', label: 'Market coverage *', type: 'textarea', kind: 'other' },
 ];
 // Same visual convention Submission Forms Creator's own "Visible to"
 // checklists use (sf-form-role-cb etc.) -- inline flex label + accent-color
@@ -32894,18 +33005,18 @@ function csubNewCampaignOptionRowHtml(inputHtml, text){
 }
 function csubNewCampaignFieldHtml(f){
   if(f.type === 'checkbox'){
-    return `<div style="margin-bottom:10px;">
+    return `<div class="csub-qa-field" data-qa-kind="${f.kind || 'real_estate'}" style="margin-bottom:10px;">
       <label style="font-size:11px; display:block; margin-bottom:4px;">${escapeHtml(f.label)}</label>
       <div style="display:flex; gap:12px; flex-wrap:wrap;">${f.options.map(o => csubNewCampaignOptionRowHtml(`<input type="checkbox" class="csub-new-campaign-qa-cb" data-key="${f.key}" value="${escapeHtml(o)}" style="width:13px; height:13px; accent-color:var(--focus);">`, o)).join('')}</div>
     </div>`;
   }
   if(f.type === 'radio'){
-    return `<div style="margin-bottom:10px;">
+    return `<div class="csub-qa-field" data-qa-kind="${f.kind || 'real_estate'}" style="margin-bottom:10px;">
       <label style="font-size:11px; display:block; margin-bottom:4px;">${escapeHtml(f.label)}</label>
       <div style="display:flex; gap:12px; flex-wrap:wrap;">${f.options.map(o => csubNewCampaignOptionRowHtml(`<input type="radio" name="csubNewCampaignQaRadio-${f.key}" value="${escapeHtml(o)}" style="width:13px; height:13px; accent-color:var(--focus);">`, o)).join('')}</div>
     </div>`;
   }
-  return `<div style="margin-bottom:10px;">
+  return `<div class="csub-qa-field" data-qa-kind="${f.kind || 'real_estate'}" style="margin-bottom:10px;">
     <label style="font-size:11px;">${escapeHtml(f.label)}</label>
     <textarea class="csub-new-campaign-qa-text" data-key="${f.key}" rows="2" style="width:100%;"></textarea>
   </div>`;
@@ -32921,6 +33032,14 @@ async function openCsubNewCampaignModal(){
   $('csubNewCampaignCompExpiry').value = '';
   $('csubNewCampaignCompExpiryRow').style.display = 'none';
   $('csubNewCampaignQaFields').innerHTML = CSUB_NEW_CAMPAIGN_QA_FIELDS.map(f => csubNewCampaignFieldHtml(f)).join('');
+  // v763: only the half that applies is shown, and csubSelectedCampaignKind()
+  // is what the submit handler validates against -- a hidden field is never
+  // required, or staff would be blocked by questions they cannot see.
+  const kindRadios = document.querySelectorAll('input[name="csubNewCampaignQaRadio-campaignKind"]');
+  const firstKind = document.querySelector('input[name="csubNewCampaignQaRadio-campaignKind"][value="Real estate"]');
+  if(firstKind) firstKind.checked = true;
+  kindRadios.forEach(r => r.addEventListener('change', csubApplyCampaignKind));
+  csubApplyCampaignKind();
   const sel = $('csubNewCampaignClient');
   sel.innerHTML = '<option value="">Loading…</option>';
   const { data, error } = await sb.from('client_accounts').select('id, full_name, email').eq('is_active', true).order('full_name');
@@ -32964,7 +33083,10 @@ if($('csubNewCampaignSubmitBtn')) $('csubNewCampaignSubmitBtn').addEventListener
   // stopping at the first empty field.
   const qaBody = {};
   const missingQaLabels = [];
+  const campaignKind = csubSelectedCampaignKind();   // v763
   CSUB_NEW_CAMPAIGN_QA_FIELDS.forEach(f => {
+    const fk = f.kind || 'real_estate';
+    if(fk !== 'both' && fk !== campaignKind) return;   // v763: not asked, not required
     const cleanLabel = f.label.replace(/\s*\*$/, '');
     if(f.type === 'checkbox'){
       const vals = Array.from(document.querySelectorAll(`.csub-new-campaign-qa-cb[data-key="${f.key}"]:checked`)).map(cb => cb.value);
@@ -32986,6 +33108,29 @@ if($('csubNewCampaignSubmitBtn')) $('csubNewCampaignSubmitBtn').addEventListener
   const btn = $('csubNewCampaignSubmitBtn');
   btn.disabled = true;
   btn.textContent = 'Creating…';
+  // v763: normalise the radio's label into the value the edge function and
+  // the client portal both use.
+  qaBody.campaignKind = campaignKind;
+  // Optional caller script, into the CLIENT's folder so they can read it too
+  // (the staff insert policy allows any folder in this bucket).
+  const scriptEl = $('csubNewCampaignScript');
+  const scriptFile = scriptEl && scriptEl.files && scriptEl.files[0];
+  if(scriptFile){
+    if(scriptFile.size > 10 * 1024 * 1024){
+      msg.textContent = 'That caller script is over 10 MB.'; msg.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Create'; return;
+    }
+    const safeName = scriptFile.name.replace(/[^\w.\- ]+/g, '_').slice(-120);
+    const scriptPath = `${clientId}/${Date.now()}-${safeName}`;
+    const { error: upErr } = await sb.storage.from('campaign-attachments')
+      .upload(scriptPath, scriptFile, { upsert: false, contentType: scriptFile.type || 'application/octet-stream' });
+    if(upErr){
+      msg.textContent = 'Could not upload the caller script: ' + upErr.message; msg.style.display = 'block';
+      btn.disabled = false; btn.textContent = 'Create'; return;
+    }
+    qaBody.callerScriptPath = scriptPath;
+    qaBody.callerScriptName = scriptFile.name;
+  }
   const { data, error } = await sb.functions.invoke('staff-create-campaign', {
     body: { clientId, campaignName, callerTier, dialerChoice, dataChoice, complimentary, complimentaryExpiresAt: complimentary ? complimentaryExpiresAt : undefined, ...qaBody },
   });
@@ -44382,7 +44527,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '762'; // 762: Campaign Details shows each client's Email Marketing standing; 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
+const DIALER_ADMIN_VERSION = '763'; // 763: campaign type (real estate / other industry), caller-script attachment on the guide, AI-drafted guides awaiting review; 762: Campaign Details shows each client's Email Marketing standing; 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
