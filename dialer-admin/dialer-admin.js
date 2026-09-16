@@ -4473,14 +4473,14 @@ $('cvSearch').addEventListener('input', renderInbox);
 // v747: every stored email with one address, for a thread that has no contact.
 async function fetchEmailTimeline(addr) {
   const { data, error } = await sb.from('dialer_email_messages')
-    .select('id, message_at, direction, subject, snippet, from_address, to_address, mailbox, provider, delivery_status, delivery_detail')
+    .select('id, message_at, direction, subject, snippet, from_address, to_address, mailbox, provider, delivery_status, delivery_detail, is_draft')
     .eq('contact_email', addr).order('message_at', { ascending: false }).limit(100);
   if (error) throw error;
   return (data || []).map((e) => ({
     kind: 'email', at: e.message_at, direction: e.direction,
     title: e.subject || '(no subject)', body: e.snippet, actor: null, ref_id: e.id,
     meta: { from: e.from_address, to: e.to_address, mailbox: e.mailbox, provider: e.provider,
-            delivery: e.delivery_status, delivery_detail: e.delivery_detail },
+            delivery: e.delivery_status, delivery_detail: e.delivery_detail, draft: !!e.is_draft },
   }));
 }
 
@@ -4532,23 +4532,23 @@ function timelineHtml(items, kind, newestFirst) {
       // v746: what is actually known about delivery. Email has no delivery
       // receipt, so "Sent" means the mail server accepted it; only a bounce
       // proves it did not arrive.
-      const st = out ? String(m.delivery || 'sent') : '';
-      const label = st === 'bounced' ? 'Bounced' : st === 'failed' ? 'Failed' : st ? 'Sent' : '';
-      const why = st === 'bounced' ? (m.delivery_detail || 'A failure notice came back.')
+      // v756e: a Gmail draft is stored too, and it was never sent.
+      const st = m.draft ? 'draft' : out ? String(m.delivery || 'sent') : '';
+      const label = st === 'draft' ? 'Draft — not sent' : st === 'bounced' ? 'Bounced' : st === 'failed' ? 'Failed' : st ? 'Sent' : '';
+      const why = st === 'draft' ? 'Still a draft in the rep\'s Gmail. It has not been sent.'
+        : st === 'bounced' ? (m.delivery_detail || 'A failure notice came back.')
         : st === 'failed' ? (m.delivery_detail || 'The mail server refused it.')
         : 'Accepted by the mail server. Email gives no delivery receipt; a bounce would show here.';
       const badge = label
         ? `<span class="tl-status ${esc(st)}" title="${esc(why)}">${label}</span>` : '';
-      // v747: open the person this email is with -- their contact card, or the
-      // address's own conversation when nobody has it yet.
-      const addr = ((String((out ? m.to : m.from) || '')
-        .match(/[A-Z0-9._%+'-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [''])[0]).toLowerCase();
-      const open = addr
-        ? `<button class="sm" data-open="${esc(addr)}" title="Open ${esc(addr)}" style="margin-left:8px">Open</button>` : '';
-      return `<div class="tl email ${out ? 'out' : ''}"><div class="tl-b">
-        <div>✉️ <b>${esc(i.title || '(no subject)')}</b>${badge}${open}</div>
+      // v756e: Open shows the email itself, in full. (v747 opened the contact
+      // card, which the conversation header already offers as Contact profile.)
+      const open = i.ref_id
+        ? `<button class="sm" data-email-open="${esc(i.ref_id)}" title="Read the whole email" style="margin-left:8px">Open</button>` : '';
+      return `<div class="tl email ${out ? 'out' : ''}${st === 'draft' ? ' draft' : ''}"><div class="tl-b">
+        <div>${st === 'draft' ? '📝' : '✉️'} <b>${esc(i.title || '(no subject)')}</b>${badge}${open}</div>
         ${i.body ? `<div class="tl-body">${esc(i.body)}</div>` : ''}
-        <div class="tl-foot">${esc(out ? 'to ' + (m.to || '') : 'from ' + (m.from || ''))} · ${foot}</div></div></div>`;
+        <div class="tl-foot">${esc(st === 'draft' ? 'draft to ' + (m.to || '') : out ? 'to ' + (m.to || '') : 'from ' + (m.from || ''))} · ${foot}</div></div></div>`;
     }
     if (i.kind === 'call') {
       const bits = [i.direction === 'inbound' ? 'Inbound call' : 'Outbound call', i.title,
@@ -4573,42 +4573,95 @@ async function cvLoadDelivery() {
   const ids = (cvItems || []).filter((i) => i.kind === 'email' && i.ref_id).map((i) => i.ref_id);
   if (!ids.length) return false;
   const { data, error } = await sb.from('dialer_email_messages')
-    .select('id, delivery_status, delivery_detail').in('id', ids);
+    .select('id, delivery_status, delivery_detail, is_draft').in('id', ids);
   if (error) { console.warn('delivery status:', error.message); return false; }
   const by = new Map((data || []).map((r) => [r.id, r]));
   let changed = false;
   cvItems.forEach((i) => {
     const r = i.kind === 'email' ? by.get(i.ref_id) : null;
     if (!r) return;
-    i.meta = { ...(i.meta || {}), delivery: r.delivery_status, delivery_detail: r.delivery_detail };
+    i.meta = { ...(i.meta || {}), delivery: r.delivery_status, delivery_detail: r.delivery_detail,
+               draft: !!r.is_draft };   // v756e
     changed = true;
   });
   return changed;
 }
 
-// v747: "Open" on an email. A contact with that address opens their card;
-// otherwise the address's own conversation, which is where it can be answered
-// and turned into a contact.
+// v756e: "Open" on an email shows THE EMAIL, in full -- read from Gmail at
+// that moment by dialer-email-sync ('body'), which checks the caller may read
+// the stored row. v747 opened the contact card here, which the conversation
+// header already offers as "Contact profile".
+//
+// The HTML goes into a sandboxed iframe with no scripts and no same-origin
+// access, so an email cannot run code in the portal. Links open in a new tab.
 function wireOpenEmail(root) {
-  root.querySelectorAll('[data-open]').forEach((b) => {
-    b.onclick = async (ev) => {
-      ev.stopPropagation();
-      const addr = String(b.dataset.open || '').toLowerCase();
-      if (!addr) return;
-      b.disabled = true;
-      const { data } = await sb.from('dialer_contacts').select('id, email').ilike('email', addr).limit(5);
-      b.disabled = false;
-      const hit = (data || []).find((c) => String(c.email || '').trim().toLowerCase() === addr);
-      if (hit) { openContactDrawer(hit.id); return; }
-      closeContactDrawer();
-      if (daPane !== 'inbox') await showSection('conversations/inbox');
-      let row = cvRows.find((r) => r.phone_key === 'email:' + addr);
-      if (!row) { await loadInbox(); row = cvRows.find((r) => r.phone_key === 'email:' + addr); }
-      if (row) openThread(row);
-      else $('inboxMsg').textContent = `Nothing stored yet for ${addr}.`;
-    };
+  root.querySelectorAll('[data-email-open]').forEach((b) => {
+    b.onclick = (ev) => { ev.stopPropagation(); openEmailViewer(b.dataset.emailOpen); };
   });
 }
+function closeEmailViewer() { const v = $('daEmailView'); if (v) v.remove(); }
+async function openEmailViewer(id) {
+  if (!id) return;
+  closeEmailViewer();
+  const host = $('daHost') || document.body;
+  const v = document.createElement('div');
+  v.id = 'daEmailView';
+  v.className = 'da-email-view';
+  v.innerHTML = `<div class="da-email-card" role="dialog" aria-modal="true" aria-label="Email">
+      <div class="da-drawer-head">
+        <div style="min-width:0"><div class="da-drawer-title" data-ev="subject">Loading…</div>
+          <div class="hint" style="margin:2px 0 0" data-ev="meta"></div></div>
+        <button class="sm" data-ev="close" title="Close (Esc)">Close</button>
+      </div>
+      <div class="da-email-body" data-ev="body"><div class="da-empty">Loading the email…</div></div>
+    </div>`;
+  host.appendChild(v);
+  const q = (k) => v.querySelector(`[data-ev="${k}"]`);
+  q('close').onclick = closeEmailViewer;
+  v.onclick = (e) => { if (e.target === v) closeEmailViewer(); };
+
+  let r;
+  try { r = await callFn('dialer-email-sync', { action: 'body', id }); }
+  catch (e) { r = { ok: false, error: e?.message || String(e) }; }
+  if (!v.isConnected) return;
+  if (!r?.ok) {
+    q('subject').textContent = 'Could not open this email';
+    q('body').innerHTML = `<div class="da-empty">${esc(r?.error || 'Unknown error')}</div>`;
+    return;
+  }
+  q('subject').textContent = r.subject || '(no subject)';
+  const status = r.is_draft ? '<span class="tl-status draft">Draft — not sent</span>'
+    : r.direction === 'outbound'
+      ? `<span class="tl-status ${esc(r.delivery || 'sent')}">${r.delivery === 'bounced' ? 'Bounced' : r.delivery === 'failed' ? 'Failed' : 'Sent'}</span>`
+      : '';
+  q('meta').innerHTML = [
+    r.from ? `From <b>${esc(r.from)}</b>` : '',
+    r.to ? `to ${esc(r.to)}` : '',
+    r.cc ? `cc ${esc(r.cc)}` : '',
+    r.date ? esc(smsTime(r.date)) : '',
+  ].filter(Boolean).join(' · ') + status;
+
+  const bits = [];
+  if (r.note) bits.push(`<div class="hint" style="margin:0 0 10px">${esc(r.note)}</div>`);
+  if ((r.attachments || []).length) {
+    bits.push(`<div class="hint" style="margin:0 0 10px">📎 ${r.attachments.map((a) => esc(a)).join(', ')}</div>`);
+  }
+  if (r.html) {
+    bits.push('<iframe class="da-email-frame" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" title="Email content"></iframe>');
+  } else {
+    bits.push(`<div class="da-email-text">${esc(r.text || '(This email has no text.)')}</div>`);
+  }
+  q('body').innerHTML = bits.join('');
+  const frame = q('body').querySelector('iframe');
+  if (frame) {
+    frame.srcdoc = '<!doctype html><html><head><meta charset="utf-8">'
+      + '<meta http-equiv="Content-Security-Policy" content="script-src \'none\'; object-src \'none\'">'
+      + '<base target="_blank"><style>body{margin:12px;font:14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;'
+      + 'color:#1b1f24;background:#fff;word-wrap:break-word}img{max-width:100%;height:auto}</style></head><body>'
+      + r.html + '</body></html>';
+  }
+}
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && $('daEmailView')) closeEmailViewer(); });
 
 // v750: PRICE A MARKET BEFORE BUYING INTO IT.
 //

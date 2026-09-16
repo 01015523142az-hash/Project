@@ -246,6 +246,17 @@
 #daHost .hs-old{color:var(--danger);text-decoration:line-through;opacity:.8}
 #daHost .hs-new{color:var(--good)}
 #daHost .tl.email .tl-b{border-style:solid;border-left:3px solid var(--teal)}
+/* v756e: a Gmail draft in the timeline, and the full-email viewer */
+#daHost .tl.email.draft .tl-b{border-style:dashed;border-left:3px dashed var(--gold);opacity:.9}
+#daHost .tl-status.draft{color:var(--gold);background:var(--gold-dim);border-color:var(--gold)}
+#daHost .da-email-view{position:fixed;inset:0;z-index:950;background:rgba(0,0,0,.55);display:flex;
+  align-items:center;justify-content:center;padding:16px}
+#daHost .da-email-card{width:min(860px,100%);max-height:calc(100vh - 32px);display:flex;flex-direction:column;
+  background:var(--card);border:1px solid var(--border-light);border-radius:12px;box-shadow:0 24px 60px rgba(0,0,0,.45)}
+#daHost .da-email-card .da-drawer-title{white-space:normal}
+#daHost .da-email-body{flex:1;overflow:auto;padding:14px 18px;min-height:200px}
+#daHost .da-email-frame{width:100%;height:min(65vh,720px);border:1px solid var(--border);border-radius:8px;background:#fff}
+#daHost .da-email-text{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13.5px;line-height:1.55}
 /* Wall screen: the Live floor on a TV. Fullscreen when the browser allows it,
    otherwise a fixed overlay; either way Esc or the button leaves it. */
 #daHost #tab-floor.da-wall{position:fixed;inset:0;z-index:1000;overflow:auto;background:var(--bg);padding:28px 36px}
