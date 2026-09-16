@@ -3345,8 +3345,12 @@
          for tax/accounting purposes). Grantable per role like every other
          multi-subtab tab, defaults off until an Owner explicitly checks it
          -- same "real money" reasoning Finance itself uses. -->
+    <!-- v757: Marketing in its own group. v756 had put it inside Taxes'
+         group, so opening Marketing unfolded the Taxes subnav too. -->
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="marketing" title="Marketing"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M2.5 5.5h15v9a1 1 0 01-1 1h-13a1 1 0 01-1-1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M2.5 6l7.5 5 7.5-5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>Marketing</span></button>
+    </div>
+    <div class="side-nav-group">
       <button class="tab-btn" data-tab="taxes" title="Taxes"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M6 2.5h8v15H6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6 6.5h8M8.5 9.5h3M8.5 12.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M3 6v9a1.5 1.5 0 001.5 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Taxes</span></button>
       <div class="tab-nav side-subnav" id="taxesSubNav">
       <button class="taxes-subtab-btn active" data-taxes-section="spending"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12.5l1.8-6.5h10.4l1.8 6.5"/><path d="M3 12.5v3a1 1 0 001 1h12a1 1 0 001-1v-3"/><path d="M3 12.5h4l1 2h4l1-2h4"/></svg>Spending</button>
@@ -10453,6 +10457,7 @@ let mktClients = [];
 let mktAudiences = [];
 let mktDomains = [];
 let mktCsv = null;
+let mktAccess = null;   // v757: marketing_access() for the picked client
 
 async function mktCall(action, payload){
   const AUD = ['audience_list','audience_create','audience_delete','contacts_import'];
@@ -10518,20 +10523,84 @@ async function mktLoad(){
   if (!clientId){ body.innerHTML = ''; return; }
   body.innerHTML = '<div class="card">Loading…</div>';
   try {
-    const [d, a] = await Promise.all([
+    const [d, a, acc] = await Promise.all([
       mktCall('list', { client_id: clientId }),
       mktCall('audience_list', { client_id: clientId }),
+      sb.rpc('marketing_access', { p_client: clientId }),
     ]);
+    if (acc.error) throw new Error(acc.error.message);
     mktDomains = d.domains || [];
     mktAudiences = a.audiences || [];
+    mktAccess = acc.data || null;
     mktRender(clientId);
   } catch(e){
     body.innerHTML = `<div class="card" style="color:var(--danger)">${escapeHtml(e.message)}</div>`;
   }
 }
 
+// v757: one seat = a Full-time caller on our data (or one added here by an
+// owner/admin) = 10,000 emails a month. Lists can only be created or uploaded
+// once the client has done all three setup steps in their own portal; the
+// edge function refuses otherwise, this just says so before anyone tries.
+function mktAccessCard(clientId){
+  const a = mktAccess || {};
+  const canGrant = ['owner','admin'].includes(myRole);
+  const tick = (ok, label) => `<div style="display:flex; gap:8px; align-items:center; font-size:13px; margin:3px 0;">
+      <span style="font-weight:700; color:${ok ? 'var(--good)' : '#E38B2E'};">${ok ? '&#10003;' : '&#9675;'}</span>
+      <span style="${ok ? '' : 'color:var(--text-2);'}">${label}</span></div>`;
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:10px; text-transform:uppercase; letter-spacing:1px;">Email Marketing access</h3>
+      <div style="display:flex; gap:28px; flex-wrap:wrap;">
+        <div style="min-width:220px;">
+          <div style="font-size:13px; line-height:1.7;">
+            <b>${Number(a.seats || 0)}</b> seat${a.seats === 1 ? '' : 's'}
+            <span style="color:var(--text-2);">(${Number(a.paid_seats || 0)} paid Full-time + Our data, ${Number(a.extra_seats || 0)} added by hand)</span><br>
+            <b class="mono">${Number(a.monthly_limit || 0).toLocaleString()}</b> emails a month &middot;
+            <span class="mono">${Number(a.sent_this_month || 0).toLocaleString()}</span> sent &middot;
+            <span class="mono">${Number(a.remaining || 0).toLocaleString()}</span> left
+            ${a.has_access ? '' : '<br><span style="color:var(--danger);">No seat &mdash; the client cannot see Email Marketing.</span>'}
+          </div>
+          ${canGrant ? `
+          <div class="filter-row" style="margin-top:10px;">
+            <div style="min-width:120px;"><label>Seats added by hand</label>
+              <input type="number" id="mktExtraSeats" min="0" max="100" step="1" value="${Number(a.extra_seats || 0)}"></div>
+            <div style="align-self:flex-end;"><button class="btn-secondary" id="mktSeatsSaveBtn">Save seats</button></div>
+            <div style="align-self:flex-end; font-size:12px; color:var(--text-2);" id="mktSeatsMsg">For test or complimentary accounts.</div>
+          </div>` : ''}
+        </div>
+        <div style="min-width:220px;">
+          <div style="font-size:11px; color:var(--text-2); text-transform:uppercase; letter-spacing:1px; margin-bottom:4px;">Client setup (in their portal)</div>
+          ${tick(a.domain_ready, '1. Sending domain verified')}
+          ${tick(a.sender_ready, '2. Sending address added')}
+          ${tick(a.template_ready, '3. Email design saved')}
+        </div>
+      </div>
+    </div>`;
+}
+
+async function mktSaveSeats(clientId){
+  const msg = document.getElementById('mktSeatsMsg'), btn = document.getElementById('mktSeatsSaveBtn');
+  const n = Number(document.getElementById('mktExtraSeats').value);
+  if(!Number.isInteger(n) || n < 0 || n > 100){ msg.style.color='var(--danger)'; msg.textContent='Use a whole number from 0 to 100.'; return; }
+  btn.disabled = true; msg.style.color='var(--text-2)'; msg.textContent='Saving…';
+  const { error } = await sb.rpc('marketing_set_extra_seats', { p_client: clientId, p_seats: n });
+  if(error){ msg.style.color='var(--danger)'; msg.textContent=error.message; btn.disabled=false; return; }
+  await mktLoad();
+  const m = document.getElementById('mktSeatsMsg');
+  if(m){ m.style.color='var(--good)'; m.textContent='Saved.'; }
+}
+
 function mktRender(clientId){
   const dom = mktDomains[0];
+  const a = mktAccess || {};
+  const ready = Boolean(a.setup_complete);
+  const missing = [
+    !a.has_access && 'an Email Marketing seat',
+    !a.domain_ready && 'a verified sending domain',
+    !a.sender_ready && 'a sending address',
+    !a.template_ready && 'an email design',
+  ].filter(Boolean).join(', ');
   const domLine = !dom
     ? 'No sending domain connected. The client connects one from their own portal — staff cannot do it for them here.'
     : dom.usable_for_sending
@@ -10543,18 +10612,20 @@ function mktRender(clientId){
         <div style="font-size:11px; color:var(--text-2);">${escapeHtml(a.source||'')}</div></td>
       <td style="padding:7px 10px 7px 0;" class="mono">${Number(a.contact_count).toLocaleString()}</td>
       <td style="padding:7px 0; text-align:right;">
-        <button class="btn-secondary mkt-upload" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="font-size:11px; padding:3px 9px;">Upload CSV</button>
+        <button class="btn-secondary mkt-upload" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="font-size:11px; padding:3px 9px;"${ready ? '' : ' disabled title="The client has not finished setup"'}>Upload CSV</button>
         <button class="btn-secondary mkt-del" data-id="${escapeHtml(a.id)}" data-name="${escapeHtml(a.name)}" style="font-size:11px; padding:3px 9px;">Delete</button>
       </td></tr>`).join('')
     : '<tr><td colspan="3" style="padding:8px 0; color:var(--text-2);">No lists yet.</td></tr>';
 
-  document.getElementById('mktBody').innerHTML = `
+  document.getElementById('mktBody').innerHTML = mktAccessCard(clientId) + `
     <div class="card" style="margin-bottom:16px;">
       <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:10px; text-transform:uppercase; letter-spacing:1px;">Sending domain</h3>
       <div style="font-size:13px;">${domLine}</div>
     </div>
     <div class="card" style="margin-bottom:16px;">
       <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:10px; text-transform:uppercase; letter-spacing:1px;">Lists</h3>
+      ${ready ? '' : `<div style="font-size:12.5px; color:#E38B2E; margin-bottom:10px; line-height:1.5;">
+        Lists open once the client finishes setup in their portal. Still missing: ${escapeHtml(missing)}.</div>`}
       <table style="width:100%; border-collapse:collapse; font-size:13px;">
         <thead><tr style="text-align:left; color:var(--text-2); font-size:10.5px; text-transform:uppercase; letter-spacing:1px;">
           <th style="padding:0 10px 6px 0;">List</th><th style="padding:0 10px 6px 0;">Contacts</th><th></th></tr></thead>
@@ -10564,12 +10635,14 @@ function mktRender(clientId){
       <div class="filter-row" style="margin-top:16px;">
         <div style="min-width:200px;"><label>New list name</label><input type="text" id="mktNewName" placeholder="Chicago investors – Sept"></div>
         <div style="min-width:240px;"><label>Where did it come from?</label><input type="text" id="mktNewSource" placeholder="Conference sign-up, Sept 2026"></div>
-        <div style="align-self:flex-end;"><button class="btn-primary" id="mktCreateBtn">Create list</button></div>
+        <div style="align-self:flex-end;"><button class="btn-primary" id="mktCreateBtn"${ready ? '' : ' disabled'}>Create list</button></div>
         <div style="align-self:flex-end; font-size:12px; color:var(--text-2);" id="mktMsg"></div>
       </div>
     </div>`;
 
   document.getElementById('mktCreateBtn').addEventListener('click', ()=>mktCreate(clientId));
+  const seatsBtn = document.getElementById('mktSeatsSaveBtn');
+  if(seatsBtn) seatsBtn.addEventListener('click', ()=>mktSaveSeats(clientId));
   document.querySelectorAll('.mkt-upload').forEach(b=>b.addEventListener('click', ()=>mktShowUpload(b.dataset.id, b.dataset.name)));
   document.querySelectorAll('.mkt-del').forEach(b=>b.addEventListener('click', ()=>mktDelete(b.dataset.id, b.dataset.name)));
 }
