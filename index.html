@@ -10565,6 +10565,8 @@ function mktAccessCard(clientId){
           <div class="filter-row" style="margin-top:10px;">
             <div style="min-width:120px;"><label>Seats added by hand</label>
               <input type="number" id="mktExtraSeats" min="0" max="100" step="1" value="${Number(a.extra_seats || 0)}"></div>
+            <div style="min-width:130px;"><label>Emails per seat</label>
+              <input type="number" id="mktEmailsPerSeat" min="0" max="1000000" step="1000" value="${Number(a.emails_per_seat || 10000)}"></div>
             <div style="align-self:flex-end;"><button class="btn-secondary" id="mktSeatsSaveBtn">Save seats</button></div>
             <div style="align-self:flex-end; font-size:12px; color:var(--text-2);" id="mktSeatsMsg">For test or complimentary accounts.</div>
           </div>` : ''}
@@ -10583,9 +10585,16 @@ async function mktSaveSeats(clientId){
   const msg = document.getElementById('mktSeatsMsg'), btn = document.getElementById('mktSeatsSaveBtn');
   const n = Number(document.getElementById('mktExtraSeats').value);
   if(!Number.isInteger(n) || n < 0 || n > 100){ msg.style.color='var(--danger)'; msg.textContent='Use a whole number from 0 to 100.'; return; }
+  // v761: emails per seat is a per-client setting now (it was hardcoded at
+  // 10,000 inside marketing_access/marketing_quota_remaining). Saved in the
+  // same click as the seat count so there is one Save, not two.
+  const per = Number(document.getElementById('mktEmailsPerSeat').value);
+  if(!Number.isInteger(per) || per < 0 || per > 1000000){ msg.style.color='var(--danger)'; msg.textContent='Emails per seat must be a whole number from 0 to 1,000,000.'; return; }
   btn.disabled = true; msg.style.color='var(--text-2)'; msg.textContent='Saving…';
   const { error } = await sb.rpc('marketing_set_extra_seats', { p_client: clientId, p_seats: n });
   if(error){ msg.style.color='var(--danger)'; msg.textContent=error.message; btn.disabled=false; return; }
+  const { error: perErr } = await sb.rpc('marketing_set_emails_per_seat', { p_client: clientId, p_emails: per });
+  if(perErr){ msg.style.color='var(--danger)'; msg.textContent=perErr.message; btn.disabled=false; return; }
   await mktLoad();
   const m = document.getElementById('mktSeatsMsg');
   if(m){ m.style.color='var(--good)'; m.textContent='Saved.'; }
@@ -44326,7 +44335,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '760'; // 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
+const DIALER_ADMIN_VERSION = '761'; // 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
