@@ -7298,6 +7298,10 @@
             <option value="own">Client's own data</option>
             <option value="ours">Our data</option>
           </select>
+          <!-- v764: the staff form said only "Our data", so what the client is
+               actually getting (records, and the Email Marketing seat that comes
+               with Full-time + Our data) was invisible on this side. -->
+          <div id="csubNewCampaignDataHint" style="font-size:10px; color:var(--text-2); margin-top:4px; line-height:1.5;"></div>
         </div>
       </div>
       <label style="display:flex; align-items:center; gap:6px; margin-top:12px; cursor:pointer; text-transform:none; font-weight:400;">
@@ -7314,6 +7318,13 @@
         <label style="font-size:11px;">Caller script (optional)</label>
         <input type="file" id="csubNewCampaignScript" accept=".pdf,.doc,.docx,.txt,.rtf,.odt" style="width:100%; font-size:12px;">
         <div style="font-size:10px; color:var(--text-dim); margin-top:3px;">Attached to the campaign guide. Uploaded into the client&rsquo;s own folder, so they can see it too. Max 10&nbsp;MB.</div>
+      </div>
+      <!-- Other-industry only: there is no fixed questionnaire to build a guide
+           from, so the draft is written from the three answers plus the script. -->
+      <div id="csubNewCampaignAiWrap" style="margin-top:10px; display:none;">
+        <button type="button" class="btn-secondary" id="csubNewCampaignAiBtn" style="width:auto; padding:6px 14px; font-size:11px;">Draft campaign guide with AI</button>
+        <span id="csubNewCampaignAiLeft" style="font-size:10px; color:var(--text-2); margin-left:8px;">You can draft this twice.</span>
+        <div id="csubNewCampaignAiMsg" style="font-size:10px; margin-top:5px;"></div>
       </div>
       <div class="msg error" id="csubNewCampaignMsg" style="display:none;"></div>
       <div class="modal-actions">
@@ -32962,12 +32973,53 @@ if($('csubCampaignTableBody')) $('csubCampaignTableBody').addEventListener('clic
 // asterisk in each label below is real -- see REQUIRED_CAMP_FIELDS-style
 // check in the submit handler).
 const CSUB_YES_NO = ['Yes', 'No'];
+// v764: mirrors the client portal, where the data option has always shown its
+// record count and now also shows the free Email Marketing seat. Record counts
+// match DATA_RECORDS_BY_TIER in client-create-campaign.
+const CSUB_DATA_RECORDS_BY_TIER = { part_time: 7500, full_time: 10000 };
+function csubUpdateCampaignDataHint(){
+  const el = $('csubNewCampaignDataHint');
+  if(!el) return;
+  const tier = ($('csubNewCampaignTier') || {}).value || 'full_time';
+  const data = ($('csubNewCampaignData') || {}).value || 'own';
+  const records = CSUB_DATA_RECORDS_BY_TIER[tier] || CSUB_DATA_RECORDS_BY_TIER.full_time;
+  if(data !== 'ours'){
+    el.innerHTML = `The client supplies roughly <b>${records.toLocaleString()}</b> records a month for the caller to work.`;
+    return;
+  }
+  const seat = tier === 'full_time'
+    ? ' &middot; includes <b>Email Marketing</b>: 1 seat, 10,000 emails a month, free'
+    : ' &middot; no Email Marketing seat (Full-time on our data only)';
+  el.innerHTML = `We supply <b>${records.toLocaleString()}</b> records a month${seat}.`;
+}
+// v764: the script feeds the AI draft as well as the guide, so it has to reach
+// storage before drafting -- not at Create time. Uploaded once and remembered,
+// so drafting then creating does not store two copies.
+let csubScriptUpload = null;   // { file, path, name }
+async function csubEnsureScriptUploaded(clientId){
+  const input = $('csubNewCampaignScript');
+  const file = input && input.files && input.files[0];
+  if(!file) return { path: null, name: null };
+  if(csubScriptUpload && csubScriptUpload.file === file && csubScriptUpload.clientId === clientId){
+    return { path: csubScriptUpload.path, name: csubScriptUpload.name };
+  }
+  if(file.size > 10 * 1024 * 1024) return { error: "That caller script is over 10 MB." };
+  const safeName = file.name.replace(/[^\w.\- ]+/g, '_').slice(-120);
+  const path = `${clientId}/${Date.now()}-${safeName}`;
+  const { error } = await sb.storage.from('campaign-attachments')
+    .upload(path, file, { upsert: false, contentType: file.type || 'application/octet-stream' });
+  if(error) return { error: 'Could not upload the caller script: ' + error.message };
+  csubScriptUpload = { file, path, name: file.name, clientId };
+  return { path, name: file.name };
+}
 function csubSelectedCampaignKind(){
   const c = document.querySelector('input[name="csubNewCampaignQaRadio-campaignKind"]:checked');
   return (c && c.value === 'Other industry') ? 'other' : 'real_estate';
 }
 function csubApplyCampaignKind(){
   const kind = csubSelectedCampaignKind();
+  const aiWrap = document.getElementById('csubNewCampaignAiWrap');
+  if(aiWrap) aiWrap.style.display = kind === 'other' ? '' : 'none';
   document.querySelectorAll('#csubNewCampaignQaFields .csub-qa-field').forEach(el => {
     const k = el.dataset.qaKind || 'real_estate';
     el.style.display = (k === 'both' || k === kind) ? '' : 'none';
@@ -33039,7 +33091,67 @@ async function openCsubNewCampaignModal(){
   const firstKind = document.querySelector('input[name="csubNewCampaignQaRadio-campaignKind"][value="Real estate"]');
   if(firstKind) firstKind.checked = true;
   kindRadios.forEach(r => r.addEventListener('change', csubApplyCampaignKind));
+  // v764: two drafts per campaign, same as the client portal. Only a successful
+  // draft consumes one -- a refused or failed call cost nothing. The real spend
+  // backstop is the per-hour limit inside campaign-guide-ai-draft.
+  const CSUB_AI_DRAFT_MAX = 2;
+  let csubAiDraftsUsed = 0;
+  function csubAiSyncLeft(){
+    const left = CSUB_AI_DRAFT_MAX - csubAiDraftsUsed;
+    const el = $('csubNewCampaignAiLeft');
+    if(el) el.textContent = left > 0
+      ? `${left} of ${CSUB_AI_DRAFT_MAX} drafts left.`
+      : 'No drafts left — edit it under Leads → Campaign Guide instead.';
+    const b = $('csubNewCampaignAiBtn');
+    if(b && left <= 0) b.disabled = true;
+  }
+  const aiBtn = $('csubNewCampaignAiBtn');
+  if(aiBtn) aiBtn.onclick = async () => {
+    if(csubAiDraftsUsed >= CSUB_AI_DRAFT_MAX) return;
+    const aiMsg = $('csubNewCampaignAiMsg');
+    const clientId = $('csubNewCampaignClient').value;
+    const name = $('csubNewCampaignName').value.trim();
+    const q = (k) => { const el = document.querySelector(`.csub-new-campaign-qa-text[data-key="${k}"]`); return el ? el.value.trim() : ''; };
+    const industry = q('industry'), dataCriteria = q('dataCriteria'), marketCoverage = q('marketCoverage');
+    if(!clientId || !name || !industry || !dataCriteria || !marketCoverage){
+      aiMsg.style.color = 'var(--danger)';
+      aiMsg.textContent = 'Pick a client and fill in the campaign name, industry, data criteria and market coverage first.';
+      return;
+    }
+    // The script is the sharpest input the AI gets -- it shows how this client
+    // already qualifies people. Worth one interruption before drafting without it.
+    const scriptPicked = (() => { const i = $('csubNewCampaignScript'); return !!(i && i.files && i.files[0]); })();
+    if(!scriptPicked && !confirm(
+      'If a caller script is attached, our AI reads it and writes a much sharper guide — '
+      + 'it can see how this client already qualifies people.\n\nDraft without a script anyway?'
+    )) return;
+    aiBtn.disabled = true;
+    aiMsg.style.color = 'var(--text-2)';
+    aiMsg.textContent = 'Uploading the script…';
+    const up = await csubEnsureScriptUploaded(clientId);
+    if(up.error){ aiBtn.disabled = false; aiMsg.style.color = 'var(--danger)'; aiMsg.textContent = up.error; return; }
+    aiMsg.textContent = 'Writing the guide…';
+    const { data, error } = await sb.functions.invoke('campaign-guide-ai-draft', {
+      body: { campaignDisplayName: name, industry, dataCriteria, marketCoverage,
+              callerScriptPath: up.path, callerScriptName: up.name },
+    });
+    aiBtn.disabled = false;
+    if(error || !data || data.ok === false){
+      aiMsg.style.color = 'var(--danger)';
+      aiMsg.textContent = (data && data.error) || (error && error.message) || 'Could not write the guide.';
+      return;
+    }
+    aiMsg.style.color = 'var(--good)';
+    aiMsg.textContent = `Drafted ${data.criteria} criteria — review and approve it under Leads → Campaign Guide.`;
+    aiBtn.textContent = 'Redraft with AI';
+    csubAiDraftsUsed += 1;
+    csubAiSyncLeft();
+  };
   csubApplyCampaignKind();
+  csubUpdateCampaignDataHint();
+  ['csubNewCampaignTier', 'csubNewCampaignData'].forEach(id => {
+    const el = $(id); if(el) el.addEventListener('change', csubUpdateCampaignDataHint);
+  });
   const sel = $('csubNewCampaignClient');
   sel.innerHTML = '<option value="">Loading…</option>';
   const { data, error } = await sb.from('client_accounts').select('id, full_name, email').eq('is_active', true).order('full_name');
@@ -33111,26 +33223,14 @@ if($('csubNewCampaignSubmitBtn')) $('csubNewCampaignSubmitBtn').addEventListener
   // v763: normalise the radio's label into the value the edge function and
   // the client portal both use.
   qaBody.campaignKind = campaignKind;
-  // Optional caller script, into the CLIENT's folder so they can read it too
-  // (the staff insert policy allows any folder in this bucket).
-  const scriptEl = $('csubNewCampaignScript');
-  const scriptFile = scriptEl && scriptEl.files && scriptEl.files[0];
-  if(scriptFile){
-    if(scriptFile.size > 10 * 1024 * 1024){
-      msg.textContent = 'That caller script is over 10 MB.'; msg.style.display = 'block';
-      btn.disabled = false; btn.textContent = 'Create'; return;
-    }
-    const safeName = scriptFile.name.replace(/[^\w.\- ]+/g, '_').slice(-120);
-    const scriptPath = `${clientId}/${Date.now()}-${safeName}`;
-    const { error: upErr } = await sb.storage.from('campaign-attachments')
-      .upload(scriptPath, scriptFile, { upsert: false, contentType: scriptFile.type || 'application/octet-stream' });
-    if(upErr){
-      msg.textContent = 'Could not upload the caller script: ' + upErr.message; msg.style.display = 'block';
-      btn.disabled = false; btn.textContent = 'Create'; return;
-    }
-    qaBody.callerScriptPath = scriptPath;
-    qaBody.callerScriptName = scriptFile.name;
+  // v764: may already be uploaded by the AI-draft button above; that helper
+  // returns the same path rather than storing a second copy.
+  const up = await csubEnsureScriptUploaded(clientId);
+  if(up.error){
+    msg.textContent = up.error; msg.style.display = 'block';
+    btn.disabled = false; btn.textContent = 'Create'; return;
   }
+  if(up.path){ qaBody.callerScriptPath = up.path; qaBody.callerScriptName = up.name; }
   const { data, error } = await sb.functions.invoke('staff-create-campaign', {
     body: { clientId, campaignName, callerTier, dialerChoice, dataChoice, complimentary, complimentaryExpiresAt: complimentary ? complimentaryExpiresAt : undefined, ...qaBody },
   });
@@ -44527,7 +44627,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '763'; // 763: campaign type (real estate / other industry), caller-script attachment on the guide, AI-drafted guides awaiting review; 762: Campaign Details shows each client's Email Marketing standing; 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
+const DIALER_ADMIN_VERSION = '764'; // 764: staff form shows records + the free email seat, and can draft an Other-industry guide with AI; 763: campaign type (real estate / other industry), caller-script attachment on the guide, AI-drafted guides awaiting review; 762: Campaign Details shows each client's Email Marketing standing; 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
