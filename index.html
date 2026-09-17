@@ -4792,6 +4792,15 @@
               Can text clients directly (manual SMS composer in Client Chats)
             </label>
 
+            <!-- v778: roles.can_manual_dial had no control anywhere; the dialer's
+                 server gate (dialer_manual_dial_allowed) is what enforces it.
+                 Owner and Admin can always dial themselves -- on the Admin type
+                 this box decides whether admins may give it to others. -->
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin-bottom:10px;">
+              <input type="checkbox" id="roleCanManualDialCb" class="perm-cb">
+              Can manual dial in the Agent Dialer (keypad and click-to-call outside a queue)
+            </label>
+
             <!-- v499: narrower than "Can manage users" — a user type can run
                  accounts and schedules without seeing what anyone is PAID.
                  v776: binds Admin too, same as above. -->
@@ -4866,6 +4875,10 @@
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin:14px 0 10px;">
                 <input type="checkbox" id="permUserCanTextClientsCb" class="perm-cb">
                 Can text clients directly (manual SMS composer in Client Chats)
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin-bottom:10px;">
+                <input type="checkbox" id="permUserCanManualDialCb" class="perm-cb">
+                Can manual dial in the Agent Dialer (keypad and click-to-call outside a queue)
               </label>
               <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin-bottom:14px;">
                 <input type="checkbox" id="permUserCanEditCompensationCb" class="perm-cb">
@@ -10316,7 +10329,7 @@ async function establishSession(user, { isNewLogin = true } = {}){
     showForcePasswordScreen(user, profile.must_change_password ? 'new' : 'expired');
     return;
   }
-  const { data: roleRow, error: roleErr } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, dialer_admin_sections, can_manage_dialer, can_review_calls, data_science_sections, taxes_sections, time_management_sections, task_category_ids, can_text_clients, can_edit_compensation').eq('name', profile?.role || '').maybeSingle();
+  const { data: roleRow, error: roleErr } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, dialer_admin_sections, can_manage_dialer, can_review_calls, data_science_sections, taxes_sections, time_management_sections, task_category_ids, can_text_clients, can_edit_compensation, can_manual_dial').eq('name', profile?.role || '').maybeSingle();
   // v41 fix: a genuine query failure (e.g. activity_sections not existing
   // yet because the newest supabase/schema.sql migration hasn't been run)
   // used to be silently treated the same as "no matching role row" —
@@ -10404,6 +10417,9 @@ async function establishSession(user, { isNewLogin = true } = {}){
     // fields. Same isOwnerRole/admin-always-true shape as canTextClients.
     // v776: same as canTextClients above — admin's own row decides.
     canEditCompensation: isOwnerRole ? true : _flag('can_edit_compensation'),
+    // v778: what an Admin may hand out. Owner and Admin can always dial
+    // themselves (dialer_manual_dial_allowed); this is only the grant ceiling.
+    canManualDial: isOwnerRole ? true : _flag('can_manual_dial'),
   };
   myIsOwner = myRole === 'owner';
   // v776: the ceiling is simply "what I hold myself". Owner has none.
@@ -10422,6 +10438,7 @@ async function establishSession(user, { isNewLogin = true } = {}){
     dialer_admin_sections: myPermissions.dialerAdminSections,
     can_text_clients: !!myPermissions.canTextClients,
     can_edit_compensation: !!myPermissions.canEditCompensation,
+    can_manual_dial: !!myPermissions.canManualDial,
   };
   myFullName = profile?.full_name || '';
   myTitle = profile?.title || '';           // v639
@@ -23485,6 +23502,9 @@ function resetRoleForm(){
   renderRoleTaskCategoriesPicker([]);
   $('roleCanTextClientsCb').checked = false;
   $('roleCanEditCompensationCb').checked = false;
+  $('roleCanManualDialCb').checked = false;
+  $('roleCanManualDialCb').disabled = !ceilingAllowsFlag('can_manual_dial');
+  $('roleCanManualDialCb').title = '';
   $('roleViewScopeSelf').checked = true; // safest default — see anyone but themselves only once an Owner opts them in
   $('roleViewScopeSelected').checked = false;
   $('roleViewScopeSpecificRole').checked = false;
@@ -26379,7 +26399,7 @@ function parseViewScopeList(viewScope){
 let roleListFilter = '';
 
 async function loadRolesList(){
-  const { data, error } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, data_science_sections, taxes_sections, time_management_sections, dialer_admin_sections, task_category_ids, can_text_clients, can_edit_compensation').order('name');
+  const { data, error } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, data_science_sections, taxes_sections, time_management_sections, dialer_admin_sections, task_category_ids, can_text_clients, can_edit_compensation, can_manual_dial').order('name');
   const body = $('rolesListBody');
   if(!body) return;
   // v41 fix: a query failure used to render an EMPTY list, indistinguishable
@@ -26468,6 +26488,7 @@ function permRoleValues(roleName){
     dialer_admin_sections: r.dialer_admin_sections || {},
     can_text_clients: !!r.can_text_clients,
     can_edit_compensation: !!r.can_edit_compensation,
+    can_manual_dial: !!r.can_manual_dial,
   };
 }
 
@@ -26480,7 +26501,7 @@ function permEffectiveValues(roleName, override){
   if(Array.isArray(override.allowed_tabs)) out.allowed_tabs = override.allowed_tabs;
   fam.forEach(f => { out[f] = Object.assign({}, base[f] || {}, override[f] || {}); });
   out.tab_edit = Object.assign({}, base.tab_edit || {}, override.tab_edit || {});
-  ['can_text_clients', 'can_edit_compensation'].forEach(k => {
+  ['can_text_clients', 'can_edit_compensation', 'can_manual_dial'].forEach(k => {
     if(typeof override[k] === 'boolean') out[k] = override[k];
   });
   return out;
@@ -26551,6 +26572,15 @@ async function permOpenUser(userId){
   $('permUserCanTextClientsCb').disabled = !ceilingAllowsFlag('can_text_clients');
   $('permUserCanEditCompensationCb').checked = !!values.can_edit_compensation;
   $('permUserCanEditCompensationCb').disabled = !ceilingAllowsFlag('can_edit_compensation');
+  {
+    // v778: Owner and Admin always may (dialer_manual_dial_allowed), so the
+    // box would only mislead for them.
+    const cb = $('permUserCanManualDialCb');
+    const always = ['owner', 'admin'].includes(roleName);
+    cb.checked = always || !!values.can_manual_dial;
+    cb.disabled = always || !ceilingAllowsFlag('can_manual_dial');
+    cb.title = always ? 'Owner and Admin can always manual dial.' : (ceilingAllowsFlag('can_manual_dial') ? '' : CEILING_TITLE);
+  }
   $('permUserNote').value = (override && override.note) || '';
   $('permUserResetBtn').style.display = override ? '' : 'none';
   permRenderUserList();
@@ -26571,6 +26601,15 @@ async function permSaveUser(){
     can_edit_compensation: $('permUserCanEditCompensationCb').checked,
     note: $('permUserNote').value.trim() || null,
   });
+  {
+    // v778: NULL = follow the user type. Writing the inherited value instead
+    // would freeze it on this person, and would also make an Admin's save
+    // fail the grant ceiling for anyone whose type already allows dialing.
+    const roleName = (permUserRow && permUserRow.role) || 'user';
+    const cb = $('permUserCanManualDialCb');
+    payload.can_manual_dial = ['owner', 'admin'].includes(roleName) || cb.checked === !!permRoleValues(roleName).can_manual_dial
+      ? null : cb.checked;
+  }
   const btn = $('permUserSaveBtn');
   btn.disabled = true;
   msg.textContent = 'Saving…';
@@ -26666,6 +26705,11 @@ function startEditRole(name){
   renderRoleTaskCategoriesPicker(role.task_category_ids || []);
   $('roleCanTextClientsCb').checked = !!role.can_text_clients;
   $('roleCanEditCompensationCb').checked = !!role.can_edit_compensation;
+  $('roleCanManualDialCb').checked = !!role.can_manual_dial;
+  $('roleCanManualDialCb').disabled = !ceilingAllowsFlag('can_manual_dial');
+  $('roleCanManualDialCb').title = role.name === 'admin'
+    ? 'Admins can always manual dial themselves. This decides whether they may give it to others.'
+    : (ceilingAllowsFlag('can_manual_dial') ? '' : CEILING_TITLE);
   const scopeList = parseViewScopeList(role.view_scope);
   const isAll = scopeList.includes('all');
   $('roleViewScopeSelf').checked = !isAll && scopeList.includes('self');
@@ -26777,6 +26821,7 @@ $('roleSaveBtn').addEventListener('click', async () => {
     task_category_ids: taskCategoryIds,
     can_text_clients: $('roleCanTextClientsCb').checked,
     can_edit_compensation: $('roleCanEditCompensationCb').checked,
+    can_manual_dial: $('roleCanManualDialCb').checked,
   });
   if(editingRoleName !== 'admin') payload.can_manage_users = false;
   // v675: the portal decides Dialer Admin access, so the database's own dialer
