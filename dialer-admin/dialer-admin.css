@@ -249,6 +249,8 @@
 /* v756e: a Gmail draft in the timeline, and the full-email viewer */
 #daHost .tl.email.draft .tl-b{border-style:dashed;border-left:3px dashed var(--gold);opacity:.9}
 #daHost .tl-status.draft{color:var(--gold);background:var(--gold-dim);border-color:var(--gold)}
+/* v768: sent, then deleted in the rep's Gmail */
+#daHost .tl-status.deleted{color:var(--text-2);background:var(--inset);border-color:var(--border-light);text-decoration:line-through}
 #daHost .da-email-view{position:fixed;inset:0;z-index:950;background:rgba(0,0,0,.55);display:flex;
   align-items:center;justify-content:center;padding:16px}
 #daHost .da-email-card{width:min(860px,100%);max-height:calc(100vh - 32px);display:flex;flex-direction:column;

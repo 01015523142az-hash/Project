@@ -4473,14 +4473,15 @@ $('cvSearch').addEventListener('input', renderInbox);
 // v747: every stored email with one address, for a thread that has no contact.
 async function fetchEmailTimeline(addr) {
   const { data, error } = await sb.from('dialer_email_messages')
-    .select('id, message_at, direction, subject, snippet, from_address, to_address, mailbox, provider, delivery_status, delivery_detail, is_draft')
+    .select('id, message_at, direction, subject, snippet, from_address, to_address, mailbox, provider, delivery_status, delivery_detail, is_draft, deleted_in_gmail_at')
     .eq('contact_email', addr).order('message_at', { ascending: false }).limit(100);
   if (error) throw error;
   return (data || []).map((e) => ({
     kind: 'email', at: e.message_at, direction: e.direction,
     title: e.subject || '(no subject)', body: e.snippet, actor: null, ref_id: e.id,
     meta: { from: e.from_address, to: e.to_address, mailbox: e.mailbox, provider: e.provider,
-            delivery: e.delivery_status, delivery_detail: e.delivery_detail, draft: !!e.is_draft },
+            delivery: e.delivery_status, delivery_detail: e.delivery_detail, draft: !!e.is_draft,
+            deleted: !!e.deleted_in_gmail_at },
   }));
 }
 
@@ -4533,9 +4534,15 @@ function timelineHtml(items, kind, newestFirst) {
       // receipt, so "Sent" means the mail server accepted it; only a bounce
       // proves it did not arrive.
       // v756e: a Gmail draft is stored too, and it was never sent.
-      const st = m.draft ? 'draft' : out ? String(m.delivery || 'sent') : '';
-      const label = st === 'draft' ? 'Draft — not sent' : st === 'bounced' ? 'Bounced' : st === 'failed' ? 'Failed' : st ? 'Sent' : '';
-      const why = st === 'draft' ? 'Still a draft in the rep\'s Gmail. It has not been sent.'
+      // v768: drafts stay listed even once Gmail drops them; a sent email the
+      // rep later deleted for good in Gmail says Deleted.
+      const st = m.draft ? 'draft' : out && m.deleted ? 'deleted' : out ? String(m.delivery || 'sent') : '';
+      const label = st === 'draft' ? 'Draft — not sent' : st === 'deleted' ? 'Deleted in Gmail'
+        : st === 'bounced' ? 'Bounced' : st === 'failed' ? 'Failed' : st ? 'Sent' : '';
+      const why = st === 'draft'
+        ? (m.deleted ? 'A draft that is no longer in Gmail (replaced by a newer save, sent as a new copy, or discarded). It was not sent as this message.'
+          : 'Still a draft in the rep\'s Gmail. It has not been sent.')
+        : st === 'deleted' ? 'This email was sent, then deleted from the rep\'s Gmail.'
         : st === 'bounced' ? (m.delivery_detail || 'A failure notice came back.')
         : st === 'failed' ? (m.delivery_detail || 'The mail server refused it.')
         : 'Accepted by the mail server. Email gives no delivery receipt; a bounce would show here.';
@@ -4573,7 +4580,7 @@ async function cvLoadDelivery() {
   const ids = (cvItems || []).filter((i) => i.kind === 'email' && i.ref_id).map((i) => i.ref_id);
   if (!ids.length) return false;
   const { data, error } = await sb.from('dialer_email_messages')
-    .select('id, delivery_status, delivery_detail, is_draft').in('id', ids);
+    .select('id, delivery_status, delivery_detail, is_draft, deleted_in_gmail_at').in('id', ids);
   if (error) { console.warn('delivery status:', error.message); return false; }
   const by = new Map((data || []).map((r) => [r.id, r]));
   let changed = false;
@@ -4581,7 +4588,7 @@ async function cvLoadDelivery() {
     const r = i.kind === 'email' ? by.get(i.ref_id) : null;
     if (!r) return;
     i.meta = { ...(i.meta || {}), delivery: r.delivery_status, delivery_detail: r.delivery_detail,
-               draft: !!r.is_draft };   // v756e
+               draft: !!r.is_draft, deleted: !!r.deleted_in_gmail_at };   // v756e, v768
     changed = true;
   });
   return changed;
@@ -4631,6 +4638,7 @@ async function openEmailViewer(id) {
   }
   q('subject').textContent = r.subject || '(no subject)';
   const status = r.is_draft ? '<span class="tl-status draft">Draft — not sent</span>'
+    : r.direction === 'outbound' && r.deleted ? '<span class="tl-status deleted">Deleted in Gmail</span>'   // v768
     : r.direction === 'outbound'
       ? `<span class="tl-status ${esc(r.delivery || 'sent')}">${r.delivery === 'bounced' ? 'Bounced' : r.delivery === 'failed' ? 'Failed' : 'Sent'}</span>`
       : '';
