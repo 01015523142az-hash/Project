@@ -4473,10 +4473,21 @@ $('cvSearch').addEventListener('input', renderInbox);
 // v747: every stored email with one address, for a thread that has no contact.
 async function fetchEmailTimeline(addr) {
   const { data, error } = await sb.from('dialer_email_messages')
-    .select('id, message_at, direction, subject, snippet, from_address, to_address, mailbox, provider, delivery_status, delivery_detail, is_draft, deleted_in_gmail_at')
+    .select('id, message_at, direction, subject, snippet, from_address, to_address, mailbox, provider, delivery_status, delivery_detail, is_draft, deleted_in_gmail_at, thread_id')
     .eq('contact_email', addr).order('message_at', { ascending: false }).limit(100);
   if (error) throw error;
-  return (data || []).map((e) => ({
+  // v769: Gmail stores a new copy each time a draft is saved; show the latest
+  // copy only -- same rule as dialer_email_hidden_draft() on the server. Rows
+  // are newest first, so the first draft seen for a key is the one kept.
+  const seenDraft = new Set();
+  const rows = (data || []).filter((e) => {
+    if (!e.is_draft) return true;
+    const key = [e.mailbox, e.thread_id || '', String(e.subject || '').toLowerCase()].join('');
+    if (seenDraft.has(key)) return false;
+    seenDraft.add(key);
+    return true;
+  });
+  return rows.map((e) => ({
     kind: 'email', at: e.message_at, direction: e.direction,
     title: e.subject || '(no subject)', body: e.snippet, actor: null, ref_id: e.id,
     meta: { from: e.from_address, to: e.to_address, mailbox: e.mailbox, provider: e.provider,
