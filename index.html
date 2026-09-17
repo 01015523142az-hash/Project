@@ -10479,7 +10479,7 @@ let mktAccess = null;   // v757: marketing_access() for the picked client
 async function mktCall(action, payload){
   const AUD = ['audience_list','audience_create','audience_delete','contacts_import'];
   // v765: the email content lives in marketing-templates, not domains.
-  const TPL = ['content_block'];
+  const TPL = ['content_block', 'content_variant'];
   const fn = AUD.includes(action) ? 'marketing-audiences'
     : TPL.includes(action) ? 'marketing-templates'
     : 'marketing-domains';
@@ -10947,6 +10947,11 @@ function mktCampOpenEditor(clientId, c){
         <div style="min-width:260px; flex:2;"><label>Button link</label><input type="text" id="mktCampBtnUrl" maxlength="1000" value="${escapeHtml(e.button_url || '')}" placeholder="https://…"></div>
       </div>
       <div style="margin-top:12px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <!-- v765: the client approved one email at setup. A campaign starts from
+             it rather than from a blank box, and AI can spin a variant on it --
+             different wording to the same list reads less like a blast. -->
+        <button class="btn-secondary" id="mktCampFromTemplateBtn" title="Fill this in from the email the client approved">Use approved email</button>
+        <button class="btn-secondary" id="mktCampVariantBtn" title="Reword the approved email for this campaign">AI variant</button>
         <button class="btn-secondary" id="mktCampSaveBtn">Save draft</button>
         <button class="btn-secondary" id="mktCampPreviewBtn">Preview</button>
         <button class="btn-secondary" id="mktCampCloseBtn">Close</button>
@@ -10985,6 +10990,10 @@ function mktCampOpenEditor(clientId, c){
   box.querySelectorAll('.mkt-camp-aud').forEach(x => x.addEventListener('change', refreshEstimate));
   refreshEstimate();
   document.getElementById('mktCampCloseBtn').addEventListener('click', () => { box.innerHTML = ''; mktCampEditing = null; mktCampaignsLoad(clientId); });
+  const fromTpl = document.getElementById('mktCampFromTemplateBtn');
+  if (fromTpl) fromTpl.onclick = () => mktCampUseTemplate();
+  const variantBtn = document.getElementById('mktCampVariantBtn');
+  if (variantBtn) variantBtn.onclick = () => mktCampAiVariant(clientId, variantBtn);
   document.getElementById('mktCampSaveBtn').addEventListener('click', () => mktCampSave(clientId, false));
   document.getElementById('mktCampScheduleBtn').addEventListener('click', () => mktCampSave(clientId, true));
   document.getElementById('mktCampPreviewBtn').addEventListener('click', () => mktCampPreview({ client_id: clientId, ...mktCampFields() }));
@@ -11004,6 +11013,73 @@ function mktCampFields(){
     button_text: document.getElementById('mktCampBtnText').value,
     button_url: document.getElementById('mktCampBtnUrl').value,
   };
+}
+
+// v765: drop the approved email into the composer. Refuses when there is
+// nothing usable rather than silently wiping what is already typed -- `usable`
+// already means approved by the client AND not on hold by staff.
+function mktCampUseTemplate(){
+  const msg = document.getElementById('mktCampMsg');
+  const c = mktContent;
+  if (!c || !c.exists || !c.usable) {
+    if (msg) {
+      msg.style.color = 'var(--danger)';
+      msg.textContent = c && c.staff_blocked
+        ? 'That email is on hold, so it cannot be used.'
+        : 'This client has not approved an email yet.';
+    }
+    return;
+  }
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+  set('mktCampSubject', c.subject);
+  set('mktCampPre', c.preheader);
+  set('mktCampBody', c.body);
+  set('mktCampBtnText', c.button_text);
+  set('mktCampBtnUrl', c.button_url);
+  if (msg) {
+    msg.style.color = 'var(--text-2)';
+    msg.textContent = 'Filled in from the approved email. Edit it for this campaign if you want.';
+  }
+}
+
+// A reworded version for THIS campaign. It never touches the saved template --
+// the approved email stays exactly as the client approved it; this only fills
+// the composer, and the campaign is still saved and scheduled by hand.
+async function mktCampAiVariant(clientId, btn){
+  const msg = document.getElementById('mktCampMsg');
+  const c = mktContent;
+  if (!c || !c.exists || !c.usable) {
+    if (msg) {
+      msg.style.color = 'var(--danger)';
+      msg.textContent = 'Approve an email for this client first — a variant is written from it.';
+    }
+    return;
+  }
+  const name = (document.getElementById('mktCampName') || {}).value || '';
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Writing…';
+  if (msg) { msg.style.color = 'var(--text-2)'; msg.textContent = 'Writing a variant…'; }
+  try {
+    const r = await mktCall('content_variant', {
+      client_id: clientId,
+      campaign_name: name,
+      subject: c.subject, body: c.body, preheader: c.preheader || '',
+    });
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+    set('mktCampSubject', r.subject);
+    set('mktCampPre', r.preheader);
+    set('mktCampBody', r.body);
+    if (msg) {
+      msg.style.color = 'var(--good)';
+      msg.textContent = 'Variant written. Read it before you schedule it — nothing is saved yet.';
+    }
+  } catch(e){
+    if (msg) { msg.style.color = 'var(--danger)'; msg.textContent = e.message; }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
 }
 
 async function mktCampSaveDraft(clientId){
@@ -44700,7 +44776,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '765'; // 765: sending warm-up, and email content the client writes with AI and approves; 764: staff form shows records + the free email seat, and can draft an Other-industry guide with AI; 763: campaign type (real estate / other industry), caller-script attachment on the guide, AI-drafted guides awaiting review; 762: Campaign Details shows each client's Email Marketing standing; 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
+const DIALER_ADMIN_VERSION = '766'; // 766: a campaign starts from the client's approved email, with an AI variant; 765: sending warm-up, and email content the client writes with AI and approves; 764: staff form shows records + the free email seat, and can draft an Other-industry guide with AI; 763: campaign type (real estate / other industry), caller-script attachment on the guide, AI-drafted guides awaiting review; 762: Campaign Details shows each client's Email Marketing standing; 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
