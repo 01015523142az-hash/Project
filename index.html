@@ -281,6 +281,11 @@
   .msg{ font-family:var(--mono); font-size:11px; margin-top:10px; }
   .msg.error{ color:var(--danger); }
   .msg.ok{ color:var(--focus); }
+  /* v776: `className = 'msg success'` is used in three places (and by the
+     new per-person permission editor) but there was never a .msg.success
+     rule, so those confirmations came out in the same grey as a neutral
+     message. Same green the rest of the app uses for "that worked". */
+  .msg.success{ color:var(--good, var(--focus)); }
 
   /* App shell */
   #app{ display:none; max-width:1100px; margin:0 auto; padding:28px 20px 60px; }
@@ -434,6 +439,103 @@
   .type-badge{ display:inline-block; font-size:10px; font-family:var(--mono); text-transform:uppercase; letter-spacing:0.5px; padding:1px 7px; border-radius:10px; background:var(--inset); border:1px solid var(--border); color:var(--text-2); }
   .um-subtab-btn.active{ color:var(--text); background:var(--card-hover); }
   .um-subtab-btn:hover:not(.active){ color:var(--text-2); }
+
+  /* ===== v776: the User Types screen. One permission matrix, shown either
+     for a user type (a group) or for one person. The old screen was a flat
+     column of checkbox rows with each subtab block indented under its tab
+     and no column alignment, so on a tall tab like Leads the View and Edit
+     boxes drifted apart from their labels. Everything below is a 3-column
+     grid — label | View | Edit — so every row lines up down the whole
+     screen, and each tab is a card that can be collapsed. ===== */
+  .perm-mode-row{ display:flex; gap:6px; margin-bottom:14px; border:1px solid var(--border); border-radius:999px; padding:4px; background:var(--inset); width:fit-content; }
+  .perm-mode-btn{ background:transparent; border:none; color:var(--text-dim); font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:0.5px; padding:8px 18px; cursor:pointer; border-radius:999px; }
+  .perm-mode-btn.active{ color:var(--text); background:var(--card); box-shadow:0 1px 3px rgba(0,0,0,.18); }
+  .perm-mode-btn:hover:not(.active){ color:var(--text-2); }
+
+  .perm-split{ display:grid; grid-template-columns:288px minmax(0,1fr); gap:16px; align-items:start; }
+  .perm-side{ padding:14px; position:sticky; top:12px; z-index:2; }
+  @media (max-width:1100px){
+    .perm-split{ grid-template-columns:1fr; }
+    /* Stacked, the list is no longer beside the editor, so pinning it would
+       just park a translucent card on top of the matrix as you scroll.
+       This block sits AFTER the rule it overrides on purpose — same
+       specificity, so source order is what decides. */
+    .perm-side{ position:static; }
+    .perm-side-list{ max-height:260px; }
+  }
+  .perm-side-tools{ display:flex; gap:8px; margin-bottom:10px; }
+  .perm-side-tools input, .perm-side-tools select{ margin-top:0; }
+  .perm-side-list{ max-height:560px; overflow-y:auto; display:flex; flex-direction:column; gap:4px; }
+  .perm-side-item{ display:flex; align-items:center; gap:8px; width:100%; text-align:left; background:transparent; border:1px solid transparent; border-radius:8px; padding:9px 11px; cursor:pointer; color:var(--text); font-family:var(--sans); font-size:13px; }
+  .perm-side-item:hover{ background:var(--card-hover); }
+  .perm-side-item.active{ background:var(--card-hover); border-color:var(--border-light); }
+  .perm-side-item-main{ min-width:0; flex:1; }
+  .perm-side-item-name{ display:block; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .perm-side-item-sub{ display:block; font-size:11px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px; }
+  .perm-side-item-main{ display:block; }
+  .perm-side-empty{ color:var(--text-dim); font-size:12px; padding:10px 2px; }
+
+  /* A tab and its subtabs. */
+  .perm-tab-card{ border:1px solid var(--border); border-radius:10px; background:var(--card); margin-bottom:10px; overflow:hidden; }
+  .perm-tab-card.is-off{ opacity:.62; }
+  .perm-tab-head{ display:grid; grid-template-columns:minmax(0,1fr) 92px 92px; align-items:center; gap:8px; padding:11px 14px; background:var(--inset); }
+  .perm-tab-title{ display:flex; align-items:center; gap:9px; min-width:0; overflow:hidden; }
+  .perm-tab-title > label{ min-width:0; overflow:hidden; }
+  .perm-tab-name{ font-family:var(--sans); font-size:13px; font-weight:650; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  /* The x/y count and any tag must never be squeezed into the name — they
+     were overlapping it on a narrow column before flex-shrink was pinned. */
+  .perm-tab-count{ flex:none; font-family:var(--mono); font-size:10px; color:var(--text-dim); white-space:nowrap; }
+  .perm-tab-title .perm-capped-tag{ flex:none; }
+  .perm-disclose{ flex:none; }
+  .perm-disclose{ background:transparent; border:none; color:var(--text-dim); cursor:pointer; padding:0 2px; line-height:1; font-size:11px; width:14px; }
+  .perm-disclose:hover{ color:var(--text); }
+  .perm-col-label{ font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-dim); text-align:center; }
+
+  .perm-body{ padding:6px 14px 12px; }
+  .perm-note{ font-size:11px; color:var(--text-dim); line-height:1.45; margin:6px 0 8px; }
+  .perm-group-label{ font-family:var(--mono); font-size:9.5px; text-transform:uppercase; letter-spacing:.5px; color:var(--text-dim); margin:10px 0 2px; }
+  .perm-row{ display:grid; grid-template-columns:minmax(0,1fr) 92px 92px; align-items:center; gap:8px; padding:5px 0; border-top:1px solid var(--border); }
+  .perm-row:first-of-type{ border-top:none; }
+  /* Clients get a single "Show" column — there is no view/edit split in
+     their portal, a tab is either there or it is not. */
+  .perm-head-2, .perm-row-2{ grid-template-columns:minmax(0,1fr) 92px; }
+  .perm-row-label{ font-family:var(--sans); font-size:12.5px; color:var(--text); min-width:0; }
+  .perm-cell{ display:flex; justify-content:center; }
+  .perm-cell-note{ font-size:10px; color:var(--text-dim); font-style:italic; text-align:center; }
+  .perm-cb{ width:15px; height:15px; accent-color:var(--focus); cursor:pointer; margin:0; }
+  .perm-cb:disabled{ cursor:not-allowed; opacity:.45; }
+  /* A box the signed-in person is not allowed to hand out. */
+  .perm-row.is-capped .perm-row-label, .perm-tab-head.is-capped .perm-tab-name{ color:var(--text-dim); }
+  .perm-capped-tag{ font-family:var(--mono); font-size:9px; text-transform:uppercase; letter-spacing:.4px; color:var(--text-dim); border:1px solid var(--border); border-radius:999px; padding:0 6px; }
+  /* Set for one person rather than inherited from their user type. */
+  .perm-custom-tag{ font-family:var(--mono); font-size:9px; text-transform:uppercase; letter-spacing:.4px; color:var(--focus); border:1px solid var(--focus); border-radius:999px; padding:0 6px; }
+
+  .perm-bulk{ display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px; }
+  .perm-bulk-btn{ background:var(--inset); border:1px solid var(--border-light); color:var(--text-2); border-radius:999px; padding:5px 13px; font-family:var(--sans); font-size:11.5px; cursor:pointer; }
+  .perm-bulk-btn:hover{ color:var(--text); border-color:var(--focus); }
+  .perm-ceiling-banner{ display:flex; gap:9px; align-items:flex-start; border:1px solid var(--border-light); background:var(--inset); border-radius:10px; padding:10px 13px; font-size:12px; color:var(--text-2); line-height:1.5; margin-bottom:14px; }
+
+  /* ===== v776: one shape for a row of buttons. Buttons used to be dropped
+     next to each other with only inline padding to line them up, and
+     .btn-primary carries width:100% + margin-top:18px, so any primary put
+     in a row sat 18px below its neighbour. Both are fixed here rather than
+     on each of the 27 call sites. ===== */
+  .btn-row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  .btn-row > button{ margin-top:0; }
+  .btn-primary[style*="width:auto"]{ margin-top:0; }
+  /* .btn-primary/.btn-secondary are pills (border-radius:999px, set with the
+     rest of the pill language below); .btn-outline and .btn-gold keep their
+     own 10px rectangle. Side by side that reads as two different button
+     systems, so in a row or a modal footer the rectangles follow the pills. */
+  .btn-row > .btn-outline, .btn-row > .btn-gold,
+  .modal-actions .btn-outline, .modal-actions .btn-gold{ border-radius:999px; padding:9px 18px; font-size:12.5px; }
+  /* .btn-outline/.btn-gold/.btn-secondary carry a 1.5px border and
+     .btn-primary carries none, which made a primary 2px shorter than the
+     button beside it. A transparent border of the same width evens them up
+     without changing how it looks. Scoped to rows and modal footers so the
+     full-width primary on its own is untouched. */
+  .btn-row > .btn-primary, .modal-actions .btn-primary{ border:1.5px solid transparent; }
+  .modal-actions{ flex-wrap:wrap; }
   /* v71: Leads tab gets the same 2-level structure User Management has —
      .leads-subtab-btn (Dashboard/Submission Forms/Queue Review/Queue
      Review iSpeedToLead) mirrors .um-subtab-btn exactly; own class per the
@@ -4614,90 +4716,175 @@
       </div>
     </div>
 
+    <!-- ===== v776: User Types. Was a single tall form: a "user type name"
+         box, then one flat column of tab checkboxes with each subtab block
+         indented underneath, then view scope, then the list of types in a
+         table at the very bottom. Two problems the owner named — you could
+         not grant anything to ONE person without inventing a user type for
+         them, and an Admin could hand out (and take for themselves) tabs the
+         Owner had deliberately closed.
+
+         Now: pick "User types" or "Individual people" at the top, choose
+         from the list on the left, edit on the right. Both sides render the
+         SAME matrix (renderPermissionMatrix), so a tab means the same thing
+         whichever way you grant it. Anything outside the signed-in person's
+         own access is shown greyed with an "Owner only" tag, and the
+         database refuses it too (enforce_role_grant_ceiling) so hiding the
+         box is a courtesy, not the control. ===== -->
     <div class="um-section" id="um-section-roles" style="display:none;">
-      <div class="card" style="margin-bottom:16px;">
-        <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;" id="rolesFormTitle">Add a user type</h3>
-        <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.4;">
-          A user type controls which dashboard tabs an account can see, whether it can <em>edit</em> or only <em>view</em>
-          each of those tabs, and — separately — which users' data it's allowed to see at all. Owner and Admin are
-          protected and can't be edited or deleted here — both always see and edit everything. Creating, editing,
-          resetting passwords for, or deleting user accounts on the Dashboard tab is always Owner/Admin only — no
-          custom user type can be given that ability; custom user types can still be given <em>view</em> access to the
-          Dashboard tab to see the team list. The User Management tab (this one) additionally breaks down into
-          sections below — a user type can be given, say, Tasks but not User Types itself.
-        </div>
-        <div style="margin-bottom:14px;">
-          <label>User type name</label>
-          <input type="text" id="roleNameInput" placeholder="e.g. quality, supervisor…">
-        </div>
-        <label>Dashboard tabs this role can see — and edit</label>
-        <div style="font-size:10px; color:var(--text-dim); margin-top:-8px; margin-bottom:6px;">Check a tab to make it visible. For tabs with an "Edit" option, leave it unchecked to give this role read-only access to that tab.</div>
-        <div id="roleTabsPicker" style="display:flex; flex-direction:column; gap:8px; border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--inset); margin-bottom:14px;"></div>
-
-        <label>Task categories this role's agents can select</label>
-        <div style="font-size:10px; color:var(--text-dim); margin-top:-8px; margin-bottom:6px;">Restricts the task dropdown in the extension to only these categories — e.g. a "Backoffice" user type only ever sees Backoffice tasks. Leave nothing checked for no restriction (this role sees every task, same as before). Owner/Admin are never restricted.</div>
-        <div id="roleTaskCategoriesPicker" style="display:flex; flex-direction:column; gap:6px; border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--inset); margin-bottom:14px;"></div>
-
-        <!-- v194: separate, narrower permission from ordinary Client Chats
-             access — lets this role text a client's phone directly (via
-             SMS) from the manual composer, not just the in-app chat
-             thread. Owner/Admin always have this regardless of the
-             checkbox. -->
-        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin-bottom:14px;">
-          <input type="checkbox" id="roleCanTextClientsCb" style="width:14px; height:14px; accent-color:var(--focus);">
-          Can text clients directly (manual SMS composer in Client Chats)
-        </label>
-
-        <!-- v499: separate, narrower permission from "Can manage users" --
-             a role can have full user-management access (create/deactivate
-             accounts, edit schedules/hours) without being able to see or
-             change what anyone gets PAID. Gates hourly rate, sales bonus,
-             extra tiers, pay model, and salary tiers on the Schedule tab
-             (Time Management -> Dashboard -> a user's Schedule) -- every
-             other field there (limits, break allowance, shift, timezone,
-             working days) stays governed by Can manage users as before.
-             Owner/Admin always have this regardless of the checkbox. -->
-        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin-bottom:14px;">
-          <input type="checkbox" id="roleCanEditCompensationCb" style="width:14px; height:14px; accent-color:var(--focus);">
-          Can edit compensation (hourly rate, bonuses, salary tiers on a user's Schedule)
-        </label>
-
-        <label>Which users can this user type view</label>
-        <div style="font-size:10px; color:var(--text-dim); margin-top:-8px; margin-bottom:6px;">Restricts every tab above to just these users' data (Dashboard, Timesheets, Reports, Leads, Flags). Owner and Admin always see everyone regardless of this setting. Check as many of the first three as you like — they combine (e.g. "Only themselves" + "A specific user type" together). "All users" is exclusive since it already includes everyone.</div>
-        <div style="display:flex; gap:16px; margin-bottom:10px; flex-wrap:wrap;">
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:12px; color:var(--text); letter-spacing:0;">
-            <input type="checkbox" name="roleViewScope" id="roleViewScopeSelf" value="self" style="width:14px; height:14px; accent-color:var(--focus);"> Only themselves
-          </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:12px; color:var(--text); letter-spacing:0;">
-            <input type="checkbox" name="roleViewScope" id="roleViewScopeSelected" value="selected" style="width:14px; height:14px; accent-color:var(--focus);"> Only selected users
-          </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:12px; color:var(--text); letter-spacing:0;">
-            <input type="checkbox" name="roleViewScope" id="roleViewScopeSpecificRole" value="specific_role" style="width:14px; height:14px; accent-color:var(--focus);"> A specific user type
-          </label>
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:12px; color:var(--text); letter-spacing:0; padding-left:16px; border-left:1px solid var(--border);">
-            <input type="checkbox" name="roleViewScope" id="roleViewScopeAll" value="all" style="width:14px; height:14px; accent-color:var(--focus);"> All users
-          </label>
-        </div>
-        <div id="roleViewSpecificRoleWrap" style="display:none; margin-bottom:14px;">
-          <label>Which user type can this user type view</label>
-          <select id="roleViewSpecificRoleSelect"></select>
-        </div>
-        <div id="roleViewUsersPicker" style="display:none; flex-wrap:wrap; gap:10px; border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--inset); margin-bottom:14px; max-height:180px; overflow-y:auto;"></div>
-
-        <div style="display:flex; gap:8px;">
-          <button class="btn-primary edit-only" id="roleSaveBtn" style="width:auto; padding:10px 20px; margin-top:0;">Save user type</button>
-          <button class="btn-secondary" id="roleCancelEditBtn" style="width:auto; padding:10px 20px; margin-top:0; display:none;">Cancel edit</button>
-        </div>
-        <div class="msg" id="rolesMsg"></div>
+      <div class="perm-mode-row" id="permModeRow">
+        <button class="perm-mode-btn active" data-perm-mode="groups" type="button">User types</button>
+        <button class="perm-mode-btn" data-perm-mode="people" type="button">Individual people</button>
       </div>
 
-      <div class="card">
-        <table>
-          <thead>
-            <tr><th>User Type</th><th>Dashboard tabs</th><th>User view scope</th><th></th></tr>
-          </thead>
-          <tbody id="rolesBody"></tbody>
-        </table>
+      <div class="perm-ceiling-banner" id="permCeilingBanner" style="display:none;">
+        <span aria-hidden="true">&#9432;</span>
+        <span id="permCeilingBannerText"></span>
+      </div>
+
+      <!-- ---------------- user types (groups) ---------------- -->
+      <div id="permPaneGroups">
+        <div class="perm-split">
+          <aside class="card perm-side">
+            <div class="perm-side-tools">
+              <input type="text" id="roleSearchInput" placeholder="Search user types&hellip;" autocomplete="off" style="flex:1;">
+              <button class="btn-secondary edit-only" id="roleNewBtn" type="button" style="width:auto; padding:8px 12px; margin-top:0; white-space:nowrap;">+ New</button>
+            </div>
+            <div class="perm-side-list" id="rolesListBody"></div>
+          </aside>
+
+          <section class="card">
+            <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;" id="rolesFormTitle">Add a user type</h3>
+            <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.5;">
+              A user type controls which tabs an account can see, whether it can <em>edit</em> or only <em>view</em> each
+              subtab, and which users' data it may see at all. Owner is protected and always sees everything. Admin's
+              access is whatever the Owner grants it below &mdash; an Admin cannot change its own user type, and cannot
+              give anyone access it does not have itself. Creating, editing, resetting passwords for and deleting
+              accounts stays Owner/Admin only whatever is ticked here.
+            </div>
+
+            <div style="margin-bottom:14px;">
+              <label>User type name</label>
+              <input type="text" id="roleNameInput" placeholder="e.g. quality, supervisor&hellip;">
+            </div>
+
+            <label>Tabs and subtabs this user type can reach</label>
+            <div class="perm-note">Untick a tab to hide it completely. Within a tab, <b>View</b> shows the subtab and <b>Edit</b> lets this user type change things there.</div>
+            <div class="perm-bulk">
+              <button type="button" class="perm-bulk-btn" data-perm-bulk="view-all">Give every View</button>
+              <button type="button" class="perm-bulk-btn" data-perm-bulk="edit-all">Give every Edit</button>
+              <button type="button" class="perm-bulk-btn" data-perm-bulk="clear">Clear everything</button>
+              <button type="button" class="perm-bulk-btn" data-perm-bulk="expand">Expand all</button>
+              <button type="button" class="perm-bulk-btn" data-perm-bulk="collapse">Collapse all</button>
+            </div>
+            <div id="roleTabsPicker"></div>
+
+            <label style="margin-top:16px; display:block;">Task categories this user type's agents can select</label>
+            <div class="perm-note">Restricts the task dropdown in the extension to these categories. Leave everything unticked for no restriction.</div>
+            <div id="roleTaskCategoriesPicker" style="display:flex; flex-direction:column; gap:6px; border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--inset); margin-bottom:14px;"></div>
+
+            <!-- v194: narrower than ordinary Client Chats access — this is
+                 texting a client's phone from the manual composer. v776: the
+                 Owner's answer here now binds Admin too (it used to be
+                 forced on for admin in code). -->
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin-bottom:10px;">
+              <input type="checkbox" id="roleCanTextClientsCb" class="perm-cb">
+              Can text clients directly (manual SMS composer in Client Chats)
+            </label>
+
+            <!-- v499: narrower than "Can manage users" — a user type can run
+                 accounts and schedules without seeing what anyone is PAID.
+                 v776: binds Admin too, same as above. -->
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin-bottom:16px;">
+              <input type="checkbox" id="roleCanEditCompensationCb" class="perm-cb">
+              Can edit compensation (hourly rate, bonuses, salary tiers on a user's Schedule)
+            </label>
+
+            <label>Which users can this user type view</label>
+            <div class="perm-note">Restricts every tab above to these users' data. Owner and Admin always see everyone. "All users" cannot be combined with the other three.</div>
+            <div style="display:flex; gap:16px; margin-bottom:10px; flex-wrap:wrap;">
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:12px; color:var(--text); letter-spacing:0;">
+                <input type="checkbox" name="roleViewScope" id="roleViewScopeSelf" value="self" class="perm-cb"> Only themselves
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:12px; color:var(--text); letter-spacing:0;">
+                <input type="checkbox" name="roleViewScope" id="roleViewScopeSelected" value="selected" class="perm-cb"> Only selected users
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:12px; color:var(--text); letter-spacing:0;">
+                <input type="checkbox" name="roleViewScope" id="roleViewScopeSpecificRole" value="specific_role" class="perm-cb"> A specific user type
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:12px; color:var(--text); letter-spacing:0; padding-left:16px; border-left:1px solid var(--border);">
+                <input type="checkbox" name="roleViewScope" id="roleViewScopeAll" value="all" class="perm-cb"> All users
+              </label>
+            </div>
+            <div id="roleViewSpecificRoleWrap" style="display:none; margin-bottom:14px;">
+              <label>Which user type can this user type view</label>
+              <select id="roleViewSpecificRoleSelect"></select>
+            </div>
+            <div id="roleViewUsersPicker" style="display:none; flex-wrap:wrap; gap:10px; border:1px solid var(--border); border-radius:8px; padding:10px 12px; background:var(--inset); margin-bottom:14px; max-height:180px; overflow-y:auto;"></div>
+
+            <div class="btn-row">
+              <button class="btn-primary edit-only" id="roleSaveBtn" style="width:auto; padding:10px 20px;">Save user type</button>
+              <button class="btn-secondary" id="roleCancelEditBtn" style="width:auto; padding:10px 20px; display:none;">Cancel edit</button>
+              <button class="btn-secondary edit-only" id="roleDeleteBtn" style="width:auto; padding:10px 20px; display:none;">Delete user type</button>
+            </div>
+            <div class="msg" id="rolesMsg"></div>
+          </section>
+        </div>
+      </div>
+
+      <!-- ---------------- individual people ---------------- -->
+      <div id="permPanePeople" style="display:none;">
+        <div class="perm-split">
+          <aside class="card perm-side">
+            <div class="perm-side-tools">
+              <input type="text" id="permUserSearch" placeholder="Search people&hellip;" autocomplete="off" style="flex:1;">
+            </div>
+            <div class="perm-side-tools">
+              <select id="permUserTypeFilter" style="flex:1; margin-top:0;"></select>
+            </div>
+            <div class="perm-side-list" id="permUserListBody"></div>
+          </aside>
+
+          <section class="card">
+            <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:6px; text-transform:uppercase; letter-spacing:1px;" id="permUserFormTitle">Pick somebody on the left</h3>
+            <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.5;" id="permUserFormIntro">
+              Everyone gets the access their user type gives them. Use this only for the exceptions &mdash; one person
+              who needs a subtab their type does not have, or who should be kept out of one it does. The boxes start
+              filled in from their user type; whatever you change here follows that person, not their type, and
+              overrides it. "Reset to their user type" removes the exception again.
+            </div>
+            <div id="permUserEditorBody" style="display:none;">
+              <div class="perm-bulk">
+                <button type="button" class="perm-bulk-btn" data-perm-bulk="view-all">Give every View</button>
+                <button type="button" class="perm-bulk-btn" data-perm-bulk="edit-all">Give every Edit</button>
+                <button type="button" class="perm-bulk-btn" data-perm-bulk="clear">Clear everything</button>
+                <button type="button" class="perm-bulk-btn" data-perm-bulk="expand">Expand all</button>
+                <button type="button" class="perm-bulk-btn" data-perm-bulk="collapse">Collapse all</button>
+              </div>
+              <div id="permUserTabsPicker"></div>
+
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin:14px 0 10px;">
+                <input type="checkbox" id="permUserCanTextClientsCb" class="perm-cb">
+                Can text clients directly (manual SMS composer in Client Chats)
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:13px; color:var(--text); letter-spacing:0; margin-bottom:14px;">
+                <input type="checkbox" id="permUserCanEditCompensationCb" class="perm-cb">
+                Can edit compensation (hourly rate, bonuses, salary tiers on a user's Schedule)
+              </label>
+
+              <div style="margin-bottom:14px;">
+                <label>Why (optional, kept with the exception)</label>
+                <input type="text" id="permUserNote" placeholder="e.g. covering Finance while Sara is on leave" autocomplete="off">
+              </div>
+
+              <div class="btn-row">
+                <button class="btn-primary edit-only" id="permUserSaveBtn" style="width:auto; padding:10px 20px;">Save this person's access</button>
+                <button class="btn-secondary edit-only" id="permUserResetBtn" style="width:auto; padding:10px 20px;">Reset to their user type</button>
+              </div>
+              <div class="msg" id="permUserMsg"></div>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
 
@@ -8185,6 +8372,17 @@
       <input type="checkbox" id="clientAccessReportsShowHours" style="width:14px; height:14px; accent-color:var(--focus);">
       Show Agent Hours Logged on their Reports tab
     </label>
+    <!-- ===== v776: which tabs and subtabs this client sees in their own
+         portal. The owner asked for client permissions to live here, under
+         User Management > Clients > Edit client, next to the access they
+         already set. Entitlement still comes first: this can close a tab,
+         never open one the client has not paid for. ===== -->
+    <p style="font-size:13px; color:var(--text-2); line-height:1.5; margin:16px 0 4px;">
+      <b>Client portal access</b> &mdash; which tabs and subtabs this client sees when they sign in.
+    </p>
+    <div class="perm-note" style="margin-top:0;">Everything is on unless you turn it off. Some tabs also depend on what the client has bought &mdash; unticking always hides, ticking never grants.</div>
+    <div id="clientAccessPortalSections" style="max-height:340px; overflow-y:auto; margin-top:8px;"></div>
+
     <!-- ===== v (user request, 2026-09-05): the Reports tab above only
          controls *visibility* -- which ReadyMode channel(s) actually feed
          it is a separate client_id link on readymode_lead_posting_channels,
@@ -9415,7 +9613,17 @@ function applyUserGreeting(previousLoginAt){
     ? `Last login: ${new Date(previousLoginAt).toLocaleString([], { month:'short', day:'numeric', year:'numeric', hour:'2-digit', minute:'2-digit', ...(greetingTz ? { timeZone: greetingTz } : {}) })}`
     : 'First login';
 }
-let myPermissions = { allowedTabs: [], canManageUsers: false, isProtected: false, tabEdit: {}, viewScope: 'all', viewableUserIds: [], umSections: {}, activitySections: {}, leadsSections: {}, csubSections: {}, dataScienceSections: {}, taxesSections: {}, timeManagementSections: {} };
+let myPermissions = { allowedTabs: [], canManageUsers: false, isProtected: false, tabEdit: {}, viewScope: 'all', viewableUserIds: [], umSections: {}, activitySections: {}, leadsSections: {}, csubSections: {}, dataScienceSections: {}, taxesSections: {}, timeManagementSections: {}, financeSections: {}, hrSections: {}, dialerAdminSections: {} };
+// v776: true when this account has a per-person grant on top of its user
+// type — shown as a badge next to their name in User Management so nobody
+// wonders why two people with the same type see different tabs.
+let myHasPermissionOverride = false;
+// v776: what the signed-in person is allowed to HAND OUT. null = no ceiling
+// (Owner). For anybody else it is their own effective permissions, so an
+// Admin can never grant a tab or subtab the Owner did not grant them. The
+// database enforces the same rule in a trigger (enforce_role_grant_ceiling);
+// this copy is only so the editor can grey the box out and say why.
+let myGrantCeiling = null;
 
 // True if this role can create/edit/delete on the given tab, not just view
 // it. Owner (isProtected) always can, on every tab. Admin's is_protected
@@ -10140,38 +10348,81 @@ async function establishSession(user, { isNewLogin = true } = {}){
     throw noAccessErr;
   }
   myRole = roleRow?.name || 'owner';
+  // v776: one person can be granted (or denied) something their user type
+  // does not say, without inventing a user type for them. NULL/absent in the
+  // override means "inherit the user type"; a section map merges over the
+  // role's one section key at a time, so the override only carries the
+  // difference. Best-effort: if this table is missing (migration not run
+  // yet) the role alone decides, exactly as before.
+  let overrideRow = null;
+  try {
+    const { data: ovr } = await sb.from('user_permission_overrides').select('*').eq('user_id', user.id).maybeSingle();
+    overrideRow = ovr || null;
+  } catch(e) { /* pre-v776 database — role-only permissions */ }
+  // Shallow merge, which is exactly per-section-key.
+  const _sec = (family) => Object.assign({}, roleRow?.[family] || {}, overrideRow?.[family] || {});
+  // A boolean override only counts when it is actually a boolean; NULL means
+  // inherit, and `false` has to survive (that is how an Owner takes one
+  // permission away from one person).
+  const _flag = (name) => typeof overrideRow?.[name] === 'boolean' ? overrideRow[name] : !!roleRow?.[name];
+  myHasPermissionOverride = !!overrideRow;
   myPermissions = {
     // Owner always gets every tab the app currently knows about — including
     // ones added after this role's allowed_tabs row in the DB was last
     // saved — rather than being limited to whatever is checked in the
     // Roles tab. Every other role still goes strictly by its DB row.
-    allowedTabs: isOwnerRole ? DASHBOARD_TAB_KEYS.map(t => t.key) : roleRow.allowed_tabs,
+    // v776: a per-person allowed_tabs REPLACES the role's list rather than
+    // merging — the editor pre-fills from the user type, so the boxes on
+    // screen are the whole answer.
+    allowedTabs: isOwnerRole ? DASHBOARD_TAB_KEYS.map(t => t.key) : (Array.isArray(overrideRow?.allowed_tabs) ? overrideRow.allowed_tabs : roleRow.allowed_tabs),
     canManageUsers: isOwnerRole ? true : !!roleRow?.can_manage_users,
     isProtected: isOwnerRole ? true : !!roleRow?.is_protected,
-    tabEdit: roleRow?.tab_edit || {},
+    tabEdit: _sec('tab_edit'),
     viewScope: roleRow?.view_scope || 'all',
     viewableUserIds: roleRow?.viewable_user_ids || [],
-    umSections: roleRow?.um_sections || {},
-    activitySections: roleRow?.activity_sections || {},
-    leadsSections: roleRow?.leads_sections || {},
-    csubSections: roleRow?.csub_sections || {},
-    financeSections: roleRow?.finance_sections || {},
-    hrSections: roleRow?.hr_sections || {},
-    dialerAdminSections: roleRow?.dialer_admin_sections || {}, // v675
-    dataScienceSections: roleRow?.data_science_sections || {},
-    taxesSections: roleRow?.taxes_sections || {},
-    timeManagementSections: roleRow?.time_management_sections || {},
+    umSections: _sec('um_sections'),
+    activitySections: _sec('activity_sections'),
+    leadsSections: _sec('leads_sections'),
+    csubSections: _sec('csub_sections'),
+    financeSections: _sec('finance_sections'),
+    hrSections: _sec('hr_sections'),
+    dialerAdminSections: _sec('dialer_admin_sections'), // v675, per-person since v776
+    dataScienceSections: _sec('data_science_sections'),
+    taxesSections: _sec('taxes_sections'),
+    timeManagementSections: _sec('time_management_sections'),
     // v194: gates the manual "text this client back" composer in Client
     // Chats — Owner/Admin always have it, any other role only if this
     // was checked for them in User Types.
-    canTextClients: isOwnerRole ? true : (myRole === 'admin' || !!roleRow?.can_text_clients),
+    // v776: was `myRole === 'admin' || column`, which meant an Owner turning
+    // this off for Admin had no effect. Admin is read from its own row like
+    // everybody else now; the v776 migration wrote today's effective value
+    // into that row first, so nothing changes until the Owner unticks it.
+    canTextClients: isOwnerRole ? true : _flag('can_text_clients'),
     // v499: narrower than canManageUsers -- gates the pay-related fields on
     // a user's Schedule tab specifically (hourly rate/bonus/extra tiers/pay
     // model/salary tiers), not the rest of that tab's schedule/hours
     // fields. Same isOwnerRole/admin-always-true shape as canTextClients.
-    canEditCompensation: isOwnerRole ? true : (myRole === 'admin' || !!roleRow?.can_edit_compensation),
+    // v776: same as canTextClients above — admin's own row decides.
+    canEditCompensation: isOwnerRole ? true : _flag('can_edit_compensation'),
   };
   myIsOwner = myRole === 'owner';
+  // v776: the ceiling is simply "what I hold myself". Owner has none.
+  myGrantCeiling = myIsOwner ? null : {
+    allowedTabs: myPermissions.allowedTabs || [],
+    tab_edit: myPermissions.tabEdit,
+    um_sections: myPermissions.umSections,
+    activity_sections: myPermissions.activitySections,
+    leads_sections: myPermissions.leadsSections,
+    csub_sections: myPermissions.csubSections,
+    finance_sections: myPermissions.financeSections,
+    hr_sections: myPermissions.hrSections,
+    data_science_sections: myPermissions.dataScienceSections,
+    taxes_sections: myPermissions.taxesSections,
+    time_management_sections: myPermissions.timeManagementSections,
+    dialer_admin_sections: myPermissions.dialerAdminSections,
+    can_text_clients: !!myPermissions.canTextClients,
+    can_edit_compensation: !!myPermissions.canEditCompensation,
+  };
   myFullName = profile?.full_name || '';
   myTitle = profile?.title || '';           // v639
   if(typeof renderProfileMenu === 'function') renderProfileMenu(); // v641
@@ -22655,13 +22906,17 @@ function umSectionDefault(key){
 // matter what (see manage-client's own delete_client check) -- there's no
 // "view+edit but not delete" toggle here, that boundary lives server-side.
 function canViewUmSection(key){
-  if(key === 'clients') return myIsOwner || myRole === 'admin' || !!(myPermissions.umSections.clients && myPermissions.umSections.clients.view);
+  // v776: was `myIsOwner || myRole === 'admin' || row`, so an Owner closing
+  // Clients for Admin did nothing. Admin reads its own row now; the v776
+  // migration wrote today's value (view/edit true) into that row first.
+  if(key === 'clients') return myIsOwner || !!(myPermissions.umSections.clients && myPermissions.umSections.clients.view);
   if(myPermissions.isProtected) return true;
   const s = myPermissions.umSections[key];
   return s && typeof s.view === 'boolean' ? s.view : umSectionDefault(key);
 }
 function canEditUmSection(key){
-  if(key === 'clients') return myIsOwner || myRole === 'admin' || !!(myPermissions.umSections.clients && myPermissions.umSections.clients.edit);
+  // v776: see canViewUmSection above.
+  if(key === 'clients') return myIsOwner || !!(myPermissions.umSections.clients && myPermissions.umSections.clients.edit);
   if(myPermissions.isProtected) return true;
   const s = myPermissions.umSections[key];
   return s && typeof s.edit === 'boolean' ? s.edit : umSectionDefault(key);
@@ -22803,248 +23058,351 @@ function canEditDataSciSection(key){
   return s && typeof s.edit === 'boolean' ? s.edit : dataSciEditSectionDefault(key);
 }
 
+
+// ===========================================================================
+// v776: ONE description of every grantable permission, used by four things
+// that used to each carry their own copy of the same list — the User Types
+// editor, the per-person editor, the Save handler, and the "may I hand this
+// out?" ceiling check. Adding a subtab means adding it to its *_SECTIONS
+// array and nothing else.
+//
+// Built by a function rather than a const because FINANCE_SECTIONS,
+// HR_SECTIONS, TAXES_SECTIONS and DIALER_ADMIN_SECTIONS are declared much
+// further down this file; by the time anything calls this, they all exist.
+// ===========================================================================
+function permissionFamilies(){
+  const alwaysEdit = () => true;
+  const perSectionEdit = (sec) => !!sec.editable;
+  return [
+    { tab: 'time_management', family: 'time_management_sections', prop: 'timeManagementSections', cls: 'tm-section',
+      sections: TIME_MANAGEMENT_SECTIONS, viewDefault: timeManagementSectionDefault, editDefault: () => true,
+      hasEdit: perSectionEdit,
+      note: 'Dashboard is view-only for every user type — editing there follows "Can manage users", which is Owner/Admin only.' },
+    { tab: 'leads', family: 'leads_sections', prop: 'leadsSections', cls: 'leads-section',
+      sections: LEADS_SECTIONS, viewDefault: leadsSectionDefault, editDefault: leadsSectionDefault, hasEdit: alwaysEdit,
+      note: 'View/Edit here is the whole story — there is no separate whole-tab Edit toggle. Deleting a lead stays Owner/Admin only.' },
+    { tab: 'call_activity', family: 'activity_sections', prop: 'activitySections', cls: 'activity-section',
+      sections: (typeof ACTIVITY_SECTIONS !== 'undefined' ? ACTIVITY_SECTIONS.filter(x => x.group !== 'gmail') : []),
+      viewDefault: activitySectionDefault, editDefault: () => false, hasEdit: () => false,
+      groups: (typeof ACTIVITY_GROUPS !== 'undefined' ? ACTIVITY_GROUPS.filter(g => g.key !== 'gmail') : null),
+      note: 'Every report here is read-only, so there is no Edit column. The Gmail Inbox follows "Can text clients" instead.' },
+    { tab: 'dialer_admin', family: 'dialer_admin_sections', prop: 'dialerAdminSections', cls: 'da-section',
+      sections: DIALER_ADMIN_SECTIONS, viewDefault: dialerAdminSectionDefault, editDefault: dialerAdminEditSectionDefault,
+      hasEdit: perSectionEdit,
+      note: 'Saving also sets the database\u2019s own dialer rights to match. Ordering phone numbers stays Owner/Admin only.' },
+    { tab: 'client_submissions', family: 'csub_sections', prop: 'csubSections', cls: 'csub-section',
+      sections: CSUB_SECTIONS, viewDefault: csubSectionDefault, editDefault: csubEditSectionDefault, hasEdit: alwaysEdit,
+      note: 'Delete and Export CSV on every subtab stay Owner/Admin only, whatever is ticked here.' },
+    { tab: 'usermanagement', family: 'um_sections', prop: 'umSections', cls: 'um-section',
+      sections: UM_SECTIONS, viewDefault: umSectionDefault, editDefault: umSectionDefault, hasEdit: alwaysEdit,
+      note: 'User Types is the section that hands out further access — whoever has it can only ever grant what they hold themselves.' },
+    { tab: 'finance', family: 'finance_sections', prop: 'financeSections', cls: 'finance-section',
+      sections: FINANCE_SECTIONS, viewDefault: financeSectionDefault, editDefault: financeEditSectionDefault,
+      hasEdit: perSectionEdit,
+      note: 'Edit is what lets a user type actually charge, refund or change pricing. iSpeedToLead Postbacks is Owner-only and is not listed.' },
+    { tab: 'hr', family: 'hr_sections', prop: 'hrSections', cls: 'hr-section',
+      sections: HR_SECTIONS, viewDefault: hrSectionDefault, editDefault: hrEditSectionDefault, hasEdit: perSectionEdit,
+      note: 'Candidate Submission\u2019s Edit is what lets somebody submit a candidate; Candidate Review\u2019s is what lets them approve or reject.' },
+    { tab: 'data_science', family: 'data_science_sections', prop: 'dataScienceSections', cls: 'datasci-section',
+      sections: DATA_SCIENCE_SECTIONS, viewDefault: () => dataSciSectionDefault(), editDefault: dataSciEditSectionDefault,
+      hasEdit: alwaysEdit,
+      note: 'List Builder and Overview are Owner/Admin only in the database too, so they are not grantable here.' },
+    { tab: 'taxes', family: 'taxes_sections', prop: 'taxesSections', cls: 'taxes-section',
+      sections: TAXES_SECTIONS, viewDefault: () => true, editDefault: () => false, hasEdit: () => false,
+      note: 'All three are read-only reports, so there is no Edit column.' },
+  ];
+}
+function permissionFamilyForTab(tabKey){
+  return permissionFamilies().find(f => f.tab === tabKey) || null;
+}
+
+// --- the ceiling -----------------------------------------------------------
+// "You can only hand out what the Owner handed you." myGrantCeiling is null
+// for the Owner, which every function below reads as "no ceiling". The same
+// rule is enforced in the database (enforce_role_grant_ceiling); these are
+// only so the editor can disable the box and say why, instead of letting
+// somebody tick it and then hit a save error.
+function ceilingAllowsTab(key){
+  if(!myGrantCeiling) return true;
+  return (myGrantCeiling.allowedTabs || []).includes(key);
+}
+function ceilingAllowsTabEdit(key){
+  if(!myGrantCeiling) return true;
+  if(!ceilingAllowsTab(key)) return false;
+  const v = myGrantCeiling.tab_edit ? myGrantCeiling.tab_edit[key] : undefined;
+  return typeof v === 'boolean' ? v : true;   // tab_edit defaults open
+}
+function ceilingAllowsSection(fam, key, mode){
+  if(!myGrantCeiling) return true;
+  if(!ceilingAllowsTab(fam.tab)) return false;
+  const map = myGrantCeiling[fam.family] || {};
+  const cur = map[key];
+  if(cur && typeof cur[mode] === 'boolean') return cur[mode];
+  return mode === 'edit' ? !!fam.editDefault(key) : !!fam.viewDefault(key);
+}
+function ceilingAllowsFlag(name){
+  if(!myGrantCeiling) return true;
+  return !!myGrantCeiling[name];
+}
+const CEILING_TITLE = 'Only the Owner can grant this \u2014 it is not part of your own access.';
+
 let allRoles = [];
 let allViewableUsers = []; // every non-protected user, for the "which users can view" picker
 let editingRoleName = null; // null = the form is creating a new role
 
+// ===========================================================================
+// v776: ONE permission matrix, rendered either for a user type or for one
+// person. Replaces renderRoleTabsPicker, which built the same checkboxes but
+// as a flat column with each subtab block indented under its tab and no
+// column alignment, so View and Edit drifted away from their labels on the
+// taller tabs. Same checkbox classes and data attributes as before, so the
+// Save handlers keep finding them — but every query is now scoped to the
+// container, because two matrices (one per pane) can exist at once.
+//
+// `values`   — { allowed_tabs: [], tab_edit: {}, <family>: {} }
+// `opts`     — { inherited }  the user type's own values, when this matrix is
+//              for one person: any box that differs gets a "Custom" tag so it
+//              is obvious what is an exception and what is just inherited.
+// ===========================================================================
+function permMatrixEl(rootId){ return document.getElementById(rootId); }
+
+function permSectionValue(values, fam, key, mode){
+  const cur = (values[fam.family] || {})[key];
+  if(cur && typeof cur[mode] === 'boolean') return cur[mode];
+  return mode === 'edit' ? !!fam.editDefault(key) : !!fam.viewDefault(key);
+}
+
+function renderPermissionMatrix(rootId, values, opts){
+  opts = opts || {};
+  values = values || {};
+  values.allowed_tabs = values.allowed_tabs || [];
+  const root = permMatrixEl(rootId);
+  if(!root) return;
+  const inherited = opts.inherited || null;
+
+  const cb = (cls, dataAttr, dataVal, checked, allowed, extraCls) => {
+    const dis = allowed ? '' : ' disabled';
+    const t = allowed ? '' : ` title="${CEILING_TITLE}"`;
+    return `<input type="checkbox" class="perm-cb ${cls}${extraCls ? ' ' + extraCls : ''}" ${dataAttr}="${dataVal}" ${checked ? 'checked' : ''}${dis}${t}>`;
+  };
+
+  root.innerHTML = DASHBOARD_TAB_KEYS.map(t => {
+    const fam = permissionFamilyForTab(t.key);
+    const tabOn = values.allowed_tabs.includes(t.key);
+    const tabAllowed = ceilingAllowsTab(t.key);
+    const editOn = tabOn && values.tab_edit && values.tab_edit[t.key] !== false;
+    const editAllowed = ceilingAllowsTabEdit(t.key);
+    const sections = fam ? fam.sections : [];
+    const granted = sections.filter(s => permSectionValue(values, fam, s.key, 'view')).length;
+
+    // A tab whose subtabs are grouped (Activity) keeps its group headings.
+    const rowsFor = (list) => list.map(s => {
+      const viewOn = permSectionValue(values, fam, s.key, 'view');
+      const viewAllowed = ceilingAllowsSection(fam, s.key, 'view');
+      const hasEdit = fam.hasEdit(s);
+      const editVal = hasEdit ? permSectionValue(values, fam, s.key, 'edit') : false;
+      const editAllowedS = hasEdit ? ceilingAllowsSection(fam, s.key, 'edit') : false;
+      let custom = false;
+      if(inherited){
+        const inhV = permSectionValue(inherited, fam, s.key, 'view');
+        const inhE = hasEdit ? permSectionValue(inherited, fam, s.key, 'edit') : false;
+        custom = (inhV !== viewOn) || (hasEdit && inhE !== editVal);
+      }
+      // The "Owner only" tag means "you cannot show this subtab at all".
+      // When only Edit is beyond the grantor's reach, the disabled Edit box
+      // and its tooltip say so on their own — tagging the whole row would
+      // read as though View were blocked too, which it is not.
+      const capped = !viewAllowed;
+      return `
+        <div class="perm-row${capped ? ' is-capped' : ''}">
+          <div class="perm-row-label">${escapeHtml(s.label)}${custom ? ' <span class="perm-custom-tag">Custom</span>' : ''}${capped ? ' <span class="perm-capped-tag">Owner only</span>' : ''}</div>
+          <div class="perm-cell">${cb(fam.cls + '-view-cb', 'data-section', s.key, viewOn, viewAllowed)}</div>
+          <div class="perm-cell">${
+            hasEdit ? cb(fam.cls + '-edit-cb', 'data-section', s.key, editVal, editAllowedS)
+            : '<span class="perm-cell-note">view only</span>'
+          }</div>
+        </div>`;
+    }).join('');
+
+    const body = !fam ? '' : `
+      <div class="perm-body" data-perm-body="${t.key}"${tabOn ? '' : ' style="display:none;"'}>
+        ${fam.note ? `<div class="perm-note">${fam.note}</div>` : ''}
+        ${fam.groups
+          ? fam.groups.map(g => {
+              const list = sections.filter(s => s.group === g.key);
+              return list.length ? `<div class="perm-group-label">${escapeHtml(g.label)}</div>${rowsFor(list)}` : '';
+            }).join('')
+          : rowsFor(sections)}
+      </div>`;
+
+    return `
+      <div class="perm-tab-card${tabOn ? '' : ' is-off'}" data-perm-tab-card="${t.key}">
+        <div class="perm-tab-head${tabAllowed ? '' : ' is-capped'}">
+          <div class="perm-tab-title">
+            ${fam ? `<button type="button" class="perm-disclose" data-perm-disclose="${t.key}" aria-label="Show or hide subtabs">${tabOn ? '&#9662;' : '&#9656;'}</button>` : '<span class="perm-disclose"></span>'}
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); letter-spacing:0; margin:0; min-width:0;">
+              ${cb('role-tab-cb', 'data-tab', t.key, tabOn, tabAllowed)}
+              <span class="perm-tab-name">${escapeHtml(t.label)}</span>
+            </label>
+            ${fam ? `<span class="perm-tab-count" data-perm-count="${t.key}">${granted}/${sections.length}</span>` : ''}
+            ${tabAllowed ? '' : '<span class="perm-capped-tag">Owner only</span>'}
+          </div>
+          <div class="perm-col-label">${fam ? 'View' : ''}</div>
+          <div class="perm-cell">${
+            t.editable ? cb('role-tab-edit-cb', 'data-tab', t.key, editOn, editAllowed)
+            : (fam ? '<span class="perm-col-label">Edit</span>' : '')
+          }</div>
+        </div>
+        ${body}
+      </div>`;
+  }).join('');
+
+  // Kept so permReadMatrix can tell "this was already true in the database"
+  // from "this box shows the default because nobody ever set it" — see its
+  // own comment for why that distinction matters for a capped box.
+  root._permValues = values;
+  permBindMatrix(root);
+  permRefreshCounts(root);
+}
+
+// Ticking a tab off hides its subtab rows and greys the card; the disclosure
+// arrow opens or closes without changing any permission.
+function permBindMatrix(root){
+  root.querySelectorAll('.perm-disclose[data-perm-disclose]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const body = root.querySelector(`[data-perm-body="${btn.dataset.permDisclose}"]`);
+      if(!body) return;
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : '';
+      btn.innerHTML = open ? '&#9656;' : '&#9662;';
+    });
+  });
+  root.querySelectorAll('.role-tab-cb').forEach(box => {
+    box.addEventListener('change', () => {
+      const key = box.dataset.tab;
+      const card = root.querySelector(`[data-perm-tab-card="${key}"]`);
+      const body = root.querySelector(`[data-perm-body="${key}"]`);
+      const arrow = root.querySelector(`[data-perm-disclose="${key}"]`);
+      if(card) card.classList.toggle('is-off', !box.checked);
+      if(body) body.style.display = box.checked ? '' : 'none';
+      if(arrow) arrow.innerHTML = box.checked ? '&#9662;' : '&#9656;';
+      // A tab that is off cannot be "edit"; turning it back on restores the
+      // default (editable) rather than leaving a stale unticked box.
+      const editBox = root.querySelector(`.role-tab-edit-cb[data-tab="${key}"]`);
+      if(editBox && !editBox.disabled) editBox.checked = box.checked;
+    });
+  });
+  root.querySelectorAll('input[class*="-view-cb"], input[class*="-edit-cb"]').forEach(box => {
+    box.addEventListener('change', () => permRefreshCounts(root));
+  });
+}
+
+function permRefreshCounts(root){
+  permissionFamilies().forEach(fam => {
+    const el = root.querySelector(`[data-perm-count="${fam.tab}"]`);
+    if(!el) return;
+    const boxes = Array.from(root.querySelectorAll(`.${fam.cls}-view-cb`));
+    el.textContent = `${boxes.filter(b => b.checked).length}/${boxes.length}`;
+  });
+}
+
+// The five buttons above the matrix. Everything they touch respects the
+// ceiling, because a capped box is rendered disabled and a disabled box is
+// skipped here.
+function permApplyBulk(root, action){
+  if(action === 'expand' || action === 'collapse'){
+    root.querySelectorAll('[data-perm-body]').forEach(b => { b.style.display = action === 'expand' ? '' : 'none'; });
+    root.querySelectorAll('[data-perm-disclose]').forEach(a => { a.innerHTML = action === 'expand' ? '&#9662;' : '&#9656;'; });
+    return;
+  }
+  const set = (sel, val) => root.querySelectorAll(sel).forEach(b => { if(!b.disabled) b.checked = val; });
+  if(action === 'view-all'){
+    set('.role-tab-cb', true);
+    set('input[class*="-view-cb"]', true);
+  } else if(action === 'edit-all'){
+    set('.role-tab-cb', true);
+    set('input[class*="-view-cb"]', true);
+    set('.role-tab-edit-cb', true);
+    set('input[class*="-edit-cb"]', true);
+  } else if(action === 'clear'){
+    set('.role-tab-cb', false);
+    set('.role-tab-edit-cb', false);
+    set('input[class*="-view-cb"]', false);
+    set('input[class*="-edit-cb"]', false);
+  }
+  root.querySelectorAll('.role-tab-cb').forEach(b => b.dispatchEvent(new Event('change')));
+  permRefreshCounts(root);
+}
+
+// Reads a matrix back out into the same shape the `roles` row stores.
+//
+// A DISABLED box is one the signed-in person may not hand out, and it is
+// rendered showing what the role has today — which, for a key nobody ever
+// set, is the code default rather than a stored value. Writing that default
+// back as an explicit `true` would be a grant this person is not allowed to
+// make, and the database would refuse the whole save; writing it back as
+// `false` would quietly strip a permission they were only ever shown. So a
+// capped box re-emits exactly what was stored, and contributes nothing at
+// all when nothing was stored. Whatever the role already had survives, and
+// nothing new is invented.
+function permReadMatrix(rootId){
+  const root = permMatrixEl(rootId);
+  const out = { allowed_tabs: [], tab_edit: {} };
+  if(!root) return out;
+  const orig = root._permValues || {};
+
+  root.querySelectorAll('.role-tab-cb').forEach(b => {
+    const on = b.disabled ? (orig.allowed_tabs || []).includes(b.dataset.tab) : b.checked;
+    if(on) out.allowed_tabs.push(b.dataset.tab);
+  });
+  root.querySelectorAll('.role-tab-edit-cb').forEach(b => {
+    if(b.disabled){
+      const stored = (orig.tab_edit || {})[b.dataset.tab];
+      if(typeof stored === 'boolean') out.tab_edit[b.dataset.tab] = stored;
+    } else {
+      out.tab_edit[b.dataset.tab] = b.checked;
+    }
+  });
+
+  permissionFamilies().forEach(fam => {
+    const map = {};
+    const origMap = orig[fam.family] || {};
+    fam.sections.forEach(sec => {
+      const v = root.querySelector(`.${fam.cls}-view-cb[data-section="${sec.key}"]`);
+      const e = root.querySelector(`.${fam.cls}-edit-cb[data-section="${sec.key}"]`);
+      const stored = origMap[sec.key] || {};
+      const entry = {};
+      if(v && !v.disabled) entry.view = v.checked;
+      else if(typeof stored.view === 'boolean') entry.view = stored.view;
+      if(fam.hasEdit(sec)){
+        if(e && !e.disabled) entry.edit = e.checked;
+        else if(typeof stored.edit === 'boolean') entry.edit = stored.edit;
+      } else if(typeof stored.edit === 'boolean') entry.edit = stored.edit;
+      if(Object.keys(entry).length) map[sec.key] = entry;
+    });
+    out[fam.family] = map;
+  });
+  return out;
+}
+
+// Kept under its old name so every existing caller (startEditRole,
+// resetRoleForm) works unchanged; the long positional argument list it used
+// to take is now one object.
 function renderRoleTabsPicker(selectedTabs, tabEdit, umSections, activitySections, leadsSections, csubSections, financeSections, hrSections, dataScienceSections, taxesSections, timeManagementSections, dialerAdminSections){
-  dialerAdminSections = dialerAdminSections || {}; // v675
-  selectedTabs = selectedTabs || [];
-  tabEdit = tabEdit || {};
-  umSections = umSections || {};
-  activitySections = activitySections || {};
-  leadsSections = leadsSections || {};
-  csubSections = csubSections || {};
-  financeSections = financeSections || {};
-  hrSections = hrSections || {};
-  dataScienceSections = dataScienceSections || {};
-  taxesSections = taxesSections || {};
-  timeManagementSections = timeManagementSections || {};
-  $('roleTabsPicker').innerHTML = DASHBOARD_TAB_KEYS.map(t => `
-    <div>
-      <div style="display:flex; align-items:center; gap:18px;">
-        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:12px; color:var(--text); letter-spacing:0; min-width:110px;">
-          <input type="checkbox" class="role-tab-cb" data-tab="${t.key}" value="${t.key}" ${selectedTabs.includes(t.key) ? 'checked' : ''} style="width:14px; height:14px; accent-color:var(--focus);"> ${t.label}
-        </label>
-        ${t.editable ? `
-          <label style="display:flex; align-items:center; gap:6px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-dim); letter-spacing:0;">
-            <input type="checkbox" class="role-tab-edit-cb" data-tab="${t.key}" ${(selectedTabs.includes(t.key) && tabEdit[t.key] !== false) ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit (unchecked = view only)
-          </label>
-        ` : ''}
-      </div>
-      ${t.key === 'time_management' ? `
-        <div id="timeManagementSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-subtab access within Time Management (only matters if the checkbox above is on). Timesheets and Reports each keep their own separate Edit toggle, same as before this tab was consolidated; Flags is view-only, same as it always was. Dashboard (v453 — moved here from its own top-level tab) is the same: view-only, editing there is Owner/Admin only regardless of this picker.</div>
-          ${TIME_MANAGEMENT_SECTIONS.map(s => {
-            const view = timeManagementSections[s.key] && typeof timeManagementSections[s.key].view === 'boolean' ? timeManagementSections[s.key].view : timeManagementSectionDefault(s.key);
-            const edit = timeManagementSections[s.key] && typeof timeManagementSections[s.key].edit === 'boolean' ? timeManagementSections[s.key].edit : true;
-            return `
-              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                <span style="min-width:120px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="tm-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                </label>
-                ${s.editable ? `
-                  <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                    <input type="checkbox" class="tm-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
-                  </label>
-                ` : s.key === 'staff' ? `<span style="font-size:10px; color:var(--text-dim); font-style:italic;">View only — editing here is Owner/Admin only</span>` : ''}
-              </div>
-            `;
-          }).join('')}
-        </div>
-      ` : ''}
-      ${t.key === 'usermanagement' ? `
-        <div id="umSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-section access within User Management (only matters if the checkbox above is on).${myIsOwner ? ' Chat Logs moved to Audit Log (v360) — Owner-only there, not listed here at all anymore.' : ''}</div>
-          ${UM_SECTIONS.map(s => {
-            const view = umSections[s.key] && typeof umSections[s.key].view === 'boolean' ? umSections[s.key].view : umSectionDefault(s.key);
-            const edit = umSections[s.key] && typeof umSections[s.key].edit === 'boolean' ? umSections[s.key].edit : umSectionDefault(s.key);
-            return `
-              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                <span style="min-width:120px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="um-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                </label>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="um-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
-                </label>
-              </div>
-            `;
-          }).join('')}
-        </div>
-      ` : ''}
-      ${t.key === 'call_activity' ? `
-        <div id="activitySectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-report access within Activity (only matters if the checkbox above is on) — grouped the same way the tab itself is (GoHighLevel / ReadyMode / Extension). All view-only, so there's no separate Edit column. Gmail isn't listed here — its Inbox visibility follows the "Can text clients directly" permission below instead, the same one that gates every other client-facing surface (SMS, Book appointment).</div>
-          ${ACTIVITY_GROUPS.filter(g => g.key !== 'gmail').map(g => `
-            <div style="margin-bottom:6px;">
-              <div style="font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:var(--text-dim); margin:6px 0 2px;">${g.label}</div>
-              ${ACTIVITY_SECTIONS.filter(s => s.group === g.key).map(s => {
-                const view = activitySections[s.key] && typeof activitySections[s.key].view === 'boolean' ? activitySections[s.key].view : activitySectionDefault(s.key);
-                return `
-                  <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                    <span style="min-width:120px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                    <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                      <input type="checkbox" class="activity-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                    </label>
-                  </div>
-                `;
-              }).join('')}
-            </div>
-          `).join('')}
-        </div>
-      ` : ''}
-      ${t.key === 'finance' ? `
-        <div id="financeSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-subtab access within Finance (only matters if the "Finance" checkbox above is on). Edit is what lets a role actually create/save/adjust on a subtab — e.g. Stripe Subscription's Edit covers Manage callers/Pause/Cancel/Convert to paid/Set billing date, and Stripe Pending Payment's covers Get link (Delete stays Owner-only on both, same as everywhere else).${myIsOwner ? ' Billing AK moved to Audit Log (v360) — Owner-only there, not listed here at all anymore. iSpeedToLead Postbacks isn\'t listed here either — Owner-only oversight, same reasoning as List Builder under Data Science.' : ''}</div>
-          ${FINANCE_SECTIONS.map(s => {
-            const view = financeSections[s.key] && typeof financeSections[s.key].view === 'boolean' ? financeSections[s.key].view : financeSectionDefault(s.key);
-            const edit = financeSections[s.key] && typeof financeSections[s.key].edit === 'boolean' ? financeSections[s.key].edit : financeEditSectionDefault(s.key);
-            return `
-              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                <span style="min-width:160px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="finance-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                </label>
-                ${s.editable ? `
-                  <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                    <input type="checkbox" class="finance-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
-                  </label>
-                ` : ''}
-              </div>
-            `;
-          }).join('')}
-        </div>
-      ` : ''}
-      ${t.key === 'dialer_admin' ? `
-        <div id="dialerAdminSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-section access within Dialer Admin (only matters if the "Dialer Admin" checkbox above is on). Saving also sets the database's own dialer rights to match: any Edit here lets this role change dialer settings, any View lets it review calls. Ordering phone numbers stays Owner/Admin only whatever is ticked. Edit on Conversations also lets the role reply to texts, add contacts and requeue them.</div>
-          ${DIALER_ADMIN_SECTIONS.map(s => {
-            const cur = dialerAdminSections[s.key] || {};
-            const view = typeof cur.view === 'boolean' ? cur.view : dialerAdminSectionDefault(s.key);
-            const edit = typeof cur.edit === 'boolean' ? cur.edit : dialerAdminEditSectionDefault(s.key);
-            return `
-              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                <span style="min-width:160px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="da-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                </label>
-                ${s.editable ? `
-                  <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                    <input type="checkbox" class="da-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
-                  </label>
-                ` : ''}
-              </div>
-            `;
-          }).join('')}
-        </div>
-      ` : ''}
-      ${t.key === 'hr' ? `
-        <div id="hrSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-subtab access within Human Resources (only matters if the "Human Resources" checkbox above is on). Candidate Submission's Edit is what lets a role actually submit a candidate; Candidate Review's Edit is what lets a role Approve/Reject — and Review defaults OFF and is enforced at the database level too, not just hidden here, so a submitter can't approve their own candidate just by knowing the API. My Commission is a pure report with no Edit column. Candidate History Archive also defaults OFF and is DB-enforced — it grants read-only visibility into every candidate's full history without also granting Review's approve/reject ability.</div>
-          ${HR_SECTIONS.map(s => {
-            const view = hrSections[s.key] && typeof hrSections[s.key].view === 'boolean' ? hrSections[s.key].view : hrSectionDefault(s.key);
-            const edit = hrSections[s.key] && typeof hrSections[s.key].edit === 'boolean' ? hrSections[s.key].edit : hrEditSectionDefault(s.key);
-            return `
-              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                <span style="min-width:160px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="hr-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                </label>
-                ${s.editable ? `
-                  <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                    <input type="checkbox" class="hr-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
-                  </label>
-                ` : ''}
-              </div>
-            `;
-          }).join('')}
-        </div>
-      ` : ''}
-      ${t.key === 'leads' ? `
-        <div id="leadsSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-sub-tab access within Leads (only matters if the "Leads" checkbox above is on) — View/Edit here is the whole story, there's no separate whole-tab Edit toggle to also remember. Lead Submission's Edit is what lets a role actually submit a lead through the "Submit a lead" card; Submission Forms Creator's Edit is what lets a role build/change the forms themselves — separate from each other on purpose, and Forms Creator defaults OFF.</div>
-          ${LEADS_SECTIONS.map(s => {
-            const view = leadsSections[s.key] && typeof leadsSections[s.key].view === 'boolean' ? leadsSections[s.key].view : leadsSectionDefault(s.key);
-            const edit = leadsSections[s.key] && typeof leadsSections[s.key].edit === 'boolean' ? leadsSections[s.key].edit : leadsSectionDefault(s.key);
-            return `
-              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                <span style="min-width:220px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="leads-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                </label>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="leads-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
-                </label>
-              </div>
-            `;
-          }).join('')}
-        </div>
-      ` : ''}
-      ${t.key === 'client_submissions' ? `
-        <div id="csubSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <!-- v366: this description used to mention Skip Trace's Edit
-               toggle, but Skip Trace moved out to Data Science back in
-               v358 and was never listed in CSUB_SECTIONS -- stale
-               leftover text, corrected while renaming this tab to
-               Campaigns. -->
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-sub-tab access within Campaigns (only matters if the checkbox above is on). Delete and Export CSV/Download on every sub-tab below aren't grantable through this picker — those stay Owner/Admin-only regardless.</div>
-          ${CSUB_SECTIONS.map(s => {
-            const view = csubSections[s.key] && typeof csubSections[s.key].view === 'boolean' ? csubSections[s.key].view : csubSectionDefault(s.key);
-            const edit = csubSections[s.key] && typeof csubSections[s.key].edit === 'boolean' ? csubSections[s.key].edit : csubEditSectionDefault(s.key);
-            return `
-              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                <span style="min-width:220px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="csub-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                </label>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="csub-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
-                </label>
-              </div>
-            `;
-          }).join('')}
-        </div>
-      ` : ''}
-      ${t.key === 'data_science' ? `
-        <div id="dataSciSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-sub-tab access within Data Science (only matters if the checkbox above is on). Skip Trace's Edit is what lets a role Import/Export/Email skip-trace orders (defaults OFF).${myIsOwner ? ' List Builder isn\'t listed here — it\'s Owner/Admin only and can\'t be extended to any custom role (it surfaces raw owner name/mailing address account-wide).' : ''}</div>
-          ${DATA_SCIENCE_SECTIONS.map(s => {
-            const view = dataScienceSections[s.key] && typeof dataScienceSections[s.key].view === 'boolean' ? dataScienceSections[s.key].view : dataSciSectionDefault();
-            const edit = dataScienceSections[s.key] && typeof dataScienceSections[s.key].edit === 'boolean' ? dataScienceSections[s.key].edit : dataSciEditSectionDefault(s.key);
-            return `
-              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                <span style="min-width:220px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="datasci-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                </label>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="datasci-section-edit-cb" data-section="${s.key}" ${edit ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> Edit
-                </label>
-              </div>
-            `;
-          }).join('')}
-        </div>
-      ` : ''}
-      ${t.key === 'taxes' ? `
-        <div id="taxesSectionsPicker" style="margin:8px 0 4px 24px; padding:10px 12px; border:1px solid var(--border); border-radius:8px; background:var(--card);">
-          <div style="font-size:10px; color:var(--text-dim); margin-bottom:6px;">Per-sub-tab access within Taxes (only matters if the checkbox above is on). All 3 are read-only reports, so there's no separate Edit column.</div>
-          ${TAXES_SECTIONS.map(s => {
-            const view = taxesSections[s.key] && typeof taxesSections[s.key].view === 'boolean' ? taxesSections[s.key].view : true;
-            return `
-              <div style="display:flex; align-items:center; gap:16px; padding:4px 0;">
-                <span style="min-width:220px; font-family:var(--sans); font-size:12px; color:var(--text);">${s.label}</span>
-                <label style="display:flex; align-items:center; gap:5px; cursor:pointer; text-transform:none; font-family:var(--sans); font-size:11px; color:var(--text-2); letter-spacing:0;">
-                  <input type="checkbox" class="taxes-section-view-cb" data-section="${s.key}" ${view ? 'checked' : ''} style="width:13px; height:13px; accent-color:var(--focus);"> View
-                </label>
-              </div>
-            `;
-          }).join('')}
-        </div>
-      ` : ''}
-    </div>
-  `).join('');
+  renderPermissionMatrix('roleTabsPicker', {
+    allowed_tabs: selectedTabs || [],
+    tab_edit: tabEdit || {},
+    um_sections: umSections || {},
+    activity_sections: activitySections || {},
+    leads_sections: leadsSections || {},
+    csub_sections: csubSections || {},
+    finance_sections: financeSections || {},
+    hr_sections: hrSections || {},
+    data_science_sections: dataScienceSections || {},
+    taxes_sections: taxesSections || {},
+    time_management_sections: timeManagementSections || {},
+    dialer_admin_sections: dialerAdminSections || {},
+  });
 }
 
 function renderRoleViewUsersPicker(selectedIds, filterType){
@@ -23137,7 +23495,11 @@ function resetRoleForm(){
   renderRoleViewSpecificRoleOptions(null);
   updateRoleViewScopeVisibility();
   $('roleCancelEditBtn').style.display = 'none';
+  // v776: the list of user types is beside the form now, so the selection
+  // highlight and the Delete button have to be cleared with it.
+  if($('roleDeleteBtn')) $('roleDeleteBtn').style.display = 'none';
   $('rolesMsg').textContent = '';
+  if(typeof renderRolesSideList === 'function') renderRolesSideList();
 }
 
 // v48: which task_categories this role's agents can pick from in the
@@ -23165,7 +23527,11 @@ async function initRolesTab(){
     taskCategoriesCache = categories || [];
   }
   resetRoleForm();
+  // v776: who already has a per-person exception, so the list on the
+  // "Individual people" side can badge them before you click into anyone.
+  await permLoadOverrides();
   await loadRolesList();
+  permInitRolesSection();
 }
 
 // ---------- User Management tab: sub-section navigation + per-section gating ----------
@@ -26004,82 +26370,282 @@ function parseViewScopeList(viewScope){
   return (viewScope || 'self').split(',').map(s => s.trim()).filter(Boolean);
 }
 
+// v776: the user types are a list down the left of the editor now, not a
+// table under it — picking one loads it into the form beside it instead of
+// scrolling back up. Renaming moved onto the name box in the form (it used to
+// be an inline contenteditable cell in that table); it still goes through
+// staff-rename-role, because profiles.role has an `on update cascade` FK that
+// only the service role may trigger.
+let roleListFilter = '';
+
 async function loadRolesList(){
-  const { data, error } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, dialer_admin_sections, can_manage_dialer, can_review_calls, data_science_sections, taxes_sections, time_management_sections, task_category_ids, can_text_clients, can_edit_compensation').order('name');
-  const body = $('rolesBody');
-  // v41 fix: this used to ignore `error` entirely and fall through to
-  // `data || []`, silently rendering an EMPTY list — indistinguishable
-  // from "no roles exist" — on any query failure (e.g. activity_sections
-  // not existing yet because supabase/schema.sql's newest migration
-  // hasn't been run against this project). Surfacing the real error here
-  // instead makes that immediately diagnosable instead of looking like
-  // missing data.
+  const { data, error } = await sb.from('roles').select('name, allowed_tabs, can_manage_users, is_protected, tab_edit, view_scope, viewable_user_ids, viewable_role, um_sections, activity_sections, leads_sections, csub_sections, finance_sections, hr_sections, data_science_sections, taxes_sections, time_management_sections, dialer_admin_sections, task_category_ids, can_text_clients, can_edit_compensation').order('name');
+  const body = $('rolesListBody');
+  if(!body) return;
+  // v41 fix: a query failure used to render an EMPTY list, indistinguishable
+  // from "no roles exist" — surface the real error instead.
   if(error){
     allRoles = [];
-    body.innerHTML = `<tr><td colspan="4" class="msg error">${escapeHtml(error.message)}</td></tr>`;
+    body.innerHTML = `<div class="msg error" style="margin:0;">${escapeHtml(error.message)}</div>`;
     return;
   }
   allRoles = data || [];
-  body.innerHTML = '';
-  allRoles.forEach(r => {
-    const tabLabels = (r.allowed_tabs || []).map(k => (DASHBOARD_TAB_KEYS.find(t => t.key === k) || { label: k }).label);
-    // Owner and Admin always see every user regardless of the view_scope
-    // column — that bypass is hardcoded by role name in can_view_user()
-    // at the database level, independent of is_protected, so it applies
-    // to Admin too even now that Admin's other permissions are editable.
-    const alwaysAllUsers = ['owner', 'admin'].includes(r.name);
-    // v1.2.7: view_scope is now a comma-separated list of one or more of
-    // 'self' / 'selected' / 'specific_role' (combinable), or 'all' alone.
+  renderRolesSideList();
+  // These rows are built after activateUmSection()'s gating pass has already
+  // run (that call is synchronous, this list is not), so gating is re-applied
+  // here or a view-only role's controls come back enabled on every reload.
+  applyUmSectionEditGating('roles');
+  permRenderUserList();
+}
+
+function renderRolesSideList(){
+  const body = $('rolesListBody');
+  if(!body) return;
+  const q = (roleListFilter || '').trim().toLowerCase();
+  const shown = allRoles.filter(r => !q || r.name.toLowerCase().includes(q) || roleDisplayLabel(r.name).toLowerCase().includes(q));
+  if(!shown.length){
+    body.innerHTML = '<div class="perm-side-empty">No user types match that.</div>';
+    return;
+  }
+  const counts = {};
+  (allViewableUsers || []).forEach(u => { counts[u.role || 'user'] = (counts[u.role || 'user'] || 0) + 1; });
+  body.innerHTML = shown.map(r => {
+    const tabs = (r.allowed_tabs || []).length;
+    // Owner and Admin always see every user regardless of view_scope — that
+    // bypass is hardcoded by role name in can_view_user() at the database
+    // level, so it applies to Admin even now its other permissions are the
+    // Owner's to set.
     const scopeList = parseViewScopeList(r.view_scope);
-    const viewScopeLabel = scopeList.includes('all')
-      ? 'All users'
-      : scopeList.map(s => s === 'self' ? 'Themselves'
-          : s === 'selected' ? `${(r.viewable_user_ids || []).length} selected`
-          : s === 'specific_role' ? `Type: ${roleDisplayLabel(r.viewable_role || '—')}`
-          : s).join(' + ') || 'Themselves only';
-    // Owner is fully locked (no edit/delete at all). Admin's permissions
-    // are editable — Owner can adjust which tabs it sees/edits — but its
-    // role row still can't be deleted, since every Admin account depends
-    // on it existing (see the name-based guard in deleteRole()).
-    const isUndeletable = ['owner', 'admin'].includes(r.name);
-    const tag = r.is_protected ? '(protected)' : (r.name === 'admin' ? '(core role — editable, not deletable)' : '');
-    const tr = document.createElement('tr');
-    // v361: rename — same inline contenteditable/blur-to-save convention
-    // as task/task-category rename, but only for roles that aren't
-    // undeletable (owner/admin) — those two are hardcoded by name in a
-    // very large number of places throughout the app, so renaming them
-    // isn't offered here at all (the Edge Function and a DB trigger both
-    // also independently block it regardless of what this UI does).
-    tr.innerHTML = `
-      <td>${isUndeletable ? escapeHtml(r.name) : `<span class="role-row-name" contenteditable="true" data-original="${escapeHtml(r.name)}" title="Click to rename">${escapeHtml(r.name)}</span>`}${tag ? ` <span class="mono" style="font-size:10px; color:var(--text-dim);">${escapeHtml(tag)}</span>` : ''}</td>
-      <td style="color:var(--text-2);">${tabLabels.length ? tabLabels.join(', ') : '—'}</td>
-      <td style="color:var(--text-2);">${alwaysAllUsers ? 'All users' : viewScopeLabel}</td>
-      <td>
-        ${r.is_protected ? '' : `
-          <button class="task-del-btn role-edit-btn" data-name="${escapeHtml(r.name)}" title="Edit" style="color:var(--focus); margin-right:6px;">&#9998;</button>
-          ${isUndeletable ? '' : `<button class="task-del-btn role-delete-btn edit-only" data-name="${escapeHtml(r.name)}" title="Delete">&times;</button>`}
-        `}
-      </td>
-    `;
-    const roleNameEl = tr.querySelector('.role-row-name');
-    if(roleNameEl){
-      roleNameEl.addEventListener('blur', () => saveRoleRename(roleNameEl));
-      roleNameEl.addEventListener('keydown', (e) => {
-        if(e.key === 'Enter'){ e.preventDefault(); roleNameEl.blur(); }
-        if(e.key === 'Escape'){ roleNameEl.textContent = roleNameEl.dataset.original; roleNameEl.blur(); }
-      });
-    }
-    body.appendChild(tr);
+    const scope = ['owner', 'admin'].includes(r.name) ? 'all users'
+      : scopeList.includes('all') ? 'all users'
+      : scopeList.map(sc => sc === 'self' ? 'themselves'
+          : sc === 'selected' ? `${(r.viewable_user_ids || []).length} selected`
+          : sc === 'specific_role' ? roleDisplayLabel(r.viewable_role || '—')
+          : sc).join(' + ') || 'themselves';
+    const n = counts[r.name] || 0;
+    const tag = r.is_protected ? 'protected' : (r.name === 'admin' ? 'core' : '');
+    return `
+      <button type="button" class="perm-side-item${editingRoleName === r.name ? ' active' : ''}" data-role-pick="${escapeHtml(r.name)}">
+        <span class="perm-side-item-main">
+          <span class="perm-side-item-name">${escapeHtml(roleDisplayLabel(r.name))}${tag ? ` <span class="type-badge">${tag}</span>` : ''}</span>
+          <span class="perm-side-item-sub">${tabs} tab${tabs === 1 ? '' : 's'} &middot; sees ${escapeHtml(scope)}${n ? ` &middot; ${n} account${n === 1 ? '' : 's'}` : ''}</span>
+        </span>
+      </button>`;
+  }).join('');
+  body.querySelectorAll('[data-role-pick]').forEach(btn => {
+    btn.addEventListener('click', () => startEditRole(btn.dataset.rolePick));
   });
-  body.querySelectorAll('.role-edit-btn').forEach(btn => btn.addEventListener('click', () => startEditRole(btn.dataset.name)));
-  body.querySelectorAll('.role-delete-btn').forEach(btn => btn.addEventListener('click', () => deleteRole(btn.dataset.name)));
-  // These rows (and their .edit-only delete buttons) are built after
-  // activateUmSection()'s own gating pass already ran (that call fires
-  // synchronously, before this async list finishes loading) — so without
-  // re-applying gating here, a view-only role's delete buttons would come
-  // back enabled by default every time this list re-renders.
+}
+
+// ===========================================================================
+// v776: individual people. Same matrix, saved to user_permission_overrides
+// instead of roles. The boxes open pre-filled from the person's user type, so
+// "no exception" and "an exception that happens to match the type" look the
+// same on screen and save the same way.
+// ===========================================================================
+let permUserId = null;          // whoever is open in the right-hand pane
+let permUserRow = null;         // their profiles row
+let permUserOverride = null;    // their user_permission_overrides row, or null
+let permUserSearchText = '';
+let permUserTypeFilterValue = '';
+let permOverrideByUser = {};    // user_id -> true, for the "Custom" badge in the list
+
+function permRoleValues(roleName){
+  const r = allRoles.find(x => x.name === roleName);
+  if(!r) return { allowed_tabs: [], tab_edit: {} };
+  return {
+    allowed_tabs: r.allowed_tabs || [],
+    tab_edit: r.tab_edit || {},
+    um_sections: r.um_sections || {},
+    activity_sections: r.activity_sections || {},
+    leads_sections: r.leads_sections || {},
+    csub_sections: r.csub_sections || {},
+    finance_sections: r.finance_sections || {},
+    hr_sections: r.hr_sections || {},
+    data_science_sections: r.data_science_sections || {},
+    taxes_sections: r.taxes_sections || {},
+    time_management_sections: r.time_management_sections || {},
+    dialer_admin_sections: r.dialer_admin_sections || {},
+    can_text_clients: !!r.can_text_clients,
+    can_edit_compensation: !!r.can_edit_compensation,
+  };
+}
+
+// The person's own values: their type, with their exception merged over it.
+function permEffectiveValues(roleName, override){
+  const base = permRoleValues(roleName);
+  if(!override) return base;
+  const fam = permissionFamilies().map(f => f.family);
+  const out = Object.assign({}, base);
+  if(Array.isArray(override.allowed_tabs)) out.allowed_tabs = override.allowed_tabs;
+  fam.forEach(f => { out[f] = Object.assign({}, base[f] || {}, override[f] || {}); });
+  out.tab_edit = Object.assign({}, base.tab_edit || {}, override.tab_edit || {});
+  ['can_text_clients', 'can_edit_compensation'].forEach(k => {
+    if(typeof override[k] === 'boolean') out[k] = override[k];
+  });
+  return out;
+}
+
+async function permLoadOverrides(){
+  try {
+    const { data } = await sb.from('user_permission_overrides').select('user_id');
+    permOverrideByUser = {};
+    (data || []).forEach(r => { permOverrideByUser[r.user_id] = true; });
+  } catch(e) { permOverrideByUser = {}; }
+}
+
+function permRenderUserList(){
+  const body = $('permUserListBody');
+  if(!body) return;
+  const sel = $('permUserTypeFilter');
+  if(sel && !sel.dataset.filled){
+    const types = Array.from(new Set((allViewableUsers || []).map(u => u.role || 'user'))).sort();
+    sel.innerHTML = '<option value="">Every user type</option>' + types.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(roleDisplayLabel(t))}</option>`).join('');
+    sel.dataset.filled = '1';
+  }
+  const q = (permUserSearchText || '').trim().toLowerCase();
+  const shown = (allViewableUsers || []).filter(u => {
+    if(permUserTypeFilterValue && (u.role || 'user') !== permUserTypeFilterValue) return false;
+    if(!q) return true;
+    return (u.full_name || '').toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q);
+  });
+  if(!shown.length){
+    body.innerHTML = '<div class="perm-side-empty">Nobody matches that.</div>';
+    return;
+  }
+  body.innerHTML = shown.map(u => `
+    <button type="button" class="perm-side-item${permUserId === u.id ? ' active' : ''}" data-perm-user="${u.id}">
+      <span class="perm-side-item-main">
+        <span class="perm-side-item-name">${escapeHtml(u.full_name || u.email)}${permOverrideByUser[u.id] ? ' <span class="perm-custom-tag">Custom</span>' : ''}</span>
+        <span class="perm-side-item-sub">${escapeHtml(roleDisplayLabel(u.role || 'user'))}</span>
+      </span>
+    </button>`).join('');
+  body.querySelectorAll('[data-perm-user]').forEach(btn => {
+    btn.addEventListener('click', () => permOpenUser(btn.dataset.permUser));
+  });
+}
+
+async function permOpenUser(userId){
+  const u = (allViewableUsers || []).find(x => x.id === userId);
+  if(!u) return;
+  permUserId = userId;
+  permUserRow = u;
+  $('permUserMsg').textContent = '';
+  let override = null;
+  try {
+    const { data } = await sb.from('user_permission_overrides').select('*').eq('user_id', userId).maybeSingle();
+    override = data || null;
+  } catch(e) { /* pre-v776 database */ }
+  permUserOverride = override;
+  permOverrideByUser[userId] = !!override;
+
+  const roleName = u.role || 'user';
+  $('permUserFormTitle').textContent = `${u.full_name || u.email} — ${roleDisplayLabel(roleName)}`;
+  $('permUserFormIntro').innerHTML = override
+    ? `This person has an exception on top of the <b>${escapeHtml(roleDisplayLabel(roleName))}</b> user type. Boxes marked <span class="perm-custom-tag">Custom</span> are where they differ from it.${override.note ? ` Reason recorded: ${escapeHtml(override.note)}` : ''}`
+    : `This person currently gets exactly what the <b>${escapeHtml(roleDisplayLabel(roleName))}</b> user type gives them. Change anything below and it becomes an exception that follows them, not their type.`;
+  $('permUserEditorBody').style.display = '';
+  const values = permEffectiveValues(roleName, override);
+  renderPermissionMatrix('permUserTabsPicker', values, { inherited: permRoleValues(roleName) });
+  $('permUserCanTextClientsCb').checked = !!values.can_text_clients;
+  $('permUserCanTextClientsCb').disabled = !ceilingAllowsFlag('can_text_clients');
+  $('permUserCanEditCompensationCb').checked = !!values.can_edit_compensation;
+  $('permUserCanEditCompensationCb').disabled = !ceilingAllowsFlag('can_edit_compensation');
+  $('permUserNote').value = (override && override.note) || '';
+  $('permUserResetBtn').style.display = override ? '' : 'none';
+  permRenderUserList();
   applyUmSectionEditGating('roles');
 }
+
+async function permSaveUser(){
+  const msg = $('permUserMsg');
+  if(!permUserId){ return; }
+  if(permUserId === myUserId){
+    msg.textContent = 'You cannot change your own access. Ask the Owner.';
+    msg.className = 'msg error';
+    return;
+  }
+  const matrix = permReadMatrix('permUserTabsPicker');
+  const payload = Object.assign({ user_id: permUserId }, matrix, {
+    can_text_clients: $('permUserCanTextClientsCb').checked,
+    can_edit_compensation: $('permUserCanEditCompensationCb').checked,
+    note: $('permUserNote').value.trim() || null,
+  });
+  const btn = $('permUserSaveBtn');
+  btn.disabled = true;
+  msg.textContent = 'Saving…';
+  msg.className = 'msg';
+  const { error } = await sb.from('user_permission_overrides').upsert(payload, { onConflict: 'user_id' });
+  btn.disabled = false;
+  if(error){
+    msg.textContent = error.message;
+    msg.className = 'msg error';
+    return;
+  }
+  logActivity('permission.user_override', 'user', permUserId, `Set a per-person access exception for ${permUserRow ? (permUserRow.full_name || permUserRow.email) : permUserId}`);
+  msg.textContent = 'Saved. It applies the next time they sign in or refresh.';
+  msg.className = 'msg success';
+  await permLoadOverrides();
+  await permOpenUser(permUserId);
+}
+
+async function permResetUser(){
+  if(!permUserId) return;
+  const who = permUserRow ? (permUserRow.full_name || permUserRow.email) : 'this person';
+  if(!confirm(`Remove the exception for ${who}? They go back to exactly what their user type gives them, the next time they sign in or refresh.`)) return;
+  const msg = $('permUserMsg');
+  const { error } = await sb.from('user_permission_overrides').delete().eq('user_id', permUserId);
+  if(error){
+    msg.textContent = error.message;
+    msg.className = 'msg error';
+    return;
+  }
+  logActivity('permission.user_override_clear', 'user', permUserId, `Removed the per-person access exception for ${who}`);
+  await permLoadOverrides();
+  await permOpenUser(permUserId);
+  msg.textContent = 'Exception removed — they follow their user type again.';
+  msg.className = 'msg success';
+}
+
+// --- wiring ---------------------------------------------------------------
+function permSetMode(mode){
+  document.querySelectorAll('.perm-mode-btn').forEach(b => b.classList.toggle('active', b.dataset.permMode === mode));
+  const g = $('permPaneGroups'), pp = $('permPanePeople');
+  if(g) g.style.display = mode === 'groups' ? '' : 'none';
+  if(pp) pp.style.display = mode === 'people' ? '' : 'none';
+  if(mode === 'people'){ permLoadOverrides().then(permRenderUserList); }
+}
+
+function permInitRolesSection(){
+  const banner = $('permCeilingBanner');
+  if(banner){
+    if(myGrantCeiling){
+      $('permCeilingBannerText').innerHTML = `You can only grant access you have yourself. Anything the Owner has not given <b>${escapeHtml(roleDisplayLabel(myRole))}</b> is shown greyed out, and you cannot change your own user type. Ask the Owner to widen your access first.`;
+      banner.style.display = '';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+  permRenderUserList();
+}
+
+document.querySelectorAll('.perm-mode-btn').forEach(b => {
+  b.addEventListener('click', () => permSetMode(b.dataset.permMode));
+});
+document.querySelectorAll('.perm-bulk-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    const pane = b.closest('#permPanePeople') ? 'permUserTabsPicker' : 'roleTabsPicker';
+    const root = permMatrixEl(pane);
+    if(root) permApplyBulk(root, b.dataset.permBulk);
+  });
+});
+if($('roleSearchInput')) $('roleSearchInput').addEventListener('input', (e) => { roleListFilter = e.target.value; renderRolesSideList(); });
+if($('roleNewBtn')) $('roleNewBtn').addEventListener('click', () => { resetRoleForm(); renderRolesSideList(); });
+if($('permUserSearch')) $('permUserSearch').addEventListener('input', (e) => { permUserSearchText = e.target.value; permRenderUserList(); });
+if($('permUserTypeFilter')) $('permUserTypeFilter').addEventListener('change', (e) => { permUserTypeFilterValue = e.target.value; permRenderUserList(); });
+if($('permUserSaveBtn')) $('permUserSaveBtn').addEventListener('click', permSaveUser);
+if($('permUserResetBtn')) $('permUserResetBtn').addEventListener('click', permResetUser);
+if($('roleDeleteBtn')) $('roleDeleteBtn').addEventListener('click', () => { if(editingRoleName) deleteRole(editingRoleName); });
 
 function startEditRole(name){
   const role = allRoles.find(r => r.name === name);
@@ -26087,7 +26653,15 @@ function startEditRole(name){
   editingRoleName = name;
   $('rolesFormTitle').textContent = `Editing "${name}"`;
   $('roleNameInput').value = role.name;
-  $('roleNameInput').disabled = true; // v361: renaming happens inline in the roles list itself (saveRoleRename, via the staff-rename-role Edge Function) — kept disabled here so there's exactly one place that does it
+  // v776: renaming happens here now. It used to be an inline contenteditable
+  // cell in the roles TABLE, which this screen no longer has. Owner and Admin
+  // are hardcoded by name in a great many places, so those two are never
+  // renameable (staff-rename-role and a DB trigger each refuse them too).
+  const _renameable = !['owner', 'admin'].includes(role.name);
+  $('roleNameInput').disabled = !_renameable;
+  $('roleNameInput').dataset.original = role.name;
+  $('roleNameInput').title = _renameable ? 'Change the name and click away to rename this user type' : 'Core user type — cannot be renamed';
+  if($('roleDeleteBtn')) $('roleDeleteBtn').style.display = (role.is_protected || ['owner', 'admin'].includes(role.name)) ? 'none' : '';
   renderRoleTabsPicker(role.allowed_tabs || [], role.tab_edit || {}, role.um_sections || {}, role.activity_sections || {}, role.leads_sections || {}, role.csub_sections || {}, role.finance_sections || {}, role.hr_sections || {}, role.data_science_sections || {}, role.taxes_sections || {}, role.time_management_sections || {}, role.dialer_admin_sections || {});
   renderRoleTaskCategoriesPicker(role.task_category_ids || []);
   $('roleCanTextClientsCb').checked = !!role.can_text_clients;
@@ -26104,76 +26678,30 @@ function startEditRole(name){
   updateRoleViewScopeVisibility();
   $('roleCancelEditBtn').style.display = 'inline-block';
   $('rolesMsg').textContent = '';
+  if(typeof renderRolesSideList === 'function') renderRolesSideList();
 }
 $('roleCancelEditBtn').addEventListener('click', resetRoleForm);
+// v776: rename on blur, the same convention task and task-category renames
+// use. Only fires when the form is editing an existing type and the name
+// actually changed (saveRoleRename checks that too).
+if($('roleNameInput')){
+  $('roleNameInput').addEventListener('blur', () => {
+    if(editingRoleName && !$('roleNameInput').disabled) saveRoleRename($('roleNameInput'));
+  });
+  $('roleNameInput').addEventListener('keydown', (e) => {
+    if(e.key === 'Enter'){ e.preventDefault(); $('roleNameInput').blur(); }
+    if(e.key === 'Escape' && editingRoleName){ $('roleNameInput').value = $('roleNameInput').dataset.original || ''; $('roleNameInput').blur(); }
+  });
+}
 
 $('roleSaveBtn').addEventListener('click', async () => {
   const msg = $('rolesMsg');
   const name = $('roleNameInput').value.trim().toLowerCase();
-  const allowedTabs = Array.from(document.querySelectorAll('.role-tab-cb:checked')).map(cb => cb.value);
-  const tabEdit = {};
-  document.querySelectorAll('.role-tab-edit-cb').forEach(cb => { tabEdit[cb.dataset.tab] = cb.checked; });
-  const umSections = {};
-  UM_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.um-section-view-cb[data-section="${s.key}"]`);
-    const editCb = document.querySelector(`.um-section-edit-cb[data-section="${s.key}"]`);
-    umSections[s.key] = { view: viewCb ? viewCb.checked : umSectionDefault(s.key), edit: editCb ? editCb.checked : umSectionDefault(s.key) };
-  });
-  const activitySections = {};
-  ACTIVITY_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.activity-section-view-cb[data-section="${s.key}"]`);
-    activitySections[s.key] = { view: viewCb ? viewCb.checked : activitySectionDefault(s.key) };
-  });
-  const leadsSections = {};
-  LEADS_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.leads-section-view-cb[data-section="${s.key}"]`);
-    const editCb = document.querySelector(`.leads-section-edit-cb[data-section="${s.key}"]`);
-    leadsSections[s.key] = { view: viewCb ? viewCb.checked : leadsSectionDefault(s.key), edit: editCb ? editCb.checked : leadsSectionDefault(s.key) };
-  });
-  const csubSections = {};
-  CSUB_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.csub-section-view-cb[data-section="${s.key}"]`);
-    const editCb = document.querySelector(`.csub-section-edit-cb[data-section="${s.key}"]`);
-    csubSections[s.key] = { view: viewCb ? viewCb.checked : csubSectionDefault(s.key), edit: editCb ? editCb.checked : csubEditSectionDefault(s.key) };
-  });
-  const financeSections = {};
-  FINANCE_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.finance-section-view-cb[data-section="${s.key}"]`);
-    const editCb = document.querySelector(`.finance-section-edit-cb[data-section="${s.key}"]`);
-    financeSections[s.key] = { view: viewCb ? viewCb.checked : financeSectionDefault(s.key), edit: editCb ? editCb.checked : financeEditSectionDefault(s.key) };
-  });
-  const hrSections = {};
-  HR_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.hr-section-view-cb[data-section="${s.key}"]`);
-    const editCb = document.querySelector(`.hr-section-edit-cb[data-section="${s.key}"]`);
-    hrSections[s.key] = { view: viewCb ? viewCb.checked : hrSectionDefault(s.key), edit: editCb ? editCb.checked : hrEditSectionDefault(s.key) };
-  });
-  const dialerAdminSections = {}; // v675
-  DIALER_ADMIN_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.da-section-view-cb[data-section="${s.key}"]`);
-    const editCb = document.querySelector(`.da-section-edit-cb[data-section="${s.key}"]`);
-    dialerAdminSections[s.key] = {
-      view: viewCb ? viewCb.checked : dialerAdminSectionDefault(s.key),
-      edit: s.editable ? (editCb ? editCb.checked : dialerAdminEditSectionDefault(s.key)) : false,
-    };
-  });
-  const dataScienceSections = {};
-  DATA_SCIENCE_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.datasci-section-view-cb[data-section="${s.key}"]`);
-    const editCb = document.querySelector(`.datasci-section-edit-cb[data-section="${s.key}"]`);
-    dataScienceSections[s.key] = { view: viewCb ? viewCb.checked : dataSciSectionDefault(), edit: editCb ? editCb.checked : dataSciEditSectionDefault(s.key) };
-  });
-  const taxesSections = {};
-  TAXES_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.taxes-section-view-cb[data-section="${s.key}"]`);
-    taxesSections[s.key] = { view: viewCb ? viewCb.checked : true };
-  });
-  const timeManagementSections = {};
-  TIME_MANAGEMENT_SECTIONS.forEach(s => {
-    const viewCb = document.querySelector(`.tm-section-view-cb[data-section="${s.key}"]`);
-    const editCb = document.querySelector(`.tm-section-edit-cb[data-section="${s.key}"]`);
-    timeManagementSections[s.key] = { view: viewCb ? viewCb.checked : timeManagementSectionDefault(s.key), edit: editCb ? editCb.checked : true };
-  });
+  // v776: one read of the matrix instead of eleven near-identical loops, one
+  // per section family, that had to be kept in step with the renderer by hand.
+  const matrix = permReadMatrix('roleTabsPicker');
+  const allowedTabs = matrix.allowed_tabs;
+  const tabEdit = matrix.tab_edit;
   // v1.2.7: "Only themselves" / "Only selected users" / "A specific user
   // type" are checkboxes now and can be combined freely; "All users" is
   // exclusive (checking it clears the other three in the UI already, but
@@ -26242,14 +26770,21 @@ $('roleSaveBtn').addEventListener('click', async () => {
     `This takes effect immediately for every account with this role. Save anyway?`
   )) return;
 
-  const payload = { allowed_tabs: allowedTabs, tab_edit: tabEdit, um_sections: umSections, activity_sections: activitySections, leads_sections: leadsSections, csub_sections: csubSections, finance_sections: financeSections, hr_sections: hrSections, dialer_admin_sections: dialerAdminSections, data_science_sections: dataScienceSections, taxes_sections: taxesSections, time_management_sections: timeManagementSections, view_scope: viewScope, viewable_user_ids: viewableUserIds, viewable_role: viewableRole, task_category_ids: taskCategoryIds, can_text_clients: $('roleCanTextClientsCb').checked, can_edit_compensation: $('roleCanEditCompensationCb').checked };
+  const payload = Object.assign({}, matrix, {
+    view_scope: viewScope,
+    viewable_user_ids: viewableUserIds,
+    viewable_role: viewableRole,
+    task_category_ids: taskCategoryIds,
+    can_text_clients: $('roleCanTextClientsCb').checked,
+    can_edit_compensation: $('roleCanEditCompensationCb').checked,
+  });
   if(editingRoleName !== 'admin') payload.can_manage_users = false;
   // v675: the portal decides Dialer Admin access, so the database's own dialer
   // rights follow these ticks. Without this a role could be given Edit here
   // and have every save refused by the database.
   {
     const daTab = allowedTabs.includes('dialer_admin');
-    const vals = Object.values(dialerAdminSections);
+    const vals = Object.values(matrix.dialer_admin_sections || {});
     payload.can_manage_dialer = daTab && vals.some(v => v.edit);
     payload.can_review_calls = daTab && vals.some(v => v.view);
   }
@@ -26322,11 +26857,17 @@ async function roleRenameInvokeErrorMessage(error, data){
   }
   return (error && error.message) || 'unknown error';
 }
+// v776: this is an <input> now (the roles table it used to live in is gone),
+// so it reads .value rather than .textContent. Everything else — including
+// routing through staff-rename-role because profiles.role has an
+// `on update cascade` FK only the service role may fire — is unchanged.
+function _roleNameText(el){ return (el.value !== undefined ? el.value : el.textContent) || ''; }
+function _setRoleNameText(el, v){ if(el.value !== undefined) el.value = v; else el.textContent = v; }
 async function saveRoleRename(nameEl){
-  const newName = nameEl.textContent.trim().toLowerCase();
+  const newName = _roleNameText(nameEl).trim().toLowerCase();
   const oldName = nameEl.dataset.original;
   if(!newName || newName === oldName){
-    nameEl.textContent = oldName;
+    _setRoleNameText(nameEl, oldName);
     return;
   }
   const msg = $('rolesMsg');
@@ -26335,11 +26876,11 @@ async function saveRoleRename(nameEl){
     const errMsg = await roleRenameInvokeErrorMessage(error, data);
     msg.textContent = errMsg;
     msg.className = 'msg error';
-    nameEl.textContent = oldName;
+    _setRoleNameText(nameEl, oldName);
     return;
   }
   nameEl.dataset.original = newName;
-  nameEl.textContent = newName;
+  _setRoleNameText(nameEl, newName);
   msg.textContent = 'Renamed.';
   msg.className = 'msg';
   msg.style.color = 'var(--focus)';
@@ -43406,13 +43947,147 @@ $('addClientCopyBtn').addEventListener('click', async () => {
 $('addClientDoneBtn').addEventListener('click', closeAddClientModal);
 
 // ---- edit client (contact info + campaign access) ----
+// ===========================================================================
+// v776: which tabs and subtabs a CLIENT sees in their own portal. Until now
+// this was decided by a handful of unrelated rules scattered across the
+// client portal itself — account_type === 'skiptrace' hid Opportunities,
+// Tickets and Dashboard; reports_enabled showed Reports; an Email Marketing
+// seat showed Email Marketing; everything else was always on and could not be
+// turned off for one client at all. Those rules still apply and still come
+// first (this never GRANTS anything a client has not paid for), but staff can
+// now also close a tab or a single subtab per client, here, in the same Edit
+// client modal where the rest of their access already lives.
+//
+// Stored in client_accounts.portal_sections as
+//   { "<tab>": { "view": bool, "subtabs": { "<sub>": bool } } }
+// A missing key means the portal's own default, so a client whose column is
+// still {} behaves exactly as they did before this existed.
+// ===========================================================================
+const CLIENT_PORTAL_SECTIONS = [
+  { key: 'dashboard', label: 'Dashboard', note: 'Hidden automatically for skip-trace-only accounts.' },
+  { key: 'leads', label: 'Opportunities', note: 'Hidden automatically for skip-trace-only accounts.', subs: [
+      { key: 'my-leads', label: 'My Opportunities' },
+      { key: 'campaign-guide', label: 'Campaign Guide' },
+      { key: 'leads-comments', label: 'Opportunity Comments' },
+    ] },
+  { key: 'tickets', label: 'Tickets', note: 'Hidden automatically for skip-trace-only accounts.' },
+  { key: 'reports', label: 'Reports', note: 'Also needs "Reports tab enabled" above and a ReadyMode campaign feeding it.' },
+  { key: 'buylist', label: 'Buy a list', subs: [
+      { key: 'request', label: 'Request a list' },
+      { key: 'your-requests', label: 'Your list requests' },
+    ] },
+  { key: 'skiptrace', label: 'Skip Tracing', subs: [
+      { key: 'place-order', label: 'Place Order' },
+      { key: 'order-history', label: 'Order History' },
+    ] },
+  { key: 'marketing', label: 'Email Marketing', note: 'Also needs an Email Marketing seat — unticking here cannot grant one, and ticking it cannot either.', subs: [
+      { key: 'setup', label: 'Setup' },
+      { key: 'lists', label: 'Lists' },
+      { key: 'campaigns', label: 'Campaigns' },
+      { key: 'inbox', label: 'Email Inbox' },
+    ] },
+  { key: 'billing', label: 'Billing', warn: 'With Billing off this client cannot pay an invoice or see what they owe — leave it on unless you are handling their payments for them.', subs: [
+      { key: 'subscriptions', label: 'Subscriptions' },
+      { key: 'invoices', label: 'Invoices' },
+      { key: 'pending-payment', label: 'Pending payment' },
+      { key: 'buy-credits', label: 'Buy Skip Tracing Credits' },
+      { key: 'transactions', label: 'Transaction History' },
+      { key: 'payment-method', label: 'Payment Method' },
+    ] },
+  { key: 'profile', label: 'Profile Details', warn: 'With this off they cannot update their own contact details or password from the portal.' },
+];
+
+function clientPortalTabOn(sections, tabKey){
+  const cur = (sections || {})[tabKey];
+  return cur && typeof cur.view === 'boolean' ? cur.view : true;
+}
+function clientPortalSubOn(sections, tabKey, subKey){
+  const cur = ((sections || {})[tabKey] || {}).subtabs || {};
+  return typeof cur[subKey] === 'boolean' ? cur[subKey] : true;
+}
+
+function renderClientPortalSections(sections){
+  const root = $('clientAccessPortalSections');
+  if(!root) return;
+  root.innerHTML = CLIENT_PORTAL_SECTIONS.map(t => {
+    const on = clientPortalTabOn(sections, t.key);
+    const subs = t.subs || [];
+    return `
+      <div class="perm-tab-card${on ? '' : ' is-off'}" data-cp-card="${t.key}">
+        <div class="perm-tab-head perm-head-2">
+          <div class="perm-tab-title">
+            ${subs.length ? `<button type="button" class="perm-disclose" data-cp-disclose="${t.key}" aria-label="Show or hide subtabs">${on ? '&#9662;' : '&#9656;'}</button>` : '<span class="perm-disclose"></span>'}
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; text-transform:none; font-family:var(--sans); letter-spacing:0; margin:0; min-width:0;">
+              <input type="checkbox" class="perm-cb cp-tab-cb" data-cp-tab="${t.key}" ${on ? 'checked' : ''}>
+              <span class="perm-tab-name">${escapeHtml(t.label)}</span>
+            </label>
+          </div>
+          <div class="perm-col-label">Show</div>
+        </div>
+        ${(t.note || t.warn || subs.length) ? `
+          <div class="perm-body" data-cp-body="${t.key}"${on ? '' : ' style="display:none;"'}>
+            ${t.note ? `<div class="perm-note">${t.note}</div>` : ''}
+            ${t.warn ? `<div class="perm-note" style="color:var(--danger);">${t.warn}</div>` : ''}
+            ${subs.map(sub => `
+              <div class="perm-row perm-row-2">
+                <div class="perm-row-label">${escapeHtml(sub.label)}</div>
+                <div class="perm-cell"><input type="checkbox" class="perm-cb cp-sub-cb" data-cp-tab="${t.key}" data-cp-sub="${sub.key}" ${clientPortalSubOn(sections, t.key, sub.key) ? 'checked' : ''}></div>
+              </div>`).join('')}
+          </div>` : ''}
+      </div>`;
+  }).join('');
+
+  root.querySelectorAll('[data-cp-disclose]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const body = root.querySelector(`[data-cp-body="${btn.dataset.cpDisclose}"]`);
+      if(!body) return;
+      const open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : '';
+      btn.innerHTML = open ? '&#9656;' : '&#9662;';
+    });
+  });
+  root.querySelectorAll('.cp-tab-cb').forEach(box => {
+    box.addEventListener('change', () => {
+      const key = box.dataset.cpTab;
+      const card = root.querySelector(`[data-cp-card="${key}"]`);
+      const body = root.querySelector(`[data-cp-body="${key}"]`);
+      const arrow = root.querySelector(`[data-cp-disclose="${key}"]`);
+      if(card) card.classList.toggle('is-off', !box.checked);
+      if(body) body.style.display = box.checked ? '' : 'none';
+      if(arrow) arrow.innerHTML = box.checked ? '&#9662;' : '&#9656;';
+    });
+  });
+}
+
+// Only writes down what actually differs from the default, so the stored map
+// stays small and a tab added to the portal later is visible by default
+// rather than silently closed for every existing client.
+function readClientPortalSections(){
+  const root = $('clientAccessPortalSections');
+  const out = {};
+  if(!root) return out;
+  CLIENT_PORTAL_SECTIONS.forEach(t => {
+    const tabBox = root.querySelector(`.cp-tab-cb[data-cp-tab="${t.key}"]`);
+    const entry = {};
+    if(tabBox && !tabBox.checked) entry.view = false;
+    const subs = {};
+    (t.subs || []).forEach(sub => {
+      const b = root.querySelector(`.cp-sub-cb[data-cp-tab="${t.key}"][data-cp-sub="${sub.key}"]`);
+      if(b && !b.checked) subs[sub.key] = false;
+    });
+    if(Object.keys(subs).length) entry.subtabs = subs;
+    if(Object.keys(entry).length) out[t.key] = entry;
+  });
+  return out;
+}
+
 let clientAccessTargetId = null;
 async function openClientAccessModal(clientId, clientName){
   clientAccessTargetId = clientId;
   $('clientAccessName').textContent = clientName;
   $('clientAccessMsg').textContent = '';
   const [{ data: account, error: accountErr }, { data: current }, { data: currentGuides }] = await Promise.all([
-    sb.from('client_accounts').select('email, phone, company_name, reports_enabled, reports_show_hours').eq('id', clientId).maybeSingle(),
+    sb.from('client_accounts').select('email, phone, company_name, reports_enabled, reports_show_hours, portal_sections').eq('id', clientId).maybeSingle(),
     sb.from('client_campaign_access').select('form_id').eq('client_id', clientId),
     sb.from('client_campaign_guide_access').select('campaign_norm_name').eq('client_id', clientId),
   ]);
@@ -43430,6 +44105,10 @@ async function openClientAccessModal(clientId, clientName){
   $('clientAccessCompany').value = (account && account.company_name) || '';
   $('clientAccessReportsEnabled').checked = !!(account && account.reports_enabled);
   $('clientAccessReportsShowHours').checked = !(account && account.reports_show_hours === false);
+  // v776: portal_sections may be missing on a database that has not had the
+  // v776 migration yet — an empty map renders every tab ticked, which is
+  // exactly how the portal behaves without the column.
+  renderClientPortalSections((account && account.portal_sections) || {});
   await renderClientCampaignCheckboxes($('clientAccessCampaignList'), (current || []).map(r => r.form_id));
   await renderClientGuideCheckboxes($('clientAccessGuideList'), (currentGuides || []).map(r => r.campaign_norm_name));
   await renderClientReadyModeChannelCheckboxes($('clientAccessChannelList'), clientId);
@@ -43464,7 +44143,8 @@ $('clientAccessSaveBtn').addEventListener('click', async () => {
   // table's `phone` field already uses elsewhere.
   const reportsEnabled = $('clientAccessReportsEnabled').checked;
   const reportsShowHours = $('clientAccessReportsShowHours').checked;
-  const { error: reportsErr } = await sb.from('client_accounts').update({ reports_enabled: reportsEnabled, reports_show_hours: reportsShowHours }).eq('id', clientAccessTargetId);
+  const portalSections = readClientPortalSections();
+  const { error: reportsErr } = await sb.from('client_accounts').update({ reports_enabled: reportsEnabled, reports_show_hours: reportsShowHours, portal_sections: portalSections }).eq('id', clientAccessTargetId);
   if(reportsErr){ btn.disabled = false; msg.textContent = 'Saved, but the Reports toggle failed to update: ' + reportsErr.message; return; }
   // Channels taken by another client never get this checkbox class (see
   // renderClientReadyModeChannelCheckboxes), so every box here is safely
@@ -43478,7 +44158,7 @@ $('clientAccessSaveBtn').addEventListener('click', async () => {
     if(!channelResult.ok){ btn.disabled = false; msg.textContent = 'Saved, but a campaign assignment failed to update: ' + (channelResult.error || 'unknown error'); return; }
   }
   btn.disabled = false;
-  logActivity('client.update_access', 'client', clientAccessTargetId, `Updated contact info, campaign access (${form_ids.length} campaign${form_ids.length === 1 ? '' : 's'}), Campaign Guide access (${guides.length}), and Reports tab (${reportsEnabled ? 'enabled' : 'disabled'})`);
+  logActivity('client.update_access', 'client', clientAccessTargetId, `Updated contact info, campaign access (${form_ids.length} campaign${form_ids.length === 1 ? '' : 's'}), Campaign Guide access (${guides.length}), Reports tab (${reportsEnabled ? 'enabled' : 'disabled'}) and portal access (${Object.keys(portalSections).length} tab${Object.keys(portalSections).length === 1 ? '' : 's'} restricted)`);
   $('clientAccessModalOverlay').classList.remove('active');
   loadUmClientsList();
   // v502/v504/v505: confirms exactly what update_contact actually did --
@@ -44243,13 +44923,13 @@ function canViewFinanceSection(key){
   // other Finance subtab, which any role can be granted).
   if(key === 'ispeedtolead_postback' || key === 'commission_liability') return myIsOwner;
   if(myPermissions.isProtected) return true;
-  const s = myPermissions.financeSections[key];
+  const s = (myPermissions.financeSections || {})[key];
   return s && typeof s.view === 'boolean' ? s.view : financeSectionDefault(key);
 }
 function canEditFinanceSection(key){
   if(key === 'ispeedtolead_postback' || key === 'commission_liability') return myIsOwner;
   if(myPermissions.isProtected) return true;
-  const s = myPermissions.financeSections[key];
+  const s = (myPermissions.financeSections || {})[key];
   return s && typeof s.edit === 'boolean' ? s.edit : financeEditSectionDefault(key);
 }
 function financeSubtabBtns(){
@@ -45099,7 +45779,7 @@ const TAXES_SECTIONS = [
 ];
 function canViewTaxesSection(key){
   if(myPermissions.isProtected) return true;
-  const s = myPermissions.taxesSections[key];
+  const s = (myPermissions.taxesSections || {})[key];
   return s && typeof s.view === 'boolean' ? s.view : true;
 }
 function taxesSubtabBtns(){
@@ -45400,12 +46080,12 @@ function daOpenDeepLinkOnce(){
 
 function canViewHrSection(key){
   if(myPermissions.isProtected) return true;
-  const s = myPermissions.hrSections[key];
+  const s = (myPermissions.hrSections || {})[key];
   return s && typeof s.view === 'boolean' ? s.view : hrSectionDefault(key);
 }
 function canEditHrSection(key){
   if(myPermissions.isProtected) return true;
-  const s = myPermissions.hrSections[key];
+  const s = (myPermissions.hrSections || {})[key];
   return s && typeof s.edit === 'boolean' ? s.edit : hrEditSectionDefault(key);
 }
 function hrSubtabBtns(){
