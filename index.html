@@ -18854,6 +18854,9 @@ async function startVoiceCallToClient(clientId, clientName){
     title: `Incoming call from ${myFullName || 'PropTech AI'}`,
     body: 'Open the PropTech AI app or client portal to answer.',
     tag: `call-${callRow ? callRow.id : clientId}`, url: '/', require_interaction: true,
+    // v783: the Android app rings this as a call (its own channel, full-screen
+    // alert) and opens ready to answer, instead of treating it as a chat.
+    category: 'voice_call',
   } }).then(({ error }) => { if(error) console.warn('call push to client failed', error); }).catch(() => {});
 
   voiceCallState = { role: 'caller', isClientCall: true, peerId: clientId, peerName: clientName, pc, localStream, outboundChannel, callRowId: callRow ? callRow.id : null, status: 'ringing', remoteDescSet: false, pendingCandidates: [], videoSender: null, screenStream: null, hasScreenShare: false, peerSharing: false, videoPanelMinimized: false, videoPanelMaximized: false, groupId: voiceGenId(), extraPeers: {} };
