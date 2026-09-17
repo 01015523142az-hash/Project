@@ -276,6 +276,13 @@
   .act-stat-value.bad{ color:var(--danger); }
   label{ font-family:var(--mono); font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--text-dim); display:block; margin:12px 0 6px; }
   input,select{ width:100%; background:var(--inset); border:1px solid var(--border-light); color:var(--text); padding:10px 12px; border-radius:8px; font-size:14px; }
+  /* v780: textareas had no base rule at all, so every one without its own
+     class rule (Client Inbox reply, invoice notes, HR candidate fields,
+     call-back reason, campaign message, CSV paste boxes) rendered as the
+     browser's white box. Same field as the inputs above; element-level, so
+     any class or #daHost rule still wins. No line-height here: the chat
+     composer sizes itself from its own. */
+  textarea{ width:100%; background:var(--inset); border:1px solid var(--border-light); color:var(--text); padding:10px 12px; border-radius:8px; font-size:14px; font-family:inherit; resize:vertical; }
   button{ border:none; border-radius:8px; padding:10px 18px; font-weight:600; font-size:13px; cursor:pointer; font-family:var(--sans); }
   .btn-primary{ background:var(--focus); color:#06210F; width:100%; margin-top:18px; }
   .msg{ font-family:var(--mono); font-size:11px; margin-top:10px; }
