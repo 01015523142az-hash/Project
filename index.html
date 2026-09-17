@@ -2904,6 +2904,68 @@
   .chat-rx-picker button{ width:32px; height:32px; margin:0; padding:0; border:none; border-radius:50%; background:none;
     font-size:18px; line-height:1; cursor:pointer; transition:transform .1s; }
   .chat-rx-picker button:hover{ background:var(--card-hover); transform:scale(1.15); }
+  /* v775: Campaigns -> Email Marketing statistics (GoHighLevel-style). */
+  :root{ --mkst-teal:#2dd4bf; --mkst-blue:#7a9cf7; }
+  :root[data-theme="light"]{ --mkst-teal:#0f766e; --mkst-blue:#2f5fd0; }
+  .mkst-top{ display:flex; align-items:flex-end; justify-content:space-between; gap:16px; flex-wrap:wrap; margin:6px 0 16px; border-bottom:1px solid var(--border); }
+  .mkst-title{ font-size:22px; font-weight:700; color:var(--text); padding-bottom:10px; }
+  .mkst-tabs{ display:flex; gap:22px; }
+  .mkst-tab{ background:transparent; border:none; border-radius:0 !important; border-bottom:2px solid transparent; color:var(--text-2); font-size:13px; font-weight:600; padding:8px 2px 10px; cursor:pointer; width:auto; margin:0; }
+  .mkst-tab.active{ color:var(--text); border-bottom-color:#4f7df3; }
+  .mkst-filters{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:18px; }
+  .mkst-filters select, .mkst-filters input[type=date]{ width:auto; min-width:0; margin:0; }
+  .mkst-filters select{ min-width:190px; }
+  .mkst-daterange{ display:flex; align-items:center; gap:8px; border:1px solid var(--border); border-radius:8px; padding:2px 8px; background:var(--card); color:var(--text-2); }
+  .mkst-daterange input{ border:none !important; background:transparent !important; padding:6px 2px !important; }
+  .mkst-quick{ display:flex; gap:4px; }
+  .mkst-quick button{ width:auto; margin:0; padding:6px 10px; font-size:12px; background:var(--card); border:1px solid var(--border); color:var(--text-2); border-radius:999px; cursor:pointer; }
+  .mkst-quick button.active{ color:var(--text); border-color:#4f7df3; }
+  .mkst-msg{ font-size:12px; color:var(--text-2); }
+  .mkst-h{ font-size:15px; font-weight:600; color:var(--text); }
+  .mkst-sub{ font-size:12.5px; color:var(--text-2); margin:3px 0 12px; line-height:1.5; }
+  .mkst-card{ background:var(--card); border:1px solid var(--border); border-radius:10px; padding:18px 20px; }
+  .mkst-row-head{ display:flex; justify-content:space-between; align-items:flex-end; gap:12px; flex-wrap:wrap; }
+  .mkst-row-head select{ width:auto; margin:0 0 12px; }
+  .mkst-kpis{ display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px; margin-bottom:12px; }
+  .mkst-kpi{ background:var(--card); border:1px solid var(--border); border-radius:10px; padding:14px 16px; }
+  .mkst-kpi-l{ font-size:12.5px; color:var(--text-2); display:flex; gap:6px; align-items:center; }
+  .mkst-kpi-v{ font-size:30px; font-weight:700; color:var(--text); margin-top:6px; letter-spacing:-.5px; font-variant-numeric:tabular-nums; }
+  .mkst-kpi-s{ font-size:11.5px; color:var(--text-2); margin-top:2px; }
+  .mkst-info{ display:inline-flex; width:14px; height:14px; border-radius:50%; border:1px solid var(--text-2); font-size:9px; align-items:center; justify-content:center; cursor:help; }
+  .mkst-funnel{ display:grid; grid-template-columns:90px 1fr 70px; gap:10px 14px; align-items:center; }
+  .mkst-funnel-l{ font-size:12.5px; color:var(--text-2); text-align:right; }
+  .mkst-funnel-track{ height:34px; background:var(--inset, rgba(127,127,127,.12)); border-radius:3px; display:flex; overflow:hidden; }
+  .mkst-funnel-seg{ height:100%; min-width:0; }
+  .mkst-funnel-pct{ font-size:12px; font-weight:700; color:var(--text); background:var(--inset, rgba(127,127,127,.12)); text-align:center; padding:9px 0; clip-path:polygon(0 0,100% 0,100% 78%,50% 100%,0 78%); }
+  .mkst-axis{ display:flex; justify-content:space-between; font-size:11px; color:var(--text-2); margin:6px 84px 0 104px; }
+  .mkst-legend{ display:flex; gap:14px; flex-wrap:wrap; justify-content:center; font-size:11.5px; color:var(--text-2); margin-top:14px; }
+  .mkst-legend i{ display:inline-block; width:9px; height:9px; border-radius:2px; margin-right:5px; vertical-align:middle; }
+  .mkst-trend{ padding:0; }
+  .mkst-trend-head{ display:flex; justify-content:space-between; align-items:center; padding:14px 18px; gap:10px; }
+  .mkst-trend-head select{ width:auto; margin:0; }
+  .mkst-trend-body{ display:flex; gap:18px; padding:0 18px 18px; flex-wrap:wrap; }
+  .mkst-trend-box{ flex:0 0 170px; border:1px solid var(--border); border-radius:8px; padding:14px; display:flex; flex-direction:column; justify-content:space-between; min-height:180px; }
+  .mkst-trend-box .v{ font-size:30px; font-weight:700; color:var(--text); }
+  .mkst-trend-box .r{ display:flex; justify-content:space-between; font-size:12px; color:var(--text-2); margin-top:6px; }
+  .mkst-trend-chart{ flex:1 1 380px; min-width:0; }
+  .mkst-trend-chart svg{ width:100%; height:auto; display:block; }
+  .mkst-switch{ display:flex; gap:8px; align-items:center; font-size:12.5px; color:var(--text-2); padding:12px 16px; border-bottom:1px solid var(--border); margin:0; cursor:pointer; }
+  .mkst-switch input{ width:auto; margin:0; }
+  .mkst-table{ width:100%; border-collapse:collapse; font-size:13px; }
+  .mkst-table th{ text-align:left; font-size:11.5px; font-weight:600; color:var(--text-2); padding:10px 14px; border-bottom:1px solid var(--border); white-space:nowrap; text-transform:none; letter-spacing:0; font-family:var(--sans); }
+  .mkst-table td:first-child{ min-width:200px; }
+  .mkst-switch span, #csubSection-marketing label{ text-transform:none; letter-spacing:0; font-family:var(--sans); }
+  .mkst-table td{ padding:11px 14px; border-bottom:1px solid var(--border); color:var(--text); vertical-align:middle; }
+  .mkst-table tr:last-child td{ border-bottom:none; }
+  .mkst-link{ background:none; border:none; padding:0; margin:0; width:auto; color:var(--text); font-weight:600; cursor:pointer; text-align:left; }
+  .mkst-link:hover{ text-decoration:underline; }
+  .mkst-chip{ display:inline-block; font-size:11px; font-weight:700; padding:2px 8px; border-radius:999px; white-space:nowrap; border:1px solid currentColor; }
+  .mkst-bar{ height:6px; border-radius:3px; background:var(--inset, rgba(127,127,127,.15)); overflow:hidden; margin-top:5px; min-width:90px; }
+  .mkst-bar > span{ display:block; height:100%; border-radius:3px; }
+  .mkst-empty{ text-align:center; color:var(--text-2); font-size:13px; padding:26px 10px; }
+  .mkst-log-filters{ display:flex; gap:6px; flex-wrap:wrap; }
+  .mkst-log-filters button{ width:auto; margin:0; padding:5px 11px; font-size:12px; border-radius:999px; background:var(--card); border:1px solid var(--border); color:var(--text-2); cursor:pointer; }
+  .mkst-log-filters button.active{ color:var(--text); border-color:#4f7df3; }
 </style>
 </head>
 <body>
@@ -3271,6 +3333,7 @@
       <button class="csub-subtab-btn" data-csub-section="campaign_guide"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5c-1.5-1-4-1-6-.3v10.6c2-.7 4.5-.7 6 .3 1.5-1 4-1 6-.3V4.7C14 4 11.5 4 10 5z"/><path d="M10 5v10.6"/></svg>Campaign Guide</button>
       <button class="csub-subtab-btn" data-csub-section="campaign_progress"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4v12h12" stroke-linecap="round" stroke-linejoin="round"/><path d="M6.5 12.5l3-3.5 2.5 2 3.5-4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Campaign Progress</button>
       <button class="csub-subtab-btn" data-csub-section="readymode_upload_list"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13V4"/><path d="M6.5 7.5L10 4l3.5 3.5"/><path d="M4 13v3h12v-3"/></svg>ReadyMode Upload List</button>
+      <button class="csub-subtab-btn" data-csub-section="marketing"><svg class="subtab-icon" width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 5.5h15v9a1 1 0 01-1 1h-13a1 1 0 01-1-1z"/><path d="M2.5 6l7.5 5 7.5-5"/></svg>Email Marketing</button>
         </div>
     </div>
     <!-- v358: Data Science -- Data Form (moved from Client Submissions),
@@ -3345,11 +3408,6 @@
          for tax/accounting purposes). Grantable per role like every other
          multi-subtab tab, defaults off until an Owner explicitly checks it
          -- same "real money" reasoning Finance itself uses. -->
-    <!-- v757: Marketing in its own group. v756 had put it inside Taxes'
-         group, so opening Marketing unfolded the Taxes subnav too. -->
-    <div class="side-nav-group">
-      <button class="tab-btn" data-tab="marketing" title="Marketing"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M2.5 5.5h15v9a1 1 0 01-1 1h-13a1 1 0 01-1-1z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M2.5 6l7.5 5 7.5-5" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span>Marketing</span></button>
-    </div>
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="taxes" title="Taxes"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M6 2.5h8v15H6z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M6 6.5h8M8.5 9.5h3M8.5 12.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><path d="M3 6v9a1.5 1.5 0 001.5 1.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Taxes</span></button>
       <div class="tab-nav side-subnav" id="taxesSubNav">
@@ -5354,6 +5412,92 @@
         <div id="rmLeadPushesList"><div class="empty">Loading…</div></div>
       </div>
     </div>
+    <!-- v775: Email Marketing moved here from its own top-level tab (owner).
+         Statistics (GoHighLevel-style), today's sending volume with warm-up,
+         and the old client-by-client lists & campaigns screen. Off for custom
+         roles until granted (csubSectionDefault / role_can_view_csub_section). -->
+    <div class="csub-section" id="csubSection-marketing" style="display:none;">
+      <div class="mkst-top">
+        <div class="mkst-title">Email Marketing</div>
+        <div class="mkst-tabs" role="tablist">
+          <button class="mkst-tab active" data-mkst-pane="stats">Statistics</button>
+          <button class="mkst-tab" data-mkst-pane="today">Sending today</button>
+          <button class="mkst-tab" data-mkst-pane="manage">Campaigns &amp; lists</button>
+        </div>
+      </div>
+
+      <div class="mkst-pane" id="mkstPane-stats">
+        <div class="mkst-filters">
+          <select id="mkstClient" aria-label="Client"><option value="">All clients</option></select>
+          <select id="mkstCampaign" aria-label="Campaign"><option value="">All campaigns</option></select>
+          <div class="mkst-daterange">
+            <input type="date" id="mkstFrom" aria-label="From">
+            <span aria-hidden="true">&rarr;</span>
+            <input type="date" id="mkstTo" aria-label="To">
+          </div>
+          <div class="mkst-quick">
+            <button data-mkst-days="7">7 days</button><button data-mkst-days="30">30 days</button><button data-mkst-days="90">90 days</button>
+          </div>
+          <button class="btn-secondary" id="mkstRefresh" style="width:auto; padding:7px 14px;">Refresh</button>
+          <span id="mkstMsg" class="mkst-msg"></span>
+        </div>
+
+        <div class="mkst-h">Engagement summary</div>
+        <div class="mkst-sub">How many delivered emails were opened and clicked in this period.</div>
+        <div class="mkst-card" id="mkstFunnel"></div>
+
+        <div class="mkst-h" style="margin-top:22px;">Performance analysis</div>
+        <div class="mkst-sub">Every number counts on the day it happened (Chicago time). Dry runs are left out.</div>
+        <div class="mkst-kpis" id="mkstKpis"></div>
+        <div class="mkst-card mkst-trend">
+          <div class="mkst-trend-head">
+            <b id="mkstTrendTitle">Open rate</b>
+            <select id="mkstMetric" aria-label="Metric">
+              <option value="open_rate">Open rate</option><option value="click_rate">Click rate</option>
+              <option value="sent">Sent</option><option value="delivered">Delivered</option>
+              <option value="not_sent">Not sent</option><option value="bounced">Bounced</option>
+              <option value="unsubscribed">Unsubscribed</option>
+            </select>
+          </div>
+          <div class="mkst-trend-body">
+            <div class="mkst-trend-box" id="mkstTrendBox"></div>
+            <div class="mkst-trend-chart" id="mkstTrendChart"></div>
+          </div>
+        </div>
+
+        <div class="mkst-row-head" style="margin-top:22px;">
+          <div><div class="mkst-h">Top performing emails</div><div class="mkst-sub">Click a campaign to see every recipient and whether it was sent.</div></div>
+          <select id="mkstTopSort" aria-label="Sort by"><option value="open_rate">Open rate</option><option value="click_rate">Click rate</option><option value="delivered">Delivered</option><option value="not_sent">Not sent</option></select>
+        </div>
+        <div class="mkst-card" style="padding:0;">
+          <label class="mkst-switch"><input type="checkbox" id="mkstNumbers"> <span>Show statistics in numbers</span></label>
+          <div style="overflow-x:auto;"><table class="mkst-table" id="mkstTop"></table></div>
+        </div>
+      </div>
+
+      <div class="mkst-pane" id="mkstPane-today" style="display:none;">
+        <div class="mkst-filters">
+          <span class="mkst-sub" id="mkstTodayNote" style="margin:0;"></span>
+          <button class="btn-secondary" id="mkstTodayRefresh" style="width:auto; padding:7px 14px; margin-left:auto;">Refresh</button>
+        </div>
+        <div class="mkst-kpis" id="mkstTodayKpis"></div>
+        <div class="mkst-h" style="margin-top:18px;">By client</div>
+        <div class="mkst-sub">Each client sends from their own domain. A new domain warms up over 10 working days (50, 100, 150 … 750 a day) so inboxes learn to trust it; campaigns that hit the day's limit pause and carry on the next working day.</div>
+        <div class="mkst-card" style="padding:0;"><div style="overflow-x:auto;"><table class="mkst-table" id="mkstTodayTable"></table></div></div>
+      </div>
+
+      <div class="mkst-pane" id="mkstPane-manage" style="display:none;">
+        <div class="card" style="margin-bottom:16px;">
+          <div class="filter-row">
+            <div style="min-width:300px;">
+              <label>Client account</label>
+              <select id="mktClientSel"><option value="">Loading…</option></select>
+            </div>
+          </div>
+        </div>
+        <div id="mktBody"></div>
+      </div>
+    </div>
   </div>
   <div class="tab-panel" id="tab-data_science">
     <div class="ts-header">
@@ -6996,26 +7140,6 @@
       </div>
     </div>
   </div>
-  <!-- v756: EMAIL MARKETING, staff side. The client owns the sending domain
-       and connects it themselves in their own portal; this is where staff do
-       the list work on their behalf, across any client, without impersonating
-       them. Everything goes through marketing-audiences with a client_id, so
-       the same validation and suppression rules apply either way. -->
-  <div class="tab-panel" id="tab-marketing">
-    <div class="ts-header">
-      <h2 class="mono ts-title">Marketing</h2>
-    </div>
-    <div class="card" style="margin-bottom:16px;">
-      <div class="filter-row">
-        <div style="min-width:300px;">
-          <label>Client account</label>
-          <select id="mktClientSel"><option value="">Loading…</option></select>
-        </div>
-      </div>
-    </div>
-    <div id="mktBody"></div>
-  </div>
-
   <div class="tab-panel" id="tab-taxes">
     <div class="ts-header">
       <h2 class="mono ts-title">Taxes</h2>
@@ -10526,12 +10650,414 @@ function mktSel(id, headers, sel){
     headers.map((h,i)=>`<option value="${i}"${i===sel?' selected':''}>${escapeHtml(h||('Column '+(i+1)))}</option>`).join('')}</select>`;
 }
 
+// ---------------------------------------------------------------------------
+// v775: Campaigns -> Email Marketing. The owner asked for GoHighLevel's email
+// statistics: engagement summary, delivered/bounced/unsubscribed/spam cards, a
+// trend over time and top performing emails -- plus the day's sending volume
+// for all clients and each client with its warm-up, and a per-campaign
+// delivery log showing who was sent (or not sent) and why.
+// Data: marketing_stats / marketing_sending_today / marketing_recipient_log
+// (SECURITY DEFINER, gated by marketing_staff_can_view()).
+// ---------------------------------------------------------------------------
+const MKST_COLORS = ['#4f7df3', '#a78bfa', '#38bdf8', 'var(--mkst-teal)', '#f59e0b', '#ec4899', '#94a3b8'];
+let mkstPane = 'stats';
+let mkstData = null;
+let mkstToday = null;
+let mkstCampaignOptions = [];   // kept from the last "all campaigns" load
+let mkstTodayTimer = null;
+let mkstInited = false;
+
+function mkstChicagoToday(){
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+function mkstShiftDay(iso, days){
+  const d = new Date(iso + 'T12:00:00Z');
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+const mkstN = (v) => Number(v || 0).toLocaleString();
+const mkstPctNum = (a, b) => b ? (100 * a / b) : 0;
+const mkstPct = (a, b, dp = 1) => b ? `${mkstPctNum(a, b).toFixed(dp)}%` : '—';
+function mkstDate(iso, withTime){
+  if (!iso) return '—';
+  const opts = withTime
+    ? { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago' }
+    : { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'America/Chicago' };
+  return new Date(iso).toLocaleString('en-US', opts);
+}
+
+function initMarketingStats(){
+  if (!mkstInited) {
+    mkstInited = true;
+    document.querySelectorAll('.mkst-tab').forEach(b => b.addEventListener('click', () => mkstShowPane(b.dataset.mkstPane)));
+    const today = mkstChicagoToday();
+    $('mkstTo').value = today;
+    $('mkstFrom').value = mkstShiftDay(today, -6);
+    document.querySelector('.mkst-quick [data-mkst-days="7"]').classList.add('active');
+    document.querySelectorAll('.mkst-quick button').forEach(b => b.addEventListener('click', () => {
+      const t = mkstChicagoToday();
+      $('mkstTo').value = t;
+      $('mkstFrom').value = mkstShiftDay(t, -(Number(b.dataset.mkstDays) - 1));
+      document.querySelectorAll('.mkst-quick button').forEach(x => x.classList.toggle('active', x === b));
+      mkstLoad();
+    }));
+    ['mkstFrom', 'mkstTo'].forEach(id => $(id).addEventListener('change', () => {
+      document.querySelectorAll('.mkst-quick button').forEach(x => x.classList.remove('active'));
+      mkstLoad();
+    }));
+    $('mkstClient').addEventListener('change', () => { $('mkstCampaign').value = ''; mkstCampaignOptions = []; mkstLoad(); });
+    $('mkstCampaign').addEventListener('change', mkstLoad);
+    $('mkstRefresh').addEventListener('click', mkstLoad);
+    $('mkstMetric').addEventListener('change', mkstRenderTrend);
+    $('mkstTopSort').addEventListener('change', mkstRenderTop);
+    $('mkstNumbers').addEventListener('change', mkstRenderTop);
+    $('mkstTodayRefresh').addEventListener('click', mkstLoadToday);
+  }
+  mkstFillClients();
+  mkstShowPane(mkstPane);
+}
+
+async function mkstFillClients(){
+  const sel = $('mkstClient');
+  if (sel.options.length > 1) return;
+  if (!mktClients.length) {
+    const { data } = await sb.from('client_accounts').select('id, email, company_name').order('email');
+    mktClients = data || [];
+  }
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">All clients</option>' + mktClients.map(c =>
+    `<option value="${escapeHtml(c.id)}">${escapeHtml(c.company_name || c.email)}</option>`).join('');
+  sel.value = keep;
+}
+
+function mkstShowPane(pane){
+  mkstPane = pane;
+  document.querySelectorAll('.mkst-tab').forEach(b => b.classList.toggle('active', b.dataset.mkstPane === pane));
+  ['stats', 'today', 'manage'].forEach(p => { $('mkstPane-' + p).style.display = p === pane ? '' : 'none'; });
+  clearTimeout(mkstTodayTimer);
+  if (pane === 'stats') mkstLoad();
+  if (pane === 'today') mkstLoadToday();
+  if (pane === 'manage') initMarketingTab();
+}
+
+function mkstVisible(){
+  const panel = document.getElementById('tab-client_submissions');
+  return panel && panel.classList.contains('active') && csubActiveSection === 'marketing' && !document.hidden;
+}
+
+// ------------------------------------------------------------ statistics
+async function mkstLoad(){
+  const msg = $('mkstMsg');
+  msg.style.color = 'var(--text-2)';
+  msg.textContent = 'Loading…';
+  const client = $('mkstClient').value || null;
+  const campaign = $('mkstCampaign').value || null;
+  const { data, error } = await sb.rpc('marketing_stats', {
+    p_client: client, p_campaign: campaign, p_from: $('mkstFrom').value || null, p_to: $('mkstTo').value || null,
+  });
+  if (error) { msg.style.color = 'var(--danger)'; msg.textContent = error.message; return; }
+  mkstData = data;
+  msg.textContent = `Updated ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  if (!campaign) {
+    mkstCampaignOptions = (data.campaigns || []).map(c => ({ id: c.id, name: c.name, client: c.client_name }));
+    const sel = $('mkstCampaign');
+    sel.innerHTML = '<option value="">All campaigns</option>' + mkstCampaignOptions.map(c =>
+      `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}${client ? '' : ' — ' + escapeHtml(c.client || '')}</option>`).join('');
+  }
+  mkstRenderFunnel();
+  mkstRenderKpis();
+  mkstRenderTrend();
+  mkstRenderTop();
+}
+
+function mkstRenderFunnel(){
+  const t = (mkstData && mkstData.totals) || {};
+  const groups = (mkstData && mkstData.groups) || [];
+  const box = $('mkstFunnel');
+  if (!t.delivered && !t.sent) {
+    box.innerHTML = `<div class="mkst-empty">No emails were delivered in this period.${mkstData && mkstData.campaigns && mkstData.campaigns.some(c => c.queued) ? ' Some campaigns are still waiting to send — see Sending today.' : ''}</div>`;
+    return;
+  }
+  // Up to six named segments (clients, or campaigns for one client), the rest as Other.
+  const top = groups.slice(0, 6);
+  const rest = groups.slice(6);
+  if (rest.length) top.push({ name: 'Other', delivered: rest.reduce((s, g) => s + g.delivered, 0), opened: rest.reduce((s, g) => s + g.opened, 0), clicked: rest.reduce((s, g) => s + g.clicked, 0) });
+  const max = Math.max(1, t.delivered || 0);
+  const row = (label, key, total, pct) => `
+    <div class="mkst-funnel-l">${label}</div>
+    <div class="mkst-funnel-track" title="${label}: ${mkstN(total)}">
+      ${top.map((g, i) => g[key] ? `<div class="mkst-funnel-seg" style="width:${(100 * g[key] / max).toFixed(3)}%; background:${MKST_COLORS[i % MKST_COLORS.length]};" title="${escapeHtml(g.name || '')}: ${mkstN(g[key])} ${label.toLowerCase()}"></div>` : '').join('')}
+    </div>
+    <div class="mkst-funnel-pct" title="${label} as a share of delivered">${pct}</div>`;
+  const ticks = [0, .25, .5, .75, 1].map(f => mkstN(Math.round(max * f)));
+  box.innerHTML = `
+    <div class="mkst-funnel" style="margin-bottom:4px;"><div></div><div></div><div style="font-size:11px; color:var(--text-2); text-align:center;">Cumulative</div></div>
+    <div class="mkst-funnel">
+      ${row('Delivered', 'delivered', t.delivered, '100%')}
+      ${row('Opened', 'opened', t.opened, mkstPct(t.opened, t.delivered, 0))}
+      ${row('Clicked', 'clicked', t.clicked, mkstPct(t.clicked, t.delivered, 0))}
+    </div>
+    <div class="mkst-axis">${ticks.map(x => `<span>${x}</span>`).join('')}</div>
+    <div class="mkst-legend">${top.map((g, i) => `<span><i style="background:${MKST_COLORS[i % MKST_COLORS.length]}"></i>${escapeHtml(g.name || 'Unknown')}</span>`).join('')}</div>`;
+}
+
+function mkstRenderKpis(){
+  const t = (mkstData && mkstData.totals) || {};
+  const card = (label, value, sub, tip, color) => `<div class="mkst-kpi">
+      <div class="mkst-kpi-l">${label} <span class="mkst-info" title="${escapeHtml(tip)}">i</span></div>
+      <div class="mkst-kpi-v"${color ? ` style="color:${color}"` : ''}>${mkstN(value)}</div>
+      <div class="mkst-kpi-s">${sub}</div></div>`;
+  $('mkstKpis').innerHTML = [
+    card('Emails sent', t.sent, 'handed to the mail provider', 'Accepted for sending by our email provider in this period.'),
+    card('Email delivered', t.delivered, `${mkstPct(t.delivered, t.sent)} of sent`, 'The receiving mail server confirmed it arrived.'),
+    card('Not sent', t.not_sent, 'failed, skipped or unconfirmed', 'Failed at the provider, skipped (the address was suppressed or unsubscribed), or never confirmed. Open a campaign to see why for each one.', t.not_sent ? 'var(--danger)' : ''),
+    card('Bounced', t.bounced, `${mkstPct(t.bounced, t.sent)} of sent`, 'The address rejected the email. It is suppressed for that client automatically.'),
+    card('Unsubscribed', t.unsubscribed, `${mkstPct(t.unsubscribed, t.delivered)} of delivered`, 'Clicked unsubscribe. They will not be emailed again by that client.'),
+    card('Spam complaints', t.complained, `${mkstPct(t.complained, t.delivered, 2)} of delivered`, 'Marked as spam. Suppressed on every client. Keep this under 0.1%.', t.complained ? 'var(--danger)' : ''),
+  ].join('');
+}
+
+const MKST_METRICS = {
+  open_rate:  { label: 'Open rate', rate: true, num: 'opened', den: 'delivered', totalLabel: ['Total opened', 'Total delivered'] },
+  click_rate: { label: 'Click rate', rate: true, num: 'clicked', den: 'delivered', totalLabel: ['Total clicked', 'Total delivered'] },
+  sent:       { label: 'Sent', key: 'sent' },
+  delivered:  { label: 'Delivered', key: 'delivered' },
+  not_sent:   { label: 'Not sent', key: 'not_sent' },
+  bounced:    { label: 'Bounced', key: 'bounced' },
+  unsubscribed: { label: 'Unsubscribed', key: 'unsubscribed' },
+};
+
+function mkstRenderTrend(){
+  const m = MKST_METRICS[$('mkstMetric').value] || MKST_METRICS.open_rate;
+  const t = (mkstData && mkstData.totals) || {};
+  const days = (mkstData && mkstData.daily) || [];
+  const scope = $('mkstCampaign').value ? 'this campaign' : $('mkstClient').value ? 'this client' : 'all clients';
+  $('mkstTrendTitle').textContent = `${m.label} (for ${scope})`;
+  $('mkstTrendBox').innerHTML = m.rate
+    ? `<div><div class="mkst-kpi-l">${m.label}</div><div class="v">${mkstPct(t[m.num], t[m.den], 2)}</div></div>
+       <div><div class="r"><span>${m.totalLabel[0]}:</span><b>${mkstN(t[m.num])}</b></div><div class="r"><span>${m.totalLabel[1]}:</span><b>${mkstN(t[m.den])}</b></div></div>`
+    : `<div><div class="mkst-kpi-l">${m.label}</div><div class="v">${mkstN(t[m.key])}</div></div>
+       <div><div class="r"><span>Days:</span><b>${days.length}</b></div><div class="r"><span>Busiest day:</span><b>${mkstN(Math.max(0, ...days.map(d => d[m.key] || 0)))}</b></div></div>`;
+  const vals = days.map(d => m.rate ? mkstPctNum(d[m.num] || 0, d[m.den] || 0) : (d[m.key] || 0));
+  $('mkstTrendChart').innerHTML = mkstLineSvg(days.map(d => d.day), vals, m.rate);
+}
+
+// A smooth line with a soft area under it, like GoHighLevel's chart.
+function mkstLineSvg(labels, values, isRate){
+  const W = 720, H = 240, L = 48, R = 26, T = 12, B = 34;
+  if (!labels.length) return '<div class="mkst-empty">No data.</div>';
+  const maxV = Math.max(...values, 0);
+  // Round axis steps (1, 2, 5, 10, 20, 25, 50 ...) so ticks read 0 / 10 / 20 / 30 / 40.
+  const want = Math.max(isRate ? 4 : 4, maxV * 1.08) / 4;
+  const mag = Math.pow(10, Math.floor(Math.log10(want)));
+  const step = [1, 2, 2.5, 5, 10].map(f => f * mag).find(s => s >= want) || 10 * mag;
+  const top = step * 4;
+  const x = (i) => L + (labels.length === 1 ? (W - L - R) / 2 : i * (W - L - R) / (labels.length - 1));
+  const y = (v) => T + (H - T - B) * (1 - v / top);
+  const pts = values.map((v, i) => [x(i), y(v)]);
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const c1 = [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6];
+    const c2 = [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6];
+    // keep the curve inside the plot (no dip below zero)
+    c1[1] = Math.min(c1[1], H - B); c2[1] = Math.min(c2[1], H - B);
+    d += ` C${c1[0]},${c1[1]} ${c2[0]},${c2[1]} ${p2[0]},${p2[1]}`;
+  }
+  const area = `${d} L${pts[pts.length - 1][0]},${H - B} L${pts[0][0]},${H - B} Z`;
+  const grid = [0, .25, .5, .75, 1].map(f => {
+    const v = top * f, yy = y(v);
+    return `<line x1="${L}" x2="${W - R}" y1="${yy}" y2="${yy}" stroke="currentColor" stroke-opacity=".12"/>
+      <text x="${L - 8}" y="${yy + 4}" text-anchor="end" font-size="11" fill="currentColor" fill-opacity=".6">${isRate ? (Number.isInteger(v) ? v : v.toFixed(1)) + '%' : Math.round(v).toLocaleString()}</text>`;
+  }).join('');
+  const every = Math.max(1, Math.ceil(labels.length / 8));
+  const xl = labels.map((lab, i) => (i % every === 0 || i === labels.length - 1)
+    ? `<text x="${x(i)}" y="${H - 12}" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity=".6">${lab.slice(5, 7)}/${lab.slice(8, 10)}</text>` : '').join('');
+  const dots = pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="${labels.length > 45 ? 0 : 3}" fill="#4f7df3"><title>${labels[i]}: ${isRate ? values[i].toFixed(1) + '%' : values[i].toLocaleString()}</title></circle>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Trend" style="color:var(--text);">
+    <defs><linearGradient id="mkstFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#4f7df3" stop-opacity=".35"/><stop offset="1" stop-color="#4f7df3" stop-opacity=".03"/></linearGradient></defs>
+    ${grid}
+    <path d="${area}" fill="url(#mkstFill)"/>
+    <path d="${d}" fill="none" stroke="#4f7df3" stroke-width="2.2"/>
+    ${dots}${xl}</svg>`;
+}
+
+const MKST_CAMP_STATUS = { draft: ['Draft', 'var(--text-2)'], scheduled: ['Scheduled', 'var(--mkst-blue)'], sending: ['Sending', 'var(--mkst-teal)'], paused: ['Paused', 'var(--away)'], sent: ['Sent', 'var(--good)'], cancelled: ['Cancelled', 'var(--text-2)'] };
+
+function mkstRenderTop(){
+  const rows = ((mkstData && mkstData.campaigns) || []).slice();
+  const sort = $('mkstTopSort').value;
+  const nums = $('mkstNumbers').checked;
+  const score = (c) => sort === 'open_rate' ? mkstPctNum(c.opened, c.delivered) : sort === 'click_rate' ? mkstPctNum(c.clicked, c.delivered) : (c[sort] || 0);
+  rows.sort((a, b) => score(b) - score(a) || (b.delivered - a.delivered));
+  const allClients = !$('mkstClient').value;
+  const tbl = $('mkstTop');
+  if (!rows.length) { tbl.innerHTML = '<tr><td class="mkst-empty">No campaigns in this period.</td></tr>'; return; }
+  tbl.innerHTML = `<thead><tr><th>Title</th>${allClients ? '<th>Client</th>' : ''}<th>Execution date</th><th>Status</th><th>Recipients</th><th>Sent</th><th>Delivered</th><th>Not sent</th><th>${nums ? 'Opened' : 'Open rate'}</th><th>${nums ? 'Clicked' : 'Click rate'}</th></tr></thead>
+    <tbody>${rows.map(c => {
+      const [label, color] = MKST_CAMP_STATUS[c.status] || [c.status, 'var(--text-2)'];
+      return `<tr>
+        <td><button class="mkst-link" data-mkst-log="${escapeHtml(c.id)}" data-name="${escapeHtml(c.name)}">${escapeHtml(c.name)}</button>
+          <div style="font-size:11.5px; color:var(--text-2);">${escapeHtml(c.subject || '')}</div></td>
+        ${allClients ? `<td>${escapeHtml(c.client_name || '—')}</td>` : ''}
+        <td style="white-space:nowrap;">${mkstDate(c.started_at, true)}</td>
+        <td><span class="mkst-chip" style="color:${color};">${label}</span>${c.queued ? `<div style="font-size:11px; color:var(--text-2); margin-top:3px;">${mkstN(c.queued)} waiting</div>` : ''}</td>
+        <td>${mkstN(c.recipients)}</td>
+        <td>${mkstN(c.sent)}</td>
+        <td>${mkstN(c.delivered)}</td>
+        <td${c.not_sent ? ' style="color:var(--danger); font-weight:700;"' : ''}>${mkstN(c.not_sent)}</td>
+        <td>${nums ? mkstN(c.opened) : mkstPct(c.opened, c.delivered, 2)}</td>
+        <td>${nums ? mkstN(c.clicked) : mkstPct(c.clicked, c.delivered, 2)}</td>
+      </tr>`; }).join('')}</tbody>`;
+  tbl.querySelectorAll('[data-mkst-log]').forEach(b => b.addEventListener('click', () => mkstOpenLog(b.dataset.mkstLog, b.dataset.name)));
+}
+
+// --------------------------------------------------------- sending today
+function mkstWarmup(d){
+  if (!d.usable) return { label: 'Domain not verified', color: 'var(--text-2)', pct: 0, note: d.domain_status || '' };
+  if (d.warmup_paused) return { label: 'Warm-up paused', color: 'var(--danger)', pct: Math.min(100, (d.warmup_day || 0) * 10), note: 'Nothing sends until it is resumed.' };
+  if (d.warmup_completed_at) return { label: 'Warm', color: 'var(--good)', pct: 100, note: `Finished ${mkstDate(d.warmup_completed_at)}` };
+  if (!d.warmup_started_at) return { label: 'Not started', color: 'var(--mkst-blue)', pct: 0, note: 'Starts with the first send — 50 on day 1.' };
+  const day = Math.min(10, Math.max(1, d.warmup_day || 1));
+  return { label: `Warming up — day ${day} of 10`, color: 'var(--away)', pct: day * 10, note: `Started ${mkstDate(d.warmup_started_at)}` };
+}
+
+async function mkstLoadToday(){
+  clearTimeout(mkstTodayTimer);
+  const { data, error } = await sb.rpc('marketing_sending_today');
+  if (error) { $('mkstTodayTable').innerHTML = `<tr><td class="mkst-empty" style="color:var(--danger);">${escapeHtml(error.message)}</td></tr>`; return; }
+  mkstToday = data;
+  const rows = data.domains || [];
+  const sum = (k) => rows.reduce((s, r) => s + (Number(r[k]) || 0), 0);
+  const sentToday = sum('sent_today'), allowed = sum('allowance_today'), left = sum('remaining_today');
+  const warming = rows.filter(r => r.usable && r.warmup_started_at && !r.warmup_completed_at && !r.warmup_paused).length;
+  $('mkstTodayNote').textContent = `Today is ${mkstDate(data.today + 'T12:00:00Z')} (Chicago)${data.working_day ? '' : ' — a weekend: no emails are sent on Saturdays or Sundays.'}. Refreshes every minute while open.`;
+  const card = (label, value, sub, color) => `<div class="mkst-kpi"><div class="mkst-kpi-l">${label}</div><div class="mkst-kpi-v"${color ? ` style="color:${color}"` : ''}>${value}</div><div class="mkst-kpi-s">${sub}</div></div>`;
+  $('mkstTodayKpis').innerHTML = [
+    card('Sent today — all clients', mkstN(sentToday), allowed ? `${mkstPct(sentToday, allowed, 0)} of today's limit` : 'no sending limit today'),
+    card("Today's limit", mkstN(allowed), 'what warm-up and allowances permit'),
+    card('Still available today', mkstN(left), 'across every client'),
+    card('Domains warming up', mkstN(warming), `${mkstN(rows.length)} sending domain${rows.length === 1 ? '' : 's'} in total`),
+    card('Campaigns sending now', mkstN(sum('sending_campaigns')), sum('waiting_for_warmup') ? `${mkstN(sum('waiting_for_warmup'))} waiting for tomorrow's warm-up limit` : 'none waiting on warm-up', sum('waiting_for_warmup') ? 'var(--away)' : ''),
+  ].join('');
+  const spark = (days) => {
+    const max = Math.max(1, ...days.map(x => x.sent));
+    return `<svg viewBox="0 0 84 24" width="84" height="24" aria-hidden="true">${days.map((x, i) => {
+      const h = Math.max(1, 22 * x.sent / max);
+      return `<rect x="${i * 12}" y="${24 - h}" width="9" height="${h}" rx="1.5" fill="#4f7df3" fill-opacity="${i === days.length - 1 ? 1 : .45}"><title>${x.day}: ${x.sent}</title></rect>`;
+    }).join('')}</svg>`;
+  };
+  $('mkstTodayTable').innerHTML = !rows.length ? '<tr><td class="mkst-empty">No client has connected a sending domain yet.</td></tr>' : `
+    <thead><tr><th>Client</th><th>Sending domain</th><th>Warm-up</th><th>Sent today</th><th>Left today</th><th>This month</th><th>Last 7 days</th><th>Campaigns</th></tr></thead>
+    <tbody>${rows.map(r => {
+      const w = mkstWarmup(r);
+      const todayPct = r.allowance_today ? Math.min(100, 100 * r.sent_today / r.allowance_today) : 0;
+      const monthPct = r.monthly_limit ? Math.min(100, 100 * r.sent_this_month / r.monthly_limit) : 0;
+      return `<tr>
+        <td><b>${escapeHtml(r.client_name || '—')}</b></td>
+        <td>${escapeHtml(r.domain)}</td>
+        <td style="min-width:170px;"><span class="mkst-chip" style="color:${w.color};">${escapeHtml(w.label)}</span>
+          <div class="mkst-bar"><span style="width:${w.pct}%; background:${w.color};"></span></div>
+          <div style="font-size:11px; color:var(--text-2); margin-top:3px;">${escapeHtml(w.note)}</div></td>
+        <td style="min-width:130px;"><b>${mkstN(r.sent_today)}</b> <span style="color:var(--text-2);">of ${mkstN(r.allowance_today)}</span>
+          <div class="mkst-bar"><span style="width:${todayPct}%; background:#4f7df3;"></span></div></td>
+        <td>${mkstN(r.remaining_today)}</td>
+        <td style="min-width:130px;">${mkstN(r.sent_this_month)} <span style="color:var(--text-2);">of ${mkstN(r.monthly_limit)}</span>
+          <div class="mkst-bar"><span style="width:${monthPct}%; background:var(--good);"></span></div></td>
+        <td>${spark(r.last_7_days || [])}</td>
+        <td>${r.sending_campaigns ? `<span class="mkst-chip" style="color:var(--mkst-teal);">${r.sending_campaigns} sending</span> ` : ''}${r.waiting_for_warmup ? `<span class="mkst-chip" style="color:var(--away);">${r.waiting_for_warmup} waiting for warm-up</span>` : ''}${!r.sending_campaigns && !r.waiting_for_warmup ? '<span style="color:var(--text-2);">—</span>' : ''}</td>
+      </tr>`; }).join('')}</tbody>`;
+  mkstTodayTimer = setTimeout(() => { if (mkstVisible() && mkstPane === 'today') mkstLoadToday(); }, 60000);
+}
+
+// ---------------------------------------------------------- delivery log
+function mkstDelivery(r){
+  if (r.bounced_at) return ['Bounced', 'var(--danger)', 'The address rejected it.'];
+  if (r.status === 'failed') return ['Not sent — failed', 'var(--danger)', r.error || 'The provider refused it.'];
+  if (r.status === 'skipped') return ['Not sent — skipped', 'var(--text-2)', r.error || 'Suppressed or unsubscribed before sending.'];
+  if (r.status === 'unknown') return ['Not confirmed', 'var(--away)', r.error || 'Sent, but the provider never confirmed it — not retried, to avoid a duplicate.'];
+  if (r.status === 'queued' || r.status === 'sending') return ['Waiting to send', 'var(--mkst-blue)', 'In the queue.'];
+  if (r.status === 'sandbox') return ['Test only', 'var(--text-2)', 'Dry run — nothing delivered.'];
+  if (r.delivered_at) return ['Delivered', 'var(--good)', ''];
+  if (r.status === 'deferred') return ['Sent — delivery delayed', 'var(--away)', 'The receiving server asked to try again later.'];
+  if (r.sent_at) return ['Sent — awaiting delivery report', 'var(--mkst-teal)', ''];
+  return [r.status, 'var(--text-2)', ''];
+}
+
+async function mkstOpenLog(campaignId, name){
+  const st = { filter: 'all', search: '', offset: 0 };
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:9999; display:flex; align-items:center; justify-content:center; padding:16px;';
+  overlay.innerHTML = `<div class="card" style="width:min(1100px,100%); max-height:92vh; display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; gap:10px; align-items:center;">
+        <div style="flex:1; min-width:0;"><div class="mkst-h" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Delivery log — ${escapeHtml(name || 'Campaign')}</div>
+          <div class="mkst-sub" style="margin:2px 0 0;">Every recipient and what happened to their email.</div></div>
+        <button class="btn-secondary" data-close style="width:auto;">Close</button></div>
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <div class="mkst-log-filters" data-filters></div>
+        <input type="search" data-search placeholder="Search email or name" style="width:220px; margin:0 0 0 auto;">
+      </div>
+      <div style="overflow:auto; border:1px solid var(--border); border-radius:8px;"><table class="mkst-table" data-table><tr><td class="mkst-empty">Loading…</td></tr></table></div>
+      <div style="display:flex; gap:10px; align-items:center; font-size:12px; color:var(--text-2);" data-pager></div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const q = (s) => overlay.querySelector(s);
+  const close = () => overlay.remove();
+  q('[data-close]').onclick = close;
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  let searchTimer = null;
+  q('[data-search]').addEventListener('input', (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { st.search = e.target.value; st.offset = 0; load(); }, 300);
+  });
+  const LIMIT = 100;
+  const FILTERS = [['all', 'All'], ['sent', 'Sent'], ['delivered', 'Delivered'], ['opened', 'Opened'], ['clicked', 'Clicked'], ['not_sent', 'Not sent'], ['bounced', 'Bounced'], ['waiting', 'Waiting']];
+  async function load(){
+    const { data, error } = await sb.rpc('marketing_recipient_log', {
+      p_campaign: campaignId, p_filter: st.filter, p_search: st.search || null, p_limit: LIMIT, p_offset: st.offset,
+    });
+    if (!document.body.contains(overlay)) return;
+    if (error) { q('[data-table]').innerHTML = `<tr><td class="mkst-empty" style="color:var(--danger);">${escapeHtml(error.message)}</td></tr>`; return; }
+    const counts = data.counts || {};
+    q('[data-filters]').innerHTML = FILTERS.map(([k, l]) => `<button data-f="${k}" class="${st.filter === k ? 'active' : ''}">${l} · ${mkstN(counts[k])}</button>`).join('');
+    q('[data-filters]').querySelectorAll('button').forEach(b => b.onclick = () => { st.filter = b.dataset.f; st.offset = 0; load(); });
+    const rows = data.rows || [];
+    q('[data-table]').innerHTML = !rows.length ? '<tr><td class="mkst-empty">Nobody here.</td></tr>' : `
+      <thead><tr><th>Recipient</th><th>Delivery</th><th>Sent</th><th>Delivered</th><th>Opened</th><th>Clicked</th><th>Unsubscribed</th></tr></thead>
+      <tbody>${rows.map(r => {
+        const [label, color, why] = mkstDelivery(r);
+        const nm = [r.first_name, r.last_name].filter(Boolean).join(' ');
+        return `<tr>
+          <td><b>${escapeHtml(r.email)}</b>${nm || r.company ? `<div style="font-size:11.5px; color:var(--text-2);">${escapeHtml([nm, r.company].filter(Boolean).join(' · '))}</div>` : ''}</td>
+          <td><span class="mkst-chip" style="color:${color};">${escapeHtml(label)}</span>${why ? `<div style="font-size:11px; color:var(--text-2); margin-top:3px; max-width:260px;">${escapeHtml(why)}</div>` : ''}</td>
+          <td style="white-space:nowrap;">${mkstDate(r.sent_at, true)}</td>
+          <td style="white-space:nowrap;">${mkstDate(r.delivered_at, true)}</td>
+          <td style="white-space:nowrap;">${mkstDate(r.opened_at, true)}</td>
+          <td style="white-space:nowrap;">${mkstDate(r.clicked_at, true)}</td>
+          <td style="white-space:nowrap;">${mkstDate(r.unsubscribed_at, true)}</td>
+        </tr>`; }).join('')}</tbody>`;
+    const from = data.total ? st.offset + 1 : 0, to = Math.min(st.offset + LIMIT, data.total);
+    q('[data-pager]').innerHTML = `<span>${mkstN(from)}–${mkstN(to)} of ${mkstN(data.total)}</span>
+      <button class="btn-secondary" data-prev style="width:auto; padding:4px 10px;"${st.offset ? '' : ' disabled'}>Previous</button>
+      <button class="btn-secondary" data-next style="width:auto; padding:4px 10px;"${to < data.total ? '' : ' disabled'}>Next</button>
+      <button class="btn-secondary" data-reload style="width:auto; padding:4px 10px; margin-left:auto;">Refresh</button>`;
+    q('[data-prev]').onclick = () => { st.offset = Math.max(0, st.offset - LIMIT); load(); };
+    q('[data-next]').onclick = () => { st.offset += LIMIT; load(); };
+    q('[data-reload]').onclick = load;
+  }
+  load();
+}
+
 async function initMarketingTab(){
   const sel = document.getElementById('mktClientSel');
   if (!sel) return;
   if (!mktClients.length){
     const { data } = await sb.from('client_accounts').select('id, email, company_name').order('email');
     mktClients = data || [];
+  }
+  // v775: filled on its own flag -- Statistics may have loaded mktClients first.
+  if (!sel.dataset.filled){
+    sel.dataset.filled = '1';
     sel.innerHTML = '<option value="">— pick a client —</option>' + mktClients.map(c =>
       `<option value="${escapeHtml(c.id)}">${escapeHtml(c.company_name || c.email)}</option>`).join('');
     sel.addEventListener('change', mktLoad);
@@ -10803,8 +11329,7 @@ async function mktCampaignsLoad(clientId){
     mktCampaignsRender(clientId);
     if (mktCampaigns.some(x => ['scheduled','sending'].includes(x.status))) {
       mktCampTimer = setTimeout(() => {
-        const panel = document.getElementById('tab-marketing');
-        if (panel && panel.classList.contains('active') && document.getElementById('mktClientSel').value === clientId && !mktCampEditing) {
+        if (mkstVisible() && mkstPane === 'manage' && document.getElementById('mktClientSel').value === clientId && !mktCampEditing) {
           mktCampaignsLoad(clientId);
         }
       }, 15000);
@@ -10826,6 +11351,7 @@ function mktCampaignsRender(clientId){
       : c.finished_at ? mktWhen(c.finished_at) : c.started_at ? 'Started ' + mktWhen(c.started_at) : 'Created ' + mktWhen(c.created_at);
     const acts = [];
     acts.push(`<button class="btn-secondary mkt-camp-act" data-act="preview" data-id="${c.id}">Preview</button>`);
+    if (c.started_at && !c.dry_run) acts.push(`<button class="btn-secondary mkt-camp-act" data-act="log" data-id="${c.id}">Delivery log</button>`);   // v775
     if (canWrite) {
       if (c.status === 'draft' || c.status === 'scheduled' || (c.status === 'paused' && !c.started_at)) acts.push(`<button class="btn-secondary mkt-camp-act" data-act="edit" data-id="${c.id}">Edit</button>`);
       if (['scheduled','sending'].includes(c.status)) acts.push(`<button class="btn-secondary mkt-camp-act" data-act="pause" data-id="${c.id}">Pause</button>`);
@@ -10876,6 +11402,7 @@ async function mktCampAction(clientId, act, id){
   const msg = document.getElementById('mktCampMsg');
   if (act === 'edit') return mktCampOpenEditor(clientId, c);
   if (act === 'preview') return mktCampPreview({ id });
+  if (act === 'log') return mkstOpenLog(id, c && c.name);   // v775
   if (act === 'cancel' && !window.confirm(`Cancel “${c.name}”? Anyone not emailed yet will not be. This cannot be undone.`)) return;
   if (act === 'delete' && !window.confirm(`Delete the draft “${c.name}”?`)) return;
   try {
@@ -11259,7 +11786,6 @@ function activateTab(tabKey){
   // via initTimeManagementTab() below, same as Timesheets/Reports/Flags.
   if(tabKey === 'time_management') initTimeManagementTab();
   if(tabKey === 'leads') initLeadsTab();
-  if(tabKey === 'marketing') initMarketingTab();
   if(tabKey === 'call_activity') initActivityTab();
   if(tabKey === 'client_chat') ciInitTab();   // v701
   if(tabKey === 'client_disputes') initClientDisputesTab();   // v717
@@ -21892,9 +22418,7 @@ const DASHBOARD_TAB_KEYS = [
   // elements in any of them), so no editable:true either — same reasoning
   // as Data Science above, just nothing to opt into editing yet.
   { key: 'taxes', label: 'Taxes' },
-  // v756: staff-side list management for client email marketing. Off for
-  // custom roles until an Owner grants it, like every other tab here.
-  { key: 'marketing', label: 'Marketing' },
+  // v775: Marketing is now Campaigns -> Email Marketing (CSUB_SECTIONS).
   // 'activity' (Audit Log) is deliberately absent — it's Owner-only always
   // (see applyRolePermissionsToNav), not something any role, even Admin,
   // can be granted through this picker.
@@ -22220,8 +22744,11 @@ const CSUB_SECTIONS = [
   { key: 'campaign_guide', label: 'Campaign Guide' },
   { key: 'campaign_progress', label: 'Campaign Progress' },
   { key: 'readymode_upload_list', label: 'ReadyMode Upload List' },
+  // v775: moved here from its own tab; off for custom roles until granted,
+  // like the Marketing tab it replaces (role_can_view_csub_section agrees).
+  { key: 'marketing', label: 'Email Marketing' },
 ];
-function csubSectionDefault(key){ return key !== 'campaign_guide'; }
+function csubSectionDefault(key){ return key !== 'campaign_guide' && key !== 'marketing'; }
 function csubEditSectionDefault(){ return false; }
 function canViewCsubSection(key){
   if(myPermissions.isProtected) return true;
@@ -32025,7 +32552,7 @@ function activateCsubSection(key){
   document.querySelectorAll('.csub-subtab-btn').forEach(b => b.classList.toggle('active', b.dataset.csubSection === key));
   document.querySelectorAll('.csub-section').forEach(s => { s.style.display = (s.id === 'csubSection-' + key) ? 'block' : 'none'; });
   const filterCard = $('csubFormFilterCard');
-  if(filterCard) filterCard.style.display = (key === 'dashboard' || key === 'campaign_guide' || key === 'campaign_progress' || key === 'readymode_upload_list') ? 'none' : '';
+  if(filterCard) filterCard.style.display = (key === 'dashboard' || key === 'campaign_guide' || key === 'campaign_progress' || key === 'readymode_upload_list' || key === 'marketing') ? 'none' : '';
   // v366: Form/Export CSV only mean anything on Data Form/Qualification
   // (Export CSV was never wired for Campaign Management -- see its own
   // click handler comment); Status/Package only mean anything on Campaign
@@ -32038,7 +32565,7 @@ function activateCsubSection(key){
   // four wraps for it rather than letting it fall into the "else" half of
   // onCampaign's ternaries below, which would show the Data Form/
   // Qualification filter UI above a section that ignores it entirely.
-  const hideAllFilters = key === 'campaign_progress' || key === 'readymode_upload_list';
+  const hideAllFilters = key === 'campaign_progress' || key === 'readymode_upload_list' || key === 'marketing';
   if($('csubFormFilterWrap')) $('csubFormFilterWrap').style.display = (onCampaign || hideAllFilters) ? 'none' : '';
   if($('csubExportCsvWrap')) $('csubExportCsvWrap').style.display = (onCampaign || hideAllFilters) ? 'none' : '';
   if($('csubCampaignStatusFilterWrap')) $('csubCampaignStatusFilterWrap').style.display = (onCampaign && !hideAllFilters) ? '' : 'none';
@@ -32046,7 +32573,7 @@ function activateCsubSection(key){
   if($('csubFormFilterHint')) $('csubFormFilterHint').textContent = onCampaign
     ? 'Campaign Name filters this list the same way it does Data Form/Client Qualification Form — kept in sync across all three.'
     : 'Campaign Name filters both Data Form and Client Qualification Form together — a Cold Caller package submission appears on both, so this keeps them in sync.';
-  loadClientSubmissions();
+  if(key !== 'marketing') loadClientSubmissions();   // v775: Email Marketing has its own data
   // v292: fetched separately from loadClientSubmissions (different
   // table) and re-renders on its own once it resolves -- whichever of
   // the two finishes first, renderCsubCampaignTable() ends up called
@@ -32065,6 +32592,8 @@ function activateCsubSection(key){
     // section -- the same gap that left the ReadyMode push button live for
     // view-only roles until v576. Owner/Admin are never section-gated.
     if(!(myIsOwner || myRole === 'admin')) applyCsubSectionEditGating('campaign_progress');
+  } else if(key === 'marketing'){
+    initMarketingStats();   // v775
   } else if(key === 'readymode_upload_list'){
     // The channel dropdown on the dedupe card and the push-history list
     // were previously filled by the Integrations tab's own bulk load, which
