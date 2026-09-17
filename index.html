@@ -10470,6 +10470,7 @@ function staffPageRestore(){
 // a client_id is passed explicitly.
 // ---------------------------------------------------------------------------
 let mktClients = [];
+let mktContent = null;   // v765: marketing_template_content()
 let mktAudiences = [];
 let mktDomains = [];
 let mktCsv = null;
@@ -10477,7 +10478,11 @@ let mktAccess = null;   // v757: marketing_access() for the picked client
 
 async function mktCall(action, payload){
   const AUD = ['audience_list','audience_create','audience_delete','contacts_import'];
-  const fn = AUD.includes(action) ? 'marketing-audiences' : 'marketing-domains';
+  // v765: the email content lives in marketing-templates, not domains.
+  const TPL = ['content_block'];
+  const fn = AUD.includes(action) ? 'marketing-audiences'
+    : TPL.includes(action) ? 'marketing-templates'
+    : 'marketing-domains';
   const { data, error } = await sb.functions.invoke(fn, { body: { action, ...payload } });
   if (data && data.ok === false) throw new Error(data.error || 'Request failed.');
   if (error) {
@@ -10539,15 +10544,18 @@ async function mktLoad(){
   if (!clientId){ body.innerHTML = ''; return; }
   body.innerHTML = '<div class="card">Loading…</div>';
   try {
-    const [d, a, acc] = await Promise.all([
+    const [d, a, acc, con] = await Promise.all([
       mktCall('list', { client_id: clientId }),
       mktCall('audience_list', { client_id: clientId }),
       sb.rpc('marketing_access', { p_client: clientId }),
+      // v765: the words the client approved, and whether staff have stopped them.
+      sb.rpc('marketing_template_content', { p_client: clientId }),
     ]);
     if (acc.error) throw new Error(acc.error.message);
     mktDomains = d.domains || [];
     mktAudiences = a.audiences || [];
     mktAccess = acc.data || null;
+    mktContent = con.error ? null : (con.data || null);
     mktRender(clientId);
   } catch(e){
     body.innerHTML = `<div class="card" style="color:var(--danger)">${escapeHtml(e.message)}</div>`;
@@ -10558,6 +10566,69 @@ async function mktLoad(){
 // owner/admin) = 10,000 emails a month. Lists can only be created or uploaded
 // once the client has done all three setup steps in their own portal; the
 // edge function refuses otherwise, this just says so before anyone tries.
+// v765: the client writes and approves their own email content, but it sends
+// from a domain tied to this platform's reputation -- one client's bad copy
+// gets the whole sending setup filtered. This card is the staff override.
+function mktContentCard(clientId){
+  const c = mktContent;
+  const canGrant = ['owner','admin'].includes(myRole);
+  const head = `<h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:8px; text-transform:uppercase; letter-spacing:1px;">Email content</h3>`;
+  if (!c || !c.exists) {
+    return `<div class="card" style="margin-bottom:16px;">${head}<div style="font-size:13px; color:var(--text-2);">This client has not written their email yet.</div></div>`;
+  }
+  let state;
+  if (c.staff_blocked) {
+    state = `<span style="color:var(--danger); font-weight:700;">On hold by staff</span>`;
+  } else if (c.ai_draft) {
+    state = `<span style="color:var(--away); font-weight:700;">AI draft &mdash; the client has not approved it</span>`;
+  } else if (c.approved_at) {
+    state = `<span style="color:var(--good); font-weight:700;">Approved by the client</span>` + ` <span style="color:var(--text-2);">${new Date(c.approved_at).toLocaleString()}</span>`;
+  } else {
+    state = `<span style="color:var(--text-2);">Written, not approved</span>`;
+  }
+  const model = c.ai_model
+    ? ` <span style="color:var(--text-2);">&middot; drafted by ${escapeHtml(c.ai_model)}</span>` : '';
+  const brief = c.instructions
+    ? `<div style="font-size:12px; color:var(--text-2); margin-bottom:8px;"><b>Client asked for:</b> ${escapeHtml(c.instructions)}</div>`
+    : '';
+  const note = c.staff_note
+    ? `<div style="font-size:12px; color:var(--danger); margin-top:8px;"><b>Hold note:</b> ${escapeHtml(c.staff_note)}</div>`
+    : '';
+  const controls = canGrant ? `<div class="filter-row" style="margin-top:12px;">
+      <div style="flex:1; min-width:200px;"><label>Reason (the client sees this)</label>
+        <input type="text" id="mktBlockNote" maxlength="500" value="${escapeHtml(c.staff_note || '')}"></div>
+      <div style="align-self:flex-end;"><button class="btn-secondary" id="mktBlockBtn">${c.staff_blocked ? 'Release the hold' : 'Put this on hold'}</button></div>
+      <div style="align-self:flex-end; font-size:12px; color:var(--text-2);" id="mktBlockMsg">A hold stops it being used, whatever the client approved.</div>
+    </div>` : '';
+  return `<div class="card" style="margin-bottom:16px;">${head}
+    <div style="font-size:13px; margin-bottom:8px;">${state}${model}</div>
+    ${brief}
+    <div style="border:1px solid var(--border); border-radius:8px; padding:11px 13px; background:var(--inset); font-size:13px; line-height:1.55;">
+      <div style="font-weight:700; margin-bottom:6px;">${escapeHtml(c.subject || '(no subject)')}</div>
+      <div style="white-space:pre-wrap; color:var(--text-2); max-height:200px; overflow:auto;">${escapeHtml(c.body || '')}</div>
+    </div>
+    ${note}${controls}
+  </div>`;
+}
+
+async function mktToggleBlock(clientId){
+  const msg = document.getElementById('mktBlockMsg');
+  const btn = document.getElementById('mktBlockBtn');
+  const on = !(mktContent && mktContent.staff_blocked);
+  const note = (document.getElementById('mktBlockNote') || {}).value || '';
+  btn.disabled = true;
+  msg.style.color = 'var(--text-2)';
+  msg.textContent = 'Saving…';
+  try {
+    await mktCall('content_block', { client_id: clientId, blocked: on, note });
+    await mktLoad();
+  } catch(e){
+    btn.disabled = false;
+    const m = document.getElementById('mktBlockMsg');
+    if (m){ m.style.color = 'var(--danger)'; m.textContent = e.message; }
+  }
+}
+
 function mktAccessCard(clientId){
   const a = mktAccess || {};
   const canGrant = ['owner','admin'].includes(myRole);
@@ -10642,7 +10713,7 @@ function mktRender(clientId){
       </td></tr>`).join('')
     : '<tr><td colspan="3" style="padding:8px 0; color:var(--text-2);">No lists yet.</td></tr>';
 
-  document.getElementById('mktBody').innerHTML = mktAccessCard(clientId) + `
+  document.getElementById('mktBody').innerHTML = mktAccessCard(clientId) + mktContentCard(clientId) + `
     <div class="card" style="margin-bottom:16px;">
       <h3 class="mono" style="font-size:11px; color:var(--text-2); margin-bottom:10px; text-transform:uppercase; letter-spacing:1px;">Sending domain</h3>
       <div style="font-size:13px;">${domLine}</div>
@@ -10672,6 +10743,8 @@ function mktRender(clientId){
 
   mktCampaignsLoad(clientId);   // v758
   document.getElementById('mktCreateBtn').addEventListener('click', ()=>mktCreate(clientId));
+  const blockBtn = document.getElementById('mktBlockBtn');   // v765
+  if (blockBtn) blockBtn.onclick = () => mktToggleBlock(clientId);
   const seatsBtn = document.getElementById('mktSeatsSaveBtn');
   if(seatsBtn) seatsBtn.addEventListener('click', ()=>mktSaveSeats(clientId));
   document.querySelectorAll('.mkt-upload').forEach(b=>b.addEventListener('click', ()=>mktShowUpload(b.dataset.id, b.dataset.name)));
@@ -44627,7 +44700,7 @@ function daVisibleSections(){
 // Loaded on first open, never with the page: the portal is already one very
 // large document, and most sessions never open Dialer Admin. Bump the version
 // when dialer-admin/ changes so browsers do not serve a stale copy.
-const DIALER_ADMIN_VERSION = '764'; // 764: staff form shows records + the free email seat, and can draft an Other-industry guide with AI; 763: campaign type (real estate / other industry), caller-script attachment on the guide, AI-drafted guides awaiting review; 762: Campaign Details shows each client's Email Marketing standing; 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
+const DIALER_ADMIN_VERSION = '765'; // 765: sending warm-up, and email content the client writes with AI and approves; 764: staff form shows records + the free email seat, and can draft an Other-industry guide with AI; 763: campaign type (real estate / other industry), caller-script attachment on the guide, AI-drafted guides awaiting review; 762: Campaign Details shows each client's Email Marketing standing; 761: emails per seat is settable per client (Marketing tab); 760: add a contact with just a phone -- only the number is required, matching the list upload; 759: Open shows the whole email, Gmail drafts labelled; 750: price a market before buying numbers; 747: Open on an email, conversations for an address with no contact; 746: delivery status on sent email; 744: inbox can send from the shared mailbox; 741: agent phone/email/full-name merge fields; 737: formatted email templates (727: lists can be deactivated/reactivated (702: follow-ups may have no date; 697: coverage leaves out test campaigns; 692: light theme)
 let daLoadPromise = null;
 let daActiveSection = null;
 let daActivePath = null;   // group/tab, e.g. "conversations/contacts"
