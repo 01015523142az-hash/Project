@@ -5262,6 +5262,57 @@
         </table>
       </div>
 
+      <!-- v782: a promotion or an update, pushed to the client app. Delivery is
+           client-push-broadcast -> send-client-push-notification (the one place
+           that talks to FCM); every send is recorded in client_push_broadcasts.
+           Only clients who have the Android app installed can receive one. -->
+      <div class="card" id="clientPushCard" style="margin-top:22px; display:none;">
+        <div class="ts-header" style="margin-bottom:10px;">
+          <h3 class="mono" style="font-size:11px; color:var(--text-2); text-transform:uppercase; letter-spacing:1px; margin:0;">Send app notification</h3>
+        </div>
+        <div style="font-size:12px; color:var(--text-dim); margin-bottom:14px; line-height:1.5;">
+          A promotion or an update, pushed to clients who have the Android app installed. It also lands in their
+          in-app notification centre. Clients who have not installed the app are counted below but receive nothing.
+        </div>
+        <div class="filter-row">
+          <div style="min-width:220px; flex:1;">
+            <label for="clientPushAudience">Who gets it</label>
+            <select id="clientPushAudience">
+              <option value="all">All active clients</option>
+              <option value="full_service">Full-service clients</option>
+              <option value="skiptrace">Skip-trace clients</option>
+              <option value="selected">Pick clients…</option>
+            </select>
+          </div>
+          <div style="min-width:260px; flex:2;">
+            <label for="clientPushTitle">Title</label>
+            <input type="text" id="clientPushTitle" maxlength="80" placeholder="e.g. 20% off skip tracing this week">
+          </div>
+        </div>
+        <div id="clientPushPickWrap" style="display:none; margin-top:10px;">
+          <label>Clients</label>
+          <div id="clientPushPickList" class="perm-side-list" style="max-height:190px; overflow:auto;"></div>
+        </div>
+        <div style="margin-top:10px;">
+          <label for="clientPushBody">Message</label>
+          <textarea id="clientPushBody" rows="3" maxlength="400" placeholder="What you want them to know. Keep it short — phones cut long text off."></textarea>
+        </div>
+        <div style="margin-top:10px;">
+          <label for="clientPushUrl">Link (optional)</label>
+          <input type="text" id="clientPushUrl" maxlength="500" placeholder="https://…">
+          <div style="font-size:11px; color:var(--text-dim); margin-top:4px;">Opens when the client taps the notification. Leave it blank to open the app itself.</div>
+        </div>
+        <div class="btn-row" style="margin-top:14px; align-items:center;">
+          <button class="btn-secondary edit-only" id="clientPushPreviewBtn" style="width:auto; padding:9px 18px;">Check who gets it</button>
+          <button class="btn-primary edit-only" id="clientPushSendBtn" style="width:auto; padding:9px 18px; margin-top:0;">Send notification</button>
+          <span id="clientPushMsg" style="font-size:12px; color:var(--text-2);"></span>
+        </div>
+        <div style="margin-top:18px;">
+          <h4 class="mono" style="font-size:10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:1px; margin:0 0 8px;">Recently sent</h4>
+          <div id="clientPushHistory" style="font-size:12px; color:var(--text-dim);">—</div>
+        </div>
+      </div>
+
     </div>
   </div>
 
@@ -43477,6 +43528,7 @@ async function invokeManageClient(payload){
 }
 
 async function loadUmClientsList(){
+  clientPushInit();   // v782: the send-a-notification card lives under this table
   const tbody = $('umClientsTbody');
   // NOTE (User Management deep-scan pass): client_accounts/client_campaign_
   // access are both single-digit-row-count tables today, nowhere near
@@ -43545,6 +43597,139 @@ async function loadUmClientsList(){
     </tr>`).join('');
   applyUmSectionEditGating('clients');
 }
+// ---------------------------------------------------------------------------
+// v782: "Send app notification" -- a promotion or update pushed to the client
+// app. The Edge Function re-checks this same permission, so this is only about
+// not showing staff a form they cannot use.
+// ---------------------------------------------------------------------------
+let clientPushSelected = new Set();
+
+function clientPushCanSend(){ return canEditUmSection('clients'); }
+
+async function clientPushCall(payload){
+  const { data, error } = await sb.functions.invoke('client-push-broadcast', { body: payload });
+  if(error || !data || data.ok === false){
+    throw new Error((data && data.error) || (error && error.message) || 'Something went wrong.');
+  }
+  return data;
+}
+
+function clientPushRenderPickList(clients){
+  const box = $('clientPushPickList');
+  if(!box) return;
+  box.innerHTML = (clients || []).map(c => `
+    <label class="perm-side-item" style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+      <input type="checkbox" class="perm-cb client-push-pick" value="${c.id}" ${clientPushSelected.has(c.id) ? 'checked' : ''} style="width:auto;">
+      <span class="perm-side-item-main">
+        <span class="perm-side-item-name">${escapeHtml(c.name)}</span>
+        <span class="perm-side-item-sub">${c.hasApp ? 'has the app' : 'no app yet'}</span>
+      </span>
+    </label>`).join('') || '<div class="perm-side-empty">No active clients.</div>';
+  box.querySelectorAll('.client-push-pick').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if(cb.checked) clientPushSelected.add(cb.value); else clientPushSelected.delete(cb.value);
+    });
+  });
+}
+
+async function clientPushPreview(showMessage){
+  const msg = $('clientPushMsg');
+  const audience = $('clientPushAudience').value;
+  try {
+    const data = await clientPushCall({
+      action: 'preview',
+      audience,
+      clientIds: [...clientPushSelected],
+    });
+    if(audience === 'selected' || !$('clientPushPickList').innerHTML.trim()) clientPushRenderPickList(data.clients);
+    if(showMessage){
+      msg.style.color = 'var(--text-2)';
+      msg.textContent = `${data.clientsTargeted} client${data.clientsTargeted === 1 ? '' : 's'} match — ${data.clientsWithApp} ${data.clientsWithApp === 1 ? 'has' : 'have'} the app installed.`;
+    }
+    return data;
+  } catch(e){
+    if(showMessage){ msg.style.color = 'var(--danger)'; msg.textContent = e.message; }
+    return null;
+  }
+}
+
+async function clientPushLoadHistory(){
+  const box = $('clientPushHistory');
+  if(!box) return;
+  try {
+    const data = await clientPushCall({ action: 'history', limit: 10 });
+    const rows = data.broadcasts || [];
+    if(!rows.length){ box.textContent = 'Nothing sent yet.'; return; }
+    box.innerHTML = rows.map(b => `
+      <div style="padding:8px 0; border-top:1px solid var(--border);">
+        <div style="color:var(--text); font-weight:600;">${escapeHtml(b.title)}</div>
+        <div style="margin-top:2px;">${escapeHtml(b.body)}</div>
+        <div class="mono" style="margin-top:4px; font-size:11px;">
+          ${new Date(b.created_at).toLocaleString()} · ${escapeHtml(b.sent_by_name || 'staff')} ·
+          ${b.clients_reached} of ${b.clients_targeted} clients · ${b.devices_sent} phone${b.devices_sent === 1 ? '' : 's'}
+        </div>
+      </div>`).join('');
+  } catch(e){
+    box.textContent = e.message;
+  }
+}
+
+function clientPushInit(){
+  const card = $('clientPushCard');
+  if(!card) return;
+  card.style.display = clientPushCanSend() ? '' : 'none';
+  if(!clientPushCanSend() || card.dataset.wired === '1') return;
+  card.dataset.wired = '1';
+
+  $('clientPushAudience').addEventListener('change', () => {
+    const picking = $('clientPushAudience').value === 'selected';
+    $('clientPushPickWrap').style.display = picking ? '' : 'none';
+    if(picking) clientPushPreview(false);
+  });
+  $('clientPushPreviewBtn').addEventListener('click', () => clientPushPreview(true));
+  $('clientPushSendBtn').addEventListener('click', async () => {
+    const msg = $('clientPushMsg');
+    const btn = $('clientPushSendBtn');
+    const title = $('clientPushTitle').value.trim();
+    const body = $('clientPushBody').value.trim();
+    const url = $('clientPushUrl').value.trim();
+    if(!title || !body){
+      msg.style.color = 'var(--danger)';
+      msg.textContent = 'A title and a message are both needed.';
+      return;
+    }
+    const preview = await clientPushPreview(false);
+    if(!preview) return;
+    // A push cannot be unsent -- say exactly how many phones it is going to.
+    if(!confirm(`Send "${title}" to ${preview.clientsWithApp} client${preview.clientsWithApp === 1 ? '' : 's'} with the app installed?\n\nThis reaches their phones straight away and cannot be undone.`)) return;
+    btn.disabled = true;
+    msg.style.color = 'var(--text-2)';
+    msg.textContent = 'Sending…';
+    try {
+      const data = await clientPushCall({
+        action: 'send',
+        audience: $('clientPushAudience').value,
+        clientIds: [...clientPushSelected],
+        title, body, url: url || undefined,
+      });
+      msg.style.color = 'var(--good, var(--focus))';
+      msg.textContent = data.warning
+        ? `Sent to ${data.devicesSent} phone(s). ${data.warning}`
+        : `Sent to ${data.devicesSent} phone${data.devicesSent === 1 ? '' : 's'} across ${data.clientsReached} client${data.clientsReached === 1 ? '' : 's'}.`;
+      $('clientPushTitle').value = '';
+      $('clientPushBody').value = '';
+      $('clientPushUrl').value = '';
+      clientPushLoadHistory();
+    } catch(e){
+      msg.style.color = 'var(--danger)';
+      msg.textContent = e.message;
+    }
+    btn.disabled = false;
+  });
+
+  clientPushLoadHistory();
+}
+
 if($('umClientsTbody')) $('umClientsTbody').addEventListener('focusout', async (e) => {
   const el = e.target.closest('.client-phone-cell');
   if(!el) return;
