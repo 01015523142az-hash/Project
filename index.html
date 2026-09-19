@@ -18447,6 +18447,28 @@ async function voiceHandleRejoinRequest(msg){
 const VOICE_RING_MS = 45000;
 const VOICE_OFFER_RETRY_MS = 4000;
 const voiceRangCallIds = new Set();
+// v790: the other side's decline or hang-up is a one-off message and can be
+// missed (a phone that just woke, a blinked connection) -- the call kept
+// "Calling..." / ringing until the 45 s timeout. The call row is the backup:
+// while this call rings, check it every 3 s and stop once the other side has
+// declined or given up.
+function voiceWatchRingingRow(state){
+  if(!state || !state.callRowId) return;
+  clearInterval(state.rowWatch);
+  state.rowWatch = setInterval(async () => {
+    if(voiceCallState !== state || state.status !== 'ringing'){ clearInterval(state.rowWatch); return; }
+    const { data } = await sb.from('voice_calls').select('status').eq('id', state.callRowId).maybeSingle();
+    if(voiceCallState !== state || state.status !== 'ringing' || !data) return;
+    const s = data.status;
+    if(state.role === 'caller'){
+      if(s === 'declined'){ clearInterval(state.rowWatch); endVoiceCall('declined', false); }
+      else if(s === 'missed' || s === 'ended' || s === 'failed'){ clearInterval(state.rowWatch); endVoiceCall(null, false); }
+    } else if(s && s !== 'ringing'){
+      clearInterval(state.rowWatch); endVoiceCall(null, false);
+    }
+  }, 3000);
+}
+
 function voiceRepeatOffer(channel, payload){
   const state = voiceCallState;
   if(!state || !payload.callRowId) return;
@@ -18454,6 +18476,7 @@ function voiceRepeatOffer(channel, payload){
     if(voiceCallState !== state || state.status !== 'ringing'){ clearInterval(state.offerRetry); return; }
     voiceSend(channel, payload);
   }, VOICE_OFFER_RETRY_MS);
+  voiceWatchRingingRow(state);   // v790
 }
 
 async function handleVoiceSignal(msg){
@@ -18491,6 +18514,7 @@ async function handleVoiceSignal(msg){
     requestAnimationFrame(voiceSetCallStackOffsets); // v634
     voiceStartRingtone('incoming');
     voiceIncomingAlertStart(msg.fromName || 'Someone', msg.callRowId);   // v709
+    voiceWatchRingingRow(voiceCallState);   // v790: the caller hung up / gave up
   } else if(msg.type === 'answer'){
     if(!voiceCallState || voiceCallState.role !== 'caller' || !voiceCallState.pc) return;
     clearTimeout(voiceCallState.ringTimeout);
@@ -19248,6 +19272,7 @@ function endVoiceCall(finalStatus, notifyPeer){
   const state = voiceCallState;
   clearTimeout(state.ringTimeout);
   clearInterval(state.offerRetry);   // v700
+  clearInterval(state.rowWatch);   // v790
   clearInterval(state.durationInterval);
   clearInterval(state.saveTimer);   // v707
   voiceClearReconnect(state);
