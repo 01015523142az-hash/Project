@@ -18517,6 +18517,9 @@ async function handleVoiceSignal(msg){
     voiceWatchRingingRow(voiceCallState);   // v790: the caller hung up / gave up
   } else if(msg.type === 'answer'){
     if(!voiceCallState || voiceCallState.role !== 'caller' || !voiceCallState.pc) return;
+    // v791: a client can have the app AND the web portal open -- only the
+    // first device to answer gets the call; a second answer is ignored.
+    if(voiceCallState.status === 'answered' || voiceCallState.remoteDescSet) return;
     clearTimeout(voiceCallState.ringTimeout);
     voiceStopRingtone();
     await voiceCallState.pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
@@ -18609,6 +18612,9 @@ async function handleVoiceSignal(msg){
       voiceRosterSetStatus(msg.from, 'declined');
       voiceRemoveExtraPeer(msg.from);
     } else if(voiceCallState && voiceCallState.role === 'caller'){
+      // v791: another of the client's devices declining after one answered
+      // must not end the live call.
+      if(voiceCallState.status === 'answered') return;
       voiceRosterSetStatus(msg.from, 'declined');
       endVoiceCall('declined', false);
     }
@@ -18622,6 +18628,7 @@ async function handleVoiceSignal(msg){
       voiceRosterSetStatus(msg.from, 'declined');
       voiceRemoveExtraPeer(msg.from);
     } else if(voiceCallState && voiceCallState.role === 'caller'){
+      if(voiceCallState.status === 'answered') return;   // v791: another device of theirs
       const name = voiceCallState.peerName;
       voiceRosterSetStatus(msg.from, 'declined');
       endVoiceCall('missed', false);
