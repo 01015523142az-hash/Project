@@ -15182,7 +15182,16 @@ async function pollGmailReplyNotifications(){
   let res;
   try{ res = await callGmailApi({ action: 'list_messages', folder: 'inbox' }); }
   catch{ return; }
-  if(!res.ok) return;
+  if(!res.ok){
+    // v807: with no shared inbox connected this failed every minute, all day
+    // (194 errors in gmail-api's logs from one open tab). Stop asking for the
+    // rest of this session; the next sign-in or page load checks once again.
+    if(/no gmail inbox is connected/i.test(res.error || '') && gmailNotifyPollTimer){
+      clearInterval(gmailNotifyPollTimer);
+      gmailNotifyPollTimer = 'stopped';   // truthy, so the sign-in path does not restart it this session
+    }
+    return;
+  }
   const messages = res.messages || [];
   const badge = $('actGmailInboxUnreadBadge');
   if(badge) badge.style.display = messages.some(m => m.unread) ? '' : 'none';
