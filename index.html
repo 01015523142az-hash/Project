@@ -5,6 +5,150 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PropTech AI Staff Portal</title>
 <link rel="icon" type="image/png" href="data:image/png;base64,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">
+<meta http-equiv="Content-Security-Policy" content="object-src 'none'; base-uri 'self'">
+<!-- v802: the two directives a <meta> CSP can carry that cannot plausibly break a
+     single-page app. frame-ancestors is IGNORED in a meta tag by spec, which is why
+     the clickjacking guard below is JavaScript; the full header set arrives when the
+     sites sit behind a CDN that can send real headers. -->
+<script>
+/* v802 -- crash reporting + clickjacking guard.
+   IDENTICAL in index.html, portal/index.html and dialer/index.html except the
+   two constants below; keep them in sync the way the notification-centre block
+   already is. Database half: supabase/v801-error-log-foundation.sql.
+
+   Deliberately the FIRST script in the page and dependent on nothing. Its
+   whole job is to be alive before the thing that breaks -- v748c was a const
+   read above its own declaration, init() threw, its catch swallowed it, and
+   every load fell through to the login screen for ten minutes. Nothing would
+   have reported that but a handler installed before it.
+
+   It does NOT create its own Supabase client. The staff portal and the dialer
+   keep their session in sessionStorage with flowType implicit, the client
+   portal uses the localStorage default, and a second client racing the first
+   on token refresh would be a worse bug than the one this exists to catch.
+   The app hands its own client over via __opsAttach(sb) right after
+   createClient. Until that happens -- and while nobody is signed in -- errors
+   are BUFFERED rather than dropped, because a crash during boot is exactly
+   the case worth catching. */
+(function () {
+  'use strict';
+
+  var PORTAL = 'staff';
+  var VERSION = 'v802';
+
+  /* ---- clickjacking guard ----------------------------------------------
+     GitHub Pages cannot send X-Frame-Options, and a <meta> CSP is required
+     by spec to IGNORE frame-ancestors, so this is the only protection
+     available until the sites sit behind something that can set real
+     headers. Navigating the top frame is blocked from a cross-origin child
+     without user activation, so the fallback has to be visible rather than
+     silent -- a blank page with no explanation reads as "the portal is
+     broken" and generates a support call. */
+  try {
+    if (window.top !== window.self) {
+      try {
+        window.top.location = window.self.location.href;
+      } catch (navErr) {
+        document.addEventListener('DOMContentLoaded', function () {
+          document.body.innerHTML =
+            '<div style="font:15px/1.6 -apple-system,Segoe UI,Roboto,Arial,sans-serif;'
+            + 'padding:40px;max-width:460px;margin:0 auto;text-align:center;">'
+            + '<p><strong>This page cannot be shown inside another site.</strong></p>'
+            + '<p><a href="' + encodeURI(window.self.location.href) + '" target="_blank" rel="noopener">'
+            + 'Open the portal directly</a></p></div>';
+        });
+      }
+    }
+  } catch (frameErr) { /* nothing safe to do; never block the page on this */ }
+
+  /* ---- crash reporting -------------------------------------------------- */
+  var sb = null;
+  var buffer = [];
+  var seen = {};
+  var reported = 0;
+
+  /* Caps, because a render loop that throws on every frame must not become a
+     write loop against the database. Ten distinct errors per page load is far
+     more than anyone needs to diagnose a problem, and a repeat of the same
+     error tells you nothing the first one did not. */
+  var MAX_PER_LOAD = 10;
+  var MAX_BUFFER = 20;
+
+  function record(row) {
+    try {
+      if (reported >= MAX_PER_LOAD || buffer.length >= MAX_BUFFER) return;
+      var key = (row.message || '') + '|' + (row.source || '') + '|' + (row.line_no || '');
+      if (seen[key]) return;
+      seen[key] = 1;
+      reported++;
+      row.portal = PORTAL;
+      row.app_version = VERSION;
+      row.page = String(window.location.hash || window.location.pathname || '').slice(0, 200) || null;
+      row.user_agent = String(navigator.userAgent || '').slice(0, 400);
+      buffer.push(row);
+      flush();
+    } catch (e) { /* the reporter must never be the thing that breaks */ }
+  }
+
+  function clip(v, n) {
+    if (v === null || v === undefined) return null;
+    return String(v).slice(0, n);
+  }
+
+  window.addEventListener('error', function (e) {
+    /* A failed <img>/<script> load also fires this, on the element rather
+       than the window, and carries no message -- not a crash, and not worth
+       a row. */
+    if (!e || !e.message) return;
+    record({
+      message: clip(e.message, 2000),
+      source: clip(e.filename, 500),
+      line_no: e.lineno || null,
+      col_no: e.colno || null,
+      stack: e.error && e.error.stack ? clip(e.error.stack, 4000) : null
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function (e) {
+    var r = e ? e.reason : null;
+    record({
+      message: clip('Unhandled promise rejection: ' + (r && r.message ? r.message : r), 2000),
+      stack: r && r.stack ? clip(r.stack, 4000) : null
+    });
+  });
+
+  function flush() {
+    if (!buffer.length || !sb) return;
+    var client = sb;
+    var auth = client && client.auth;
+    if (!auth || typeof auth.getSession !== 'function') return;
+    auth.getSession().then(function (res) {
+      var session = res && res.data ? res.data.session : null;
+      var uid = session && session.user ? session.user.id : null;
+      /* Signed out: keep buffering. The insert policy pins reporter_id to
+         auth.uid(), so a row with no session would be refused anyway. */
+      if (!uid || !buffer.length) return;
+      var rows = buffer.splice(0, buffer.length);
+      for (var i = 0; i < rows.length; i++) rows[i].reporter_id = uid;
+      /* No retry on failure, deliberately: putting a rejected row back is how
+         a reporting bug turns into an infinite write loop. */
+      client.from('ops_error_log').insert(rows).then(function () {}, function () {});
+    }, function () { /* getSession can reject while a refresh is in flight */ });
+  }
+
+  /* Retry after sign-in, and after a session that was still loading settles. */
+  setInterval(flush, 15000);
+
+  window.__opsAttach = function (client) { sb = client; flush(); };
+  window.__opsReport = function (message, extra) {
+    record({
+      message: clip(message, 2000),
+      stack: extra && extra.stack ? clip(extra.stack, 4000) : null,
+      source: extra && extra.source ? clip(extra.source, 500) : null
+    });
+  };
+})();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <!-- v676: jsPDF, autotable and SheetJS (~1.3 MB together) are no longer
      parsed on every page load; ensureJsPdf() / ensureXlsx() below fetch
@@ -9617,6 +9761,9 @@ try{
 }catch(e){
   console.error('Supabase client failed to initialize — check that the CDN script tag loaded.', e);
 }
+/* v802: hand the app's own client to the crash reporter, which has been
+   buffering since before this script ran. */
+try { if (window.__opsAttach) window.__opsAttach(sb); } catch (e) {}
 let config = { supabaseUrl: SUPABASE_URL, anonKey: SUPABASE_ANON_KEY };
 
 // ---------- light / dark theme ----------
