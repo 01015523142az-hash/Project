@@ -692,6 +692,11 @@
      Review iSpeedToLead) mirrors .um-subtab-btn exactly; own class per the
      rest of this file's convention so the two never collide even though
      they look identical today. */
+  /* v805: 50-per-page pager under the Leads queue tables */
+  .leads-pager{ display:none; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .leads-pager .btn-secondary{ width:auto; padding:6px 12px; font-size:11px; margin:0; }
+  .leads-pager .btn-secondary:disabled{ opacity:.45; cursor:default; }
+  .leads-pager-label{ font-size:11px; color:var(--text-2); padding:0 6px; }
   .leads-subtab-btn{ background:transparent; border:none; color:var(--text-dim); font-family:var(--mono); font-size:11px; text-transform:uppercase; letter-spacing:0.5px; padding:8px 14px; cursor:pointer; border-radius:6px; }
   .leads-subtab-btn.active{ color:var(--text); background:var(--card-hover); }
   .leads-subtab-btn:hover:not(.active){ color:var(--text-2); }
@@ -4392,6 +4397,7 @@
           <tbody id="leadsBody"></tbody>
         </table>
         </div>
+        <div class="leads-pager" id="leadsQueuePager"></div>
       </div>
     </div>
 
@@ -4603,6 +4609,7 @@
             <tbody id="leadsIspdBody"></tbody>
           </table>
           </div>
+          <div class="leads-pager" id="leadsIspdPager"></div>
         </div>
       </div>
 
@@ -35742,7 +35749,24 @@ async function loadLeadsNow(){
   // v568: manual_delivery_at carries a staff "this is closed, never send"
   // decision — see ispdManuallyDelivered().
   // v715: started at the top of this function (fetchAllLeadsRows).
-  const { rows, error: leadsFetchError } = await pLeads;
+  let { rows, error: leadsFetchError } = await pLeads;
+  // v805: a failed reload (Maya, 2026-09-21: statement timeout right after a
+  // PrimeHome send) used to replace the whole list with the empty result, so
+  // the queue read "zero leads" until a manual refresh. Try once more; if it
+  // still fails and a list is already on screen, keep that list and say so.
+  if(leadsFetchError){
+    console.error('Failed to load leads (retrying once):', leadsFetchError);
+    ({ rows, error: leadsFetchError } = await fetchAllLeadsRows(start, end));
+  }
+  if(leadsFetchError && leadsLoadedOnce){
+    console.error('Failed to load leads:', leadsFetchError);
+    const keepBanner = $('leadsFetchErrorBanner');
+    if(keepBanner){
+      keepBanner.style.display = 'block';
+      keepBanner.textContent = `Couldn't reload leads just now (${leadsFetchError.message || 'unknown error'}) — still showing the last list. Press Refresh to try again.`;
+    }
+    return;
+  }
   if(leadsFetchError) console.error('Failed to load leads:', leadsFetchError);
   const leadsErrorBanner = $('leadsFetchErrorBanner');
   if(leadsErrorBanner){
@@ -36428,6 +36452,49 @@ function debounce(fn, ms){
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
+// v805 (the owner: "make the display of queue 50 records per page to
+// minimize the loading"): Leads Queue Review and PrimeHome Buyers draw one
+// page of 50 rows instead of every lead in range. The page is kept across
+// live updates and reloads (a send must not throw the reviewer back to page
+// 1), clamped if the list got shorter, and reset to page 1 when that
+// table's filters change. Stat cards and CSV export still count everything.
+const LEADS_QUEUE_PAGE_SIZE = 50;
+const leadsPagerState = {};   // key -> { page, sig }
+function leadsPageRows(key, rows, filters, pagerId){
+  const st = leadsPagerState[key] || (leadsPagerState[key] = { page: 1, sig: null });
+  const sig = JSON.stringify(filters || {});
+  if(st.sig !== null && st.sig !== sig) st.page = 1;
+  st.sig = sig;
+  const pages = Math.max(1, Math.ceil(rows.length / LEADS_QUEUE_PAGE_SIZE));
+  if(st.page > pages) st.page = pages;
+  if(st.page < 1) st.page = 1;
+  const from = (st.page - 1) * LEADS_QUEUE_PAGE_SIZE;
+  const slice = rows.slice(from, from + LEADS_QUEUE_PAGE_SIZE);
+  const el = $(pagerId);
+  if(el){
+    if(rows.length <= LEADS_QUEUE_PAGE_SIZE){
+      el.innerHTML = '';
+      el.style.display = 'none';
+    } else {
+      el.style.display = 'flex';
+      el.innerHTML = `
+        <button type="button" class="btn-secondary" data-pg="first" ${st.page === 1 ? 'disabled' : ''}>&laquo; First</button>
+        <button type="button" class="btn-secondary" data-pg="prev" ${st.page === 1 ? 'disabled' : ''}>&lsaquo; Prev</button>
+        <span class="mono leads-pager-label">Page ${st.page} of ${pages} &middot; ${from + 1}&ndash;${from + slice.length} of ${rows.length}</span>
+        <button type="button" class="btn-secondary" data-pg="next" ${st.page === pages ? 'disabled' : ''}>Next &rsaquo;</button>
+        <button type="button" class="btn-secondary" data-pg="last" ${st.page === pages ? 'disabled' : ''}>Last &raquo;</button>`;
+      el.querySelectorAll('button[data-pg]').forEach(b => b.addEventListener('click', () => {
+        const go = b.dataset.pg;
+        st.page = go === 'first' ? 1 : go === 'prev' ? st.page - 1 : go === 'next' ? st.page + 1 : pages;
+        if(key === 'ispd') renderIspdReviewTable(); else renderLeadsQueueTable();
+        const table = el.parentElement && el.parentElement.querySelector('table');
+        if(table) table.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      }));
+    }
+  }
+  return slice;
+}
+
 // v81: the Leads Queue Review table's own mini-dashboard + render, now
 // callable standalone (reads leadsFullData/leadsQueueFilters instead of
 // taking params) so the Seller Name/Phone/Campaign Name/Status filters
@@ -36481,10 +36548,11 @@ function renderLeadsQueueTable(){
   body.innerHTML = '';
   if(filtered.length === 0){
     body.innerHTML = `<tr><td colspan="12" class="empty">${leadsFullData.length === 0 ? 'No leads submitted in this range.' : 'No leads match these filters.'}</td></tr>`;
+    leadsPageRows('queue', [], leadsQueueFilters, 'leadsQueuePager');
     applyLeadsSectionEditGating('queue_review');
     return;
   }
-  filtered.forEach(r => {
+  leadsPageRows('queue', filtered, leadsQueueFilters, 'leadsQueuePager').forEach(r => {   // v805: 50 per page
     const submittedLabel = new Date(r.submitted_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) });
     const meta = LEAD_STATUS_META[r.status] || LEAD_STATUS_META.pending;
     const sellerInvestor = r.seller_investor_name || '—';
@@ -36719,11 +36787,12 @@ function renderIspdReviewTable(){
   body.innerHTML = '';
   if(!filtered.length){
     body.innerHTML = `<tr><td colspan="11" class="empty">${leadsFullData.length === 0 ? 'No leads submitted in this range.' : 'No leads match these filters.'}</td></tr>`;
+    leadsPageRows('ispd', [], leadsIspdFilters, 'leadsIspdPager');
     applyLeadsSectionEditGating('queue_review_ispeedtolead');
     updateLeadsIspdBulkToolbar();
     return;
   }
-  filtered.forEach(r => {
+  leadsPageRows('ispd', filtered, leadsIspdFilters, 'leadsIspdPager').forEach(r => {   // v805: 50 per page
     const submittedLabel = new Date(r.submitted_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) });
     const meta = LEAD_STATUS_META[r.status] || LEAD_STATUS_META.pending;
     const sellerInvestor = r.seller_investor_name || '—';
