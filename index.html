@@ -4463,6 +4463,7 @@
           </thead>
           <tbody id="leadsTicketsBody"></tbody>
         </table>
+        <div class="leads-pager" id="leadsTicketsPager"></div>
       </div>
     </div>
 
@@ -36453,7 +36454,8 @@ function debounce(fn, ms){
 }
 
 // v805 (the owner: "make the display of queue 50 records per page to
-// minimize the loading"): Leads Queue Review and PrimeHome Buyers draw one
+// minimize the loading"): Leads Queue Review and PrimeHome Buyers (v806:
+// and Tickets Review) draw one
 // page of 50 rows instead of every lead in range. The page is kept across
 // live updates and reloads (a send must not throw the reviewer back to page
 // 1), clamped if the list got shorter, and reset to page 1 when that
@@ -36486,7 +36488,7 @@ function leadsPageRows(key, rows, filters, pagerId){
       el.querySelectorAll('button[data-pg]').forEach(b => b.addEventListener('click', () => {
         const go = b.dataset.pg;
         st.page = go === 'first' ? 1 : go === 'prev' ? st.page - 1 : go === 'next' ? st.page + 1 : pages;
-        if(key === 'ispd') renderIspdReviewTable(); else renderLeadsQueueTable();
+        if(key === 'ispd') renderIspdReviewTable(); else if(key === 'tickets') renderTicketsReviewTable(); else renderLeadsQueueTable();
         const table = el.parentElement && el.parentElement.querySelector('table');
         if(table) table.scrollIntoView({ block: 'start', behavior: 'smooth' });
       }));
@@ -37128,10 +37130,11 @@ function renderTicketsReviewTable(){
   body.innerHTML = '';
   if(!filtered.length){
     body.innerHTML = `<tr><td colspan="8" class="empty">${leadsFullData.some(r => r.ticket_stage) ? 'No tickets match these filters.' : 'No tickets submitted in this range yet.'}</td></tr>`;
+    leadsPageRows('tickets', [], leadsTicketsFilters, 'leadsTicketsPager');
     applyLeadsSectionEditGating('tickets_review');
     return;
   }
-  filtered.forEach(r => {
+  leadsPageRows('tickets', filtered, leadsTicketsFilters, 'leadsTicketsPager').forEach(r => {   // v806: 50 per page
     const submittedLabel = new Date(r.submitted_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(leadsTzFor(r.user_id) ? { timeZone: leadsTzFor(r.user_id) } : {}) });
     const meta = LEAD_STATUS_META[r.status] || LEAD_STATUS_META.pending;
     const stageMeta = TICKET_STAGE_META[r.ticket_stage] || { label: r.ticket_stage, color: 'var(--text-dim)' };
