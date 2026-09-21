@@ -3940,16 +3940,20 @@ function timezoneForNumber(e164) {
 // file carries. Anything it cannot rule out is left alone -- a number that
 // is merely dead still looks perfectly well-formed, and that one is caught
 // on the first dial instead (see dialer-telnyx-webhook, unallocated_number).
+const FAKE_555 = 'fake 555 number';
 function numberProblem(e164) {
   const d = String(e164 || '').replace(/\D/g, '');
   if (d.length !== 11 || d[0] !== '1') return 'not a US number';
-  const npa = d.slice(1, 4), nxx = d.slice(4, 7), line = d.slice(7);
+  const npa = d.slice(1, 4), nxx = d.slice(4, 7);
   if (npa[0] < '2') return 'impossible area code';
   if (npa[1] === '1' && npa[2] === '1') return 'service code, not a phone number';
   if (NPA_NOT_DIALABLE.has(Number(npa))) return 'toll-free or premium-rate';
   if (nxx[0] < '2') return 'impossible exchange';
   if (nxx[1] === '1' && nxx[2] === '1') return 'service code, not a phone number';
-  if (nxx === '555' && line >= '0100' && line <= '0199') return 'reserved fictional number';
+  // v809: every 555 exchange, not just the reserved 555-0100..0199. A list
+  // uploaded 2026-09-21 had 46 made-up 555 numbers (555-0288, 555-3319...)
+  // and every call to them came back "destination number is invalid".
+  if (nxx === '555') return FAKE_555;
   if (/^(\d)\1{9}$/.test(d.slice(1))) return 'placeholder digits';
   return null;
 }
@@ -4149,7 +4153,7 @@ $('impBtn').onclick = async () => {
   // profile screen reads one shape whatever the file called the column.
   const optional = fieldDefs.filter((f) => !f.is_required && !f.column_name);
   const seen = new Set(); const contacts = []; let bad = 0;
-  let unusable = 0, noZone = 0;
+  let unusable = 0, noZone = 0, fake555 = 0;
   // Ph#2..Ph#10, keyed by the primary number so they can be turned into
   // dialer_contact_phones rows once the contacts have ids. Before v563
   // nothing created those rows and the alternates were mapped, stored and
@@ -4165,7 +4169,8 @@ $('impBtn').onclick = async () => {
     // Screened here rather than loaded and screened later: a service code
     // or a toll-free switchboard is knowable from the digits, and letting
     // one in costs a dial and a mark against the DID that placed it.
-    if (numberProblem(phone)) { unusable++; continue; }
+    const problem = numberProblem(phone);
+    if (problem) { if (problem === FAKE_555) fake555++; else unusable++; continue; }
 
     const first = at(row, 'first_name'), last = at(row, 'last_name');
     const extra = {};
@@ -4269,7 +4274,7 @@ $('impBtn').onclick = async () => {
   // the kind of contradiction that sends somebody hunting for a bug in the
   // importer. Say which half actually happened.
   const { error: listErr } = await sb.from('dialer_lists').update({
-    status: 'ready', loaded_rows: done, skipped_rows: bad + unusable,
+    status: 'ready', loaded_rows: done, skipped_rows: bad + unusable + fake555,
   }).eq('id', list.id);
   if (listErr) {
     $('impBtn').disabled = false;
@@ -4284,6 +4289,7 @@ $('impBtn').onclick = async () => {
     + bad + ' skipped (no usable phone, or a duplicate of a row already in this list)'
     + (unusable ? ', ' + unusable + ' skipped as undialable numbers (service codes, '
       + 'toll-free or placeholder digits)' : '')
+    + (fake555 ? ', ' + fake555 + ' skipped as fake 555 numbers (made-up numbers that never connect)' : '')
     + (noZone ? '. ' + noZone + ' have an area code this build does not know, so they have no '
       + 'time zone and cannot be dialled until a carrier check resolves them' : '') + '.', 'ok');
   $('impCsv').value = ''; $('impName').value = ''; $('impScrubbed').checked = false;
