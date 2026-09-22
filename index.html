@@ -306,6 +306,10 @@
   .login-link-row{ text-align:center; margin-top:14px; }
   .login-link{ font-family:var(--sans); font-size:12px; color:var(--text-2); cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
   .login-link:hover{ color:var(--text); }
+  /* v825: plain <a> links in these rows (Reset it by email, Back to sign in, the
+     two-step panel's Sign out) had no rule and showed as default blue on dark. */
+  .login-link-row a{ font-family:var(--sans); font-size:12px; color:var(--text-2); cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+  .login-link-row a:hover{ color:var(--text); }
   #forgotPasswordHint{ font-family:var(--sans); font-size:12px; color:var(--text-dim); }
   .login-footer{ display:flex; flex-direction:column; align-items:center; gap:4px; margin-top:16px; font-family:var(--mono); font-size:10px; color:var(--text-dim); text-align:center; }
   .login-footer a{ color:var(--text-dim); }
@@ -3302,7 +3306,22 @@
     <input id="password" type="password">
     <button class="btn-primary" id="loginBtn">Sign in</button>
     <div class="msg error" id="loginMsg"></div>
-    <div class="login-link-row" id="forgotPasswordHint">Forgot your password? Contact your admin.</div>
+    <div class="login-link-row" id="forgotPasswordHint">Forgot your password? <a href="#" id="forgotPwLink">Email me a temporary one</a></div>
+  </div>
+
+  <!-- v825 (owner decision W7): self-service reset. The staff-password-reset
+       function emails a temporary password from noreply@noreply.proptechnologyai.com;
+       signing in with it goes through the two-step code (if any) and then the
+       forced "choose a new password" screen, same as an admin-issued one.
+       Same reply whether or not the address is a staff account. -->
+  <div class="card" id="forgotPanel" style="display:none;">
+    <div style="font-weight:700; font-size:16px; margin-bottom:6px; color:var(--text);">Forgot your password?</div>
+    <div style="font-size:12.5px; color:var(--text-dim); margin-bottom:12px; line-height:1.55;">Enter the email you sign in with. We'll email you a temporary password; sign in with it and you'll choose your own straight away.</div>
+    <label for="forgotEmail">Email</label>
+    <input id="forgotEmail" type="email" autocomplete="email">
+    <button class="btn-primary" id="forgotSendBtn">Email me a temporary password</button>
+    <div class="msg" id="forgotMsg"></div>
+    <div class="login-link-row"><a href="#" id="forgotBackLink">Back to sign in</a></div>
   </div>
 
   <div class="card" id="recoveryPanel" style="display:none;">
@@ -10897,7 +10916,7 @@ if(SUPPORT_CONTACT){
 // such a link, the PASSWORD_RECOVERY listener below still needs somewhere
 // to route them.
 function showLoginPanel(panelId){
-  ['loginFormPanel', 'recoveryPanel', 'forcePasswordScreen', 'mfaPanel'].forEach(id => {
+  ['loginFormPanel', 'forgotPanel', 'recoveryPanel', 'forcePasswordScreen', 'mfaPanel'].forEach(id => {
     $(id).style.display = id === panelId ? 'block' : 'none';
   });
 }
@@ -11065,6 +11084,58 @@ $('mfaSignOutLink').addEventListener('click', (e) => { e.preventDefault(); perfo
 // fires this event with a temporary session already in place — from here,
 // updateUser({ password }) is all it takes to actually change it.
 let passwordRecoveryInProgress = false;
+
+// v825 (owner decision W7): "Forgot your password?" -> a temporary password by email.
+$('forgotPwLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  $('forgotEmail').value = $('email').value.trim();
+  $('forgotMsg').textContent = '';
+  $('forgotMsg').className = 'msg';
+  showLoginPanel('forgotPanel');
+  setTimeout(() => { try{ $('forgotEmail').focus(); }catch(_){} }, 0);
+});
+$('forgotBackLink').addEventListener('click', (e) => {
+  e.preventDefault();
+  $('email').value = $('forgotEmail').value.trim() || $('email').value;
+  showLoginPanel('loginFormPanel');
+  setTimeout(() => { try{ $('password').focus(); }catch(_){} }, 0);
+});
+$('forgotEmail').addEventListener('keydown', (e) => { if(e.key === 'Enter') $('forgotSendBtn').click(); });
+$('forgotSendBtn').addEventListener('click', async () => {
+  const msg = $('forgotMsg');
+  const email = $('forgotEmail').value.trim();
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
+    msg.textContent = 'Enter the email address you sign in with.';
+    msg.className = 'msg error';
+    return;
+  }
+  if(!sb){
+    msg.textContent = 'Could not connect. Check your internet connection and reload the page.';
+    msg.className = 'msg error';
+    return;
+  }
+  const btn = $('forgotSendBtn');
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try{
+    const { data, error } = await sb.functions.invoke('staff-password-reset', { body: { email } });
+    let reply = data;
+    if(error){
+      // A 4xx/429 carries the function's own message in the response body.
+      try{ reply = await error.context.json(); }catch(_){ reply = null; }
+      throw new Error((reply && reply.error) || error.message || 'Could not send the email.');
+    }
+    msg.textContent = (reply && reply.message) || 'If that email belongs to a staff account, a temporary password is on its way.';
+    msg.className = 'msg ok';
+  }catch(e){
+    msg.textContent = e.message || 'Could not send the email.';
+    msg.className = 'msg error';
+  }finally{
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+});
 if(sb) sb.auth.onAuthStateChange((event) => {
   if(event === 'PASSWORD_RECOVERY'){
     passwordRecoveryInProgress = true;
