@@ -49393,6 +49393,10 @@ setInterval(() => {
         const { data: { session: impSession } } = await sb.auth.getSession();
         if(impSession && impSession.user){
           staffImpersonating = true;
+          // v815 (W3): bind this session to the "Log in as" pass manage-user just
+          // recorded, so the database lets it through when the account has
+          // two-step on (a code this tab cannot enter). Harmless otherwise.
+          try{ await sb.rpc('claim_impersonation_grant'); }catch(e){}
           recordActivity();
           try{
             await establishSession(impSession.user, { isNewLogin: false });
