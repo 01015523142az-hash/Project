@@ -22381,6 +22381,49 @@ function umImpersonateCellHtml(p, isActive){
     + `style="width:auto; padding:5px 10px; font-size:11px; margin-top:0; white-space:nowrap;">Log in as user</button>`;
 }
 
+// v822: "Reset two-step" -- for someone who lost or replaced the phone with
+// their authenticator app. Same people and same rows as "Log in as user"
+// (umCanImpersonate), and only on accounts that actually have two-step set
+// up. The enforcement is server-side in staff_reset_two_step() (Owner/Admin
+// by role, your own two-step code entered, never yourself, an Admin never on
+// the Owner or another Admin), which also writes the Audit Log row -- so this
+// does not call logActivity() and double it.
+let umTwoStepUsers = new Set();
+async function loadUmTwoStepUsers(){
+  umTwoStepUsers = new Set();
+  if(!(myIsOwner || myRole === 'admin')) return;
+  const { data, error } = await sb.rpc('staff_two_step_users');
+  if(error){ console.warn('two-step list:', error.message); return; }
+  (data || []).forEach(r => umTwoStepUsers.add(typeof r === 'string' ? r : Object.values(r || {})[0]));
+}
+function umResetTwoStepBtnHtml(p){
+  if(!umCanImpersonate(p) || !umTwoStepUsers.has(p.id)) return '';
+  return `<button class="btn-secondary um-reset2fa-btn" data-user-id="${p.id}" `
+    + `data-user-name="${escapeHtml(p.full_name || p.email || 'this user')}" `
+    + `title="Lost or replaced phone: removes their authenticator app and signs them out, so they set up the new phone at their next sign-in" `
+    + `style="width:auto; padding:5px 10px; font-size:11px; margin-top:0; white-space:nowrap;">Reset two-step</button>`;
+}
+async function umResetTwoStep(btn){
+  const name = btn.dataset.userName || 'this user';
+  if(!confirm(`Reset two-step sign-in for ${name}?
+
+`
+    + `Use this when they lost or replaced the phone with their authenticator app. `
+    + `It removes the authenticator from their account and signs them out everywhere. `
+    + `At their next sign-in they set up two-step again with the new phone.`)) return;
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Resetting…';
+  const { data, error } = await sb.rpc('staff_reset_two_step', { p_user: btn.dataset.userId });
+  btn.disabled = false;
+  btn.textContent = original;
+  if(error){ alert(error.message || 'Could not reset two-step sign-in.'); return; }
+  alert(`Two-step sign-in reset for ${name}. `
+    + `${data && data.sessions_ended ? 'They were signed out and ' : ''}`
+    + `they will set up the new phone the next time they sign in.`);
+  await loadUmUsersList();
+}
+
 async function loadUmUsersList(){
   const tbody = $('umUsersTbody');
   if(!tbody) return;
@@ -22396,6 +22439,7 @@ async function loadUmUsersList(){
     fetchAllRows((from, to) => sb.from('tasks').select('id, name').order('id', { ascending: true }).range(from, to)),
     fetchAllRows((from, to) => sb.from('schedules').select('user_id, timezone').order('user_id', { ascending: true }).range(from, to)),
   ]);
+  await loadUmTwoStepUsers();   // v822
   const taskName = {}; (tasks||[]).forEach(t => { taskName[t.id] = t.name; });
   const byUser = {};
   (assignments||[]).forEach(a => { (byUser[a.user_id] = byUser[a.user_id] || []).push(taskName[a.task_id] || '—'); });
@@ -22442,7 +22486,7 @@ async function loadUmUsersList(){
       <td>${statusBadge}</td>
       <td class="mono">${version}</td>
       <td class="mono">${createdLabel}</td>
-      <td>${umImpersonateCellHtml(p, isActive)}</td>`;
+      <td><div style="display:flex; gap:6px; flex-wrap:wrap;">${umImpersonateCellHtml(p, isActive)}${umResetTwoStepBtnHtml(p)}</div></td>`;
     // Row click opens the shared profile editor, gated the same way as the
     // Dashboard/Roles click-through (Owner/Admin full, HR schedule-only, or a
     // custom role with explicit user-edit permission).
@@ -22468,6 +22512,8 @@ async function loadUmUsersList(){
     // also navigate the tab underneath it to somebody's profile.
     const impBtn = tr.querySelector('.um-impersonate-btn');
     if(impBtn) impBtn.addEventListener('click', (ev) => { ev.stopPropagation(); umImpersonate(impBtn); });
+    const resetBtn = tr.querySelector('.um-reset2fa-btn');   // v822
+    if(resetBtn) resetBtn.addEventListener('click', (ev) => { ev.stopPropagation(); umResetTwoStep(resetBtn); });
     tbody.appendChild(tr);
   });
   // Defensive: re-apply the same gating activateUmSection() already ran,
