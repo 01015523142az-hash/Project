@@ -3434,6 +3434,17 @@
         </table>
       </div>
     </div>
+    
+    <div class="card" style="margin-bottom:16px;">
+      <h3 class="mono" style="font-size:11px; color:var(--text-2); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">Database location test</h3>
+      <div style="font-size:11.5px; color:var(--text-dim); margin-bottom:10px;">Once a day each signed-in browser times a round trip to the database. <b>Today</b> is the real time to our database in Frankfurt; the US columns estimate the same trip if it were moved to Virginia or Ohio. Lower is faster. Medians of the last 14 days.</div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Where people are</th><th>Portal</th><th>People</th><th>Today (Frankfurt)</th><th>If in Virginia</th><th>If in Ohio</th></tr></thead>
+          <tbody id="opsLatencyBody"></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <div class="tab-panel" id="tab-activity">
@@ -5579,6 +5590,6 @@
   <video id="localCallVideo" autoplay playsinline muted></video>
 </div>
 
-<script src="app/staff.d162449a99.js"></script>
+<script src="app/staff.f8287b72b7.js"></script>
 </body>
 </html>
