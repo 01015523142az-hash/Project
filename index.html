@@ -3716,6 +3716,12 @@
          AK (from Finance) and Chat Logs (from User Management) moved in
          here as subtabs -- both are Owner-only now as a direct consequence
          of living under an unconditionally-Owner-only parent tab. -->
+    <!-- v823 (owner decision W5): Ops Health. Owner and Admin by ROLE only
+         (opsHealthCanView in applyRolePermissionsToNav) -- deliberately not in
+         the per-role tab picker, so it can never be granted to anyone else. -->
+    <div class="side-nav-group">
+      <button class="tab-btn" data-tab="ops_health" title="Ops Health" style="display:none;"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M2.5 10.5h3.5l2-4.5 3 8 2-5 1 1.5h3.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><rect x="2.5" y="3" width="15" height="14" rx="2.5" stroke="currentColor" stroke-width="1.3"/></svg><span>Ops Health</span></button>
+    </div>
     <div class="side-nav-group">
       <button class="tab-btn" data-tab="activity" title="Audit Log"><svg class="tab-icon" viewBox="0 0 20 20" fill="none"><path d="M5 2.5h10v15H5z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M7.5 6.5h5M7.5 9.5h5M7.5 12.5h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg><span>Audit Log</span></button>
       <div class="tab-nav side-subnav" id="auditSubNav">
@@ -7017,6 +7023,42 @@
             <button class="btn-primary" id="actGmailComposeSendBtn" style="width:auto; align-self:flex-end; padding:0 22px;">Send</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- v823 (W5): Ops Health -- is everything that runs on its own working?
+       Filled by loadOpsHealth() from one call, public.ops_health(). -->
+  <div class="tab-panel" id="tab-ops_health">
+    <div class="ts-header" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+      <h2 class="mono ts-title" style="margin-right:auto;">Ops Health</h2>
+      <span id="opsUpdated" style="font-size:11.5px; color:var(--text-dim);"></span>
+      <button class="btn-secondary" id="opsRefreshBtn" style="width:auto; margin-top:0; padding:6px 14px; font-size:12px;">Refresh</button>
+    </div>
+    <div id="opsSummary" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px; margin-bottom:16px;"></div>
+    <div class="card" style="margin-bottom:16px;">
+      <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+        <h3 class="mono" style="font-size:11px; color:var(--text-2); text-transform:uppercase; letter-spacing:1px; margin:0 auto 0 0;">Scheduled jobs</h3>
+        <label style="display:flex; align-items:center; gap:6px; font-size:12px; text-transform:none; margin:0; cursor:pointer;">
+          <input type="checkbox" id="opsShowOff" style="width:14px; height:14px; margin:0;"> Show switched-off jobs
+        </label>
+      </div>
+      <div style="font-size:11.5px; color:var(--text-dim); margin-bottom:10px;">Jobs the system runs on its own (reminders, follow-ups, syncs, clean-ups). <b>Failed</b> counts calls that got an error back in the last 24 hours. <b>Mark as seen</b> clears a job's failures from this screen once someone has looked; it does not re-run anything.</div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>Job</th><th>Status</th><th>Last run</th><th>Runs (24 h)</th><th>Failed (24 h)</th><th>How often</th><th>Latest problem</th><th></th></tr></thead>
+          <tbody id="opsJobsBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:16px;">
+      <h3 class="mono" style="font-size:11px; color:var(--text-2); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">Errors people hit in the portals</h3>
+      <div style="font-size:11.5px; color:var(--text-dim); margin-bottom:10px;">Crashes caught automatically in the staff portal, client portal and dialer while someone was signed in: the newest 50.</div>
+      <div style="overflow-x:auto;">
+        <table>
+          <thead><tr><th>When</th><th>Portal</th><th>Who</th><th>Error</th><th>Where</th></tr></thead>
+          <tbody id="opsErrorsBody"></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -11092,6 +11134,9 @@ function applyRolePermissionsToNav(){
     const visible = myIsOwner || myPermissions.allowedTabs.includes(key);
     btn.style.display = visible ? '' : 'none';
   });
+  // v823: Ops Health -- Owner and Admin by role, never grantable.
+  const _opsBtn = document.querySelector('.tab-btn[data-tab="ops_health"]');
+  if(_opsBtn) _opsBtn.style.display = opsHealthCanView() ? '' : 'none';
   // v701: the Client Inbox follows who may take client chats
   // (staff_can_handle_client_chat): owner/admin, Sales, or a role granted the
   // 'client_chat' key -- not the key alone, which admin rows may lack.
@@ -12458,6 +12503,7 @@ function activateTab(tabKey){
   if(tabKey === 'client_disputes') initClientDisputesTab();   // v717
   if(tabKey === 'client_submissions') initClientSubmissionsTab();
   if(tabKey === 'activity') initAuditLogTab();
+  if(tabKey === 'ops_health') loadOpsHealth();   // v823
   if(tabKey === 'usermanagement') initUserManagementTab();
   if(tabKey === 'finance') initFinanceTab();
   if(tabKey === 'hr') initHrTab();
@@ -14208,6 +14254,8 @@ function showDurableStaffNotification(row, silent){
       // conversation in the Client Inbox here -- not the portal again in a
       // new tab.
       if(row.kind === 'client_chat_queue' && row.ref_id && ciCanUseInbox()){ ciOpenFromElsewhere(row.ref_id); return; }
+      // v823: a scheduled-job alert opens Ops Health.
+      if(row.kind === 'ops_alert' && opsHealthCanView()){ activateTab('ops_health'); return; }
       // v711: a file import's one summary -- open the PrimeHome Buyers queue.
       if(row.kind === 'leads_import'){ activateTab('leads'); activateLeadsSection('queue_review_ispeedtolead'); return; }
       // v724: a call back handed to you by a team leader -- open Call Back.
@@ -29175,6 +29223,136 @@ function renderReportTable(title, columns, rows, perDay, monthVal){
 // DASHBOARD_TAB_KEYS), so anyone who can even open this tab-panel is
 // already Owner and can see every subtab under it.
 let auditActiveSection = 'log';
+// ---------- v823 (owner decision W5): Ops Health ----------
+// Owner and Admin by role. Everything comes from one server call,
+// public.ops_health(), which checks the role itself -- this function only
+// decides whether to show the tab.
+function opsHealthCanView(){ return !!(myIsOwner || myRole === 'admin'); }
+let opsHealthData = null;
+let opsHealthLoading = false;
+function opsTime(ts){
+  if(!ts) return '—';
+  const tz = (typeof globalDisplayTzMode === 'string' && globalDisplayTzMode && globalDisplayTzMode !== 'agent') ? globalDisplayTzMode : undefined;
+  try{ return new Date(ts).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', ...(tz ? { timeZone: tz } : {}) }); }
+  catch(e){ return new Date(ts).toLocaleString(); }
+}
+function opsAgo(ts){
+  if(!ts) return '';
+  const s = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 1000));
+  if(s < 90) return 'just now';
+  if(s < 5400) return Math.round(s / 60) + ' min ago';
+  if(s < 129600) return Math.round(s / 3600) + ' h ago';
+  return Math.round(s / 86400) + ' days ago';
+}
+// Plain words for pg_cron's five-field schedule; anything unusual falls back
+// to the raw text.
+function opsSchedule(expr){
+  const e = String(expr || '').trim();
+  let m;
+  if(e === '* * * * *') return 'every minute';
+  if((m = e.match(/^\*\/(\d+) \* \* \* \*$/))) return `every ${m[1]} min`;
+  if((m = e.match(/^(\d+) \* \* \* \*$/))) return `hourly (:${m[1].padStart(2, '0')})`;
+  if((m = e.match(/^(\d+) (\d+) \* \* \*$/))) return `daily ${m[2].padStart(2, '0')}:${m[1].padStart(2, '0')} UTC`;
+  if((m = e.match(/^(\d+) \*\/(\d+) \* \* \*$/))) return `every ${m[2]} h`;
+  return e;
+}
+function opsPlain(t){
+  // A function's JSON reply ({"ok":false,"error":"..."}) shows as its sentence;
+  // a gateway error page as its text.
+  let x = String(t || '');
+  try{ const j = JSON.parse(x); if(j && (j.error || j.message)) x = String(j.error || j.message); }catch(e){}
+  return x.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function opsJobState(j){
+  if(!j.active) return { label: 'Off', color: 'var(--text-dim)' };
+  if(j.open_failures > 0 || j.db_failures_24h > 0) return { label: 'Needs a look', color: 'var(--danger)' };
+  if(j.call_failures_24h > 0) return { label: 'Recovered', color: 'var(--away)' };
+  return { label: 'OK', color: 'var(--good)' };
+}
+function opsStat(label, value, color, note){
+  return `<div class="card" style="margin:0; padding:14px 16px;">
+    <div style="font-size:11px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.8px;">${escapeHtml(label)}</div>
+    <div class="mono" style="font-size:26px; font-weight:700; margin-top:4px; color:${color};">${escapeHtml(String(value))}</div>
+    ${note ? `<div style="font-size:11.5px; color:var(--text-dim); margin-top:2px;">${escapeHtml(note)}</div>` : ''}
+  </div>`;
+}
+function renderOpsHealth(){
+  const d = opsHealthData;
+  if(!d) return;
+  const jobs = d.jobs || [];
+  const active = jobs.filter(j => j.active);
+  const needs = active.filter(j => opsJobState(j).label === 'Needs a look');
+  const errors = d.errors || [];
+  const unlabelled = Number(d.unlabelled_open || 0);
+  $('opsUpdated').textContent = 'Updated ' + opsTime(d.generated_at);
+  $('opsSummary').innerHTML =
+      opsStat('Jobs needing a look', needs.length, needs.length ? 'var(--danger)' : 'var(--good)',
+        needs.length ? needs.slice(0, 3).map(j => j.job).join(', ') + (needs.length > 3 ? '…' : '') : 'Everything scheduled is working')
+    + opsStat('Jobs running', active.length, 'var(--text)', `${jobs.length - active.length} switched off`)
+    + opsStat('Portal errors (24 h)', Number(d.errors_24h || 0), Number(d.errors_24h || 0) ? 'var(--away)' : 'var(--good)',
+        errors.length ? 'Latest ' + opsAgo(errors[0].occurred_at) : 'None recorded')
+    + (unlabelled ? opsStat('Other failed calls', unlabelled, 'var(--away)', 'Not from a named scheduled job (older alerts, or a database trigger)')
+        .replace(/<\/div>\s*$/, `<button class="btn-secondary ops-seen-btn" data-job="unlabelled" style="width:auto; margin-top:8px; padding:5px 10px; font-size:11px;">Mark as seen</button></div>`) : '');
+
+  const showOff = $('opsShowOff').checked;
+  const rows = jobs.filter(j => showOff || j.active);
+  $('opsJobsBody').innerHTML = rows.length ? rows.map(j => {
+    const st = opsJobState(j);
+    const fail = (d.failures || []).find(f => f.job === j.job);
+    const problem = fail ? `${fail.status}: ${opsPlain(fail.detail)}`
+      : (j.last_status && j.last_status !== 'succeeded' ? `${j.last_status}: ${j.last_message || ''}` : '');
+    return `<tr>
+      <td class="mono" style="white-space:nowrap;">${escapeHtml(j.job)}</td>
+      <td style="white-space:nowrap;"><span style="color:${st.color}; font-weight:600;">&#9679; ${st.label}</span></td>
+      <td style="white-space:nowrap;" title="${escapeHtml(opsTime(j.last_start))}">${j.last_start ? escapeHtml(opsAgo(j.last_start)) : '—'}</td>
+      <td class="mono">${Number(j.runs_24h || 0)}</td>
+      <td class="mono" style="color:${j.call_failures_24h || j.db_failures_24h ? 'var(--danger)' : 'inherit'};">${Number(j.call_failures_24h || 0) + Number(j.db_failures_24h || 0)}${j.open_failures ? ` <span style="color:var(--text-dim); font-size:11px;">(${Number(j.open_failures)} open)</span>` : ''}</td>
+      <td style="white-space:nowrap; font-size:12px;" title="${escapeHtml(j.schedule)}">${escapeHtml(opsSchedule(j.schedule))}</td>
+      <td style="font-size:12px; max-width:420px; word-break:break-word;">${problem ? escapeHtml(problem.slice(0, 220)) + (fail ? ` <span style="color:var(--text-dim);">(${escapeHtml(opsAgo(fail.occurred_at))})</span>` : '') : '<span style="color:var(--text-dim);">—</span>'}</td>
+      <td>${j.open_failures ? `<button class="btn-secondary ops-seen-btn" data-job="${escapeHtml(j.job)}" style="width:auto; margin-top:0; padding:5px 10px; font-size:11px; white-space:nowrap;">Mark as seen</button>` : ''}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="8" style="color:var(--text-dim);">No scheduled jobs.</td></tr>';
+  document.querySelectorAll('#tab-ops_health .ops-seen-btn').forEach(b => b.addEventListener('click', () => opsMarkSeen(b)));
+
+  $('opsErrorsBody').innerHTML = errors.length ? errors.map(e => {
+    const where = [e.page, e.source ? `${e.source}${e.line ? ':' + e.line : ''}` : ''].filter(Boolean).join(' · ');
+    return `<tr>
+      <td style="white-space:nowrap;" title="${escapeHtml(opsTime(e.occurred_at))}">${escapeHtml(opsAgo(e.occurred_at))}</td>
+      <td>${escapeHtml(e.portal || '—')}${e.version ? ` <span style="color:var(--text-dim); font-size:11px;">${escapeHtml(e.version)}</span>` : ''}</td>
+      <td>${escapeHtml(e.who || '—')}</td>
+      <td style="font-size:12px; max-width:420px; word-break:break-word;">${escapeHtml(e.message || '')}</td>
+      <td style="font-size:11.5px; color:var(--text-dim); max-width:260px; word-break:break-all;">${escapeHtml(where || '—')}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="5" style="color:var(--text-dim);">No errors recorded. Nobody has hit a crash.</td></tr>';
+}
+async function loadOpsHealth(){
+  if(!opsHealthCanView() || opsHealthLoading) return;
+  opsHealthLoading = true;
+  const btn = $('opsRefreshBtn');
+  if(btn){ btn.disabled = true; btn.textContent = 'Loading…'; }
+  try{
+    const { data, error } = await sb.rpc('ops_health');
+    if(error) throw error;
+    opsHealthData = data || {};
+    renderOpsHealth();
+  }catch(e){
+    $('opsSummary').innerHTML = `<div class="msg error" style="grid-column:1/-1;">Could not load Ops Health: ${escapeHtml(e && e.message ? e.message : String(e))}</div>`;
+  }finally{
+    opsHealthLoading = false;
+    if(btn){ btn.disabled = false; btn.textContent = 'Refresh'; }
+  }
+}
+async function opsMarkSeen(btn){
+  const job = btn.dataset.job;
+  btn.disabled = true;
+  const { error } = await sb.rpc('ops_mark_job_seen', { p_job: job });
+  if(error){ btn.disabled = false; alert(error.message || 'Could not update.'); return; }
+  logActivity('ops.mark_seen', 'ops', null, `Marked the failures of scheduled job "${job}" as seen`);
+  await loadOpsHealth();
+}
+$('opsRefreshBtn').addEventListener('click', () => loadOpsHealth());
+$('opsShowOff').addEventListener('change', () => renderOpsHealth());
+
 function initAuditLogTab(){
   activateAuditSection(auditActiveSection || 'log');
 }
