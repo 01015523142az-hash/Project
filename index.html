@@ -12911,6 +12911,7 @@ async function initChatWidget(){
   initNotifCenter();
   handleCallbackHash();   // v702: a missed-call notification opened from the dialer
   initPushToggle();
+  callNotifyGateCheck();   // v811 (W4): agents and sales must have call notifications on
   initVoiceCallSignaling();
   setTimeout(() => voiceResumeSavedCall(), 1500);   // v707: a call this tab was on before a refresh
   initChatTypingSignaling();
@@ -14483,7 +14484,7 @@ function initPushToggle(){
     const sub = reg ? await reg.pushManager.getSubscription().catch(() => null) : null;
     // v700: remember a deliberate "off", so the automatic switch-on below
     // never overrides it.
-    if(sub){ try{ localStorage.setItem('pt.pushOff', '1'); }catch(e){} await pushUnsubscribe(); }
+    if(sub){ try{ localStorage.setItem('pt.pushOff', '1'); }catch(e){} await pushUnsubscribe(); callNotifyGateCheck(); }
     else { try{ localStorage.removeItem('pt.pushOff'); }catch(e){} await pushSubscribeIfNeeded(); }
   });
   updatePushToggleBtn();
@@ -14494,6 +14495,10 @@ function initPushToggle(){
   // been asked is asked ONCE, at the next click (browsers only allow the
   // question after a click). "Block" is respected, and so is turning it off.
   if(!pushSupported() || !('Notification' in window)) return;
+  // v811: while "Log in as" is active this browser belongs to the person
+  // testing, not the account shown -- registering it would send that
+  // account's calls to the tester's machine.
+  if(staffImpersonating) return;
   let off = false, asked = false;
   try{ off = localStorage.getItem('pt.pushOff') === '1'; asked = localStorage.getItem('pt.pushAsked') === '1'; }catch(e){}
   if(off) return;
@@ -14505,6 +14510,151 @@ function initPushToggle(){
     pushSubscribeIfNeeded();
   };
   ['pointerup', 'keydown'].forEach(ev => document.addEventListener(ev, ask, true));
+}
+
+// v811 (owner decision W4, 2026-09-21): anyone whose role TAKES CALLS must
+// have call notifications switched on before they can use the portal.
+//
+// Why a hard gate and not another prompt: v700 made push re-register itself
+// and ask once, and two weeks later four active staff still had no push
+// subscription at all -- including two of the three agents. For them a call
+// rang only while a portal tab happened to be open, which is exactly how the
+// v700/v709 missed calls happened. A question that can be dismissed for ever
+// gets dismissed for ever.
+//
+// Only agents and sales, by the owner's rule: for a recruiter a call
+// notification is noise. The list is a Set so adding a role is one word.
+//
+// What it will NOT do:
+//   * trap anyone -- Sign out is always on the card;
+//   * run while "Log in as" is active -- otherwise the OWNER's browser would
+//     be registered as that agent's call device, and the agent's calls would
+//     ring on the owner's machine (initPushToggle got the same guard);
+//   * sit above a ringing call -- it is z-index 9980, under the call banner
+//     (10000), so a call that arrives while it is up can still be answered;
+//   * lock out a browser that CANNOT do push (iPhone Safari, some embedded
+//     browsers). There is nothing the person could click to comply, so that
+//     one case says so and lets them continue.
+const CALL_NOTIFY_REQUIRED_ROLES = new Set(['agent', 'sales']);
+let callNotifyGateBusy = false;
+let callNotifyPermWatch = false;
+let callNotifySkippedUnsupported = false;
+
+// "Allowed" is not enough: the device also has to be registered, and the
+// registration has to have reached push_subscriptions, or a call still has
+// nowhere to go. That second half is what the v700 path could silently miss.
+async function callNotifyHasSubscription(){
+  try{
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if(!sub) return false;
+    const { data, error } = await sb.from('push_subscriptions')
+      .select('endpoint').eq('user_id', myUserId).eq('endpoint', sub.endpoint).maybeSingle();
+    return !error && !!data;
+  }catch(e){ return false; }
+}
+
+async function callNotifyGateCheck(){
+  if(callNotifyGateBusy) return;
+  if(staffImpersonating || !myUserId || !CALL_NOTIFY_REQUIRED_ROLES.has(myRole)){
+    callNotifyGateHide();
+    return;
+  }
+  callNotifyGateBusy = true;
+  try{
+    if(!callNotifyPermWatch && navigator.permissions && navigator.permissions.query){
+      callNotifyPermWatch = true;
+      // Unblocking from the padlock menu fires this in Chrome and Edge, so
+      // the card clears without anyone having to find a button.
+      navigator.permissions.query({ name: 'notifications' })
+        .then(s => { s.onchange = () => callNotifyGateCheck(); })
+        .catch(() => {});
+    }
+    const supported = pushSupported() && ('Notification' in window);
+    if(!supported){
+      if(callNotifySkippedUnsupported) callNotifyGateHide();
+      else callNotifyGateShow('unsupported');
+      return;
+    }
+    if(Notification.permission === 'granted'){
+      // The rule outranks a personal "off" from the bell button for these roles.
+      try{ localStorage.removeItem('pt.pushOff'); }catch(e){}
+      if(!(await callNotifyHasSubscription())) await pushSubscribeIfNeeded();   // already granted: no prompt
+      if(await callNotifyHasSubscription()){ callNotifyGateHide(); return; }
+      callNotifyGateShow('failed');
+      return;
+    }
+    callNotifyGateShow(Notification.permission === 'denied' ? 'denied' : 'default');
+  }finally{
+    callNotifyGateBusy = false;
+  }
+}
+
+function callNotifyGateHide(){
+  const el = $('callNotifyGate');
+  if(el) el.remove();
+}
+
+function callNotifyGateShow(state){
+  let el = $('callNotifyGate');
+  if(!el){
+    el = document.createElement('div');
+    el.id = 'callNotifyGate';
+    el.setAttribute('role', 'dialog');
+    el.setAttribute('aria-modal', 'true');
+    el.setAttribute('aria-labelledby', 'callNotifyGateTitle');
+    el.style.cssText = 'position:fixed; inset:0; z-index:9980; display:flex; align-items:center; justify-content:center;'
+      + ' padding:20px; background:rgba(10,12,16,.72); backdrop-filter:blur(4px); -webkit-backdrop-filter:blur(4px);';
+    document.body.appendChild(el);
+  }
+  const p = 'margin:0 0 12px; font-size:14px; line-height:1.55; color:var(--text-2);';
+  const primary = 'width:100%; margin-top:6px;';
+  const copy = {
+    default:
+      `<p style="${p}">Your role takes calls. Without notifications, a call only rings while this tab is open and in front of you &mdash; and it is missed otherwise.</p>`
+      + `<p style="${p}">Click below, then choose <strong>Allow</strong> when your browser asks.</p>`
+      + `<button type="button" class="btn-primary" id="callNotifyAllowBtn" style="${primary}">Allow notifications</button>`,
+    denied:
+      `<p style="${p}">Your browser is <strong>blocking</strong> notifications for this site, so calls cannot reach you when the tab is closed.</p>`
+      + `<ol style="${p} padding-left:20px;">`
+      + `<li>Click the <strong>padlock</strong> (or the settings icon) at the left of the address bar.</li>`
+      + `<li>Set <strong>Notifications</strong> to <strong>Allow</strong>.</li>`
+      + `<li>Click the button below.</li></ol>`
+      + `<button type="button" class="btn-primary" id="callNotifyReloadBtn" style="${primary}">I&rsquo;ve allowed it &mdash; reload</button>`,
+    failed:
+      `<p style="${p}">Notifications are allowed, but this device did not finish registering for calls.</p>`
+      + `<p style="${p}">Try again. If it keeps failing, tell your admin which browser you are using.</p>`
+      + `<button type="button" class="btn-primary" id="callNotifyRetryBtn" style="${primary}">Try again</button>`,
+    unsupported:
+      `<p style="${p}">This browser cannot receive call notifications &mdash; common on an iPhone or inside another app.</p>`
+      + `<p style="${p}">To take calls, use <strong>Chrome</strong> or <strong>Edge</strong> on a computer.</p>`
+      + `<button type="button" class="btn-primary" id="callNotifyContinueBtn" style="${primary}">Continue without call notifications</button>`,
+  }[state] || '';
+  el.innerHTML =
+    `<div style="max-width:440px; width:100%; background:var(--card); border:1px solid var(--border); border-radius:16px;`
+    + ` padding:26px 24px 18px; color:var(--text); font-family:var(--sans); box-shadow:0 20px 60px rgba(0,0,0,.35);">`
+    + `<div aria-hidden="true" style="font-size:30px; line-height:1; margin-bottom:12px;">&#128276;</div>`
+    + `<h2 id="callNotifyGateTitle" style="margin:0 0 12px; font-size:19px; font-weight:700; color:var(--text);">Turn on call notifications</h2>`
+    + copy
+    + `<div style="margin-top:18px; padding-top:12px; border-top:1px solid var(--border); display:flex; justify-content:space-between; align-items:center; gap:10px;">`
+    + `<span style="font-size:12px; color:var(--text-dim);">Required for everyone who takes calls.</span>`
+    + `<button type="button" id="callNotifySignOutBtn" style="background:none; border:none; color:var(--text-2); font-size:12.5px; text-decoration:underline; cursor:pointer; padding:0; width:auto; margin:0;">Sign out</button>`
+    + `</div></div>`;
+
+  const allow = $('callNotifyAllowBtn');
+  // requestPermission has to run inside the click, so it is the first thing
+  // pushSubscribeIfNeeded awaits -- nothing async may come before it here.
+  if(allow) allow.addEventListener('click', async () => { await pushSubscribeIfNeeded(); callNotifyGateCheck(); });
+  const reload = $('callNotifyReloadBtn');
+  if(reload) reload.addEventListener('click', () => location.reload());
+  const retry = $('callNotifyRetryBtn');
+  if(retry) retry.addEventListener('click', () => callNotifyGateCheck());
+  const cont = $('callNotifyContinueBtn');
+  if(cont) cont.addEventListener('click', () => { callNotifySkippedUnsupported = true; callNotifyGateHide(); });
+  $('callNotifySignOutBtn').addEventListener('click', () => performSignOut());
+
+  const first = allow || reload || retry || cont;
+  if(first) setTimeout(() => { try{ first.focus(); }catch(e){} }, 0);
 }
 
 // Fire-and-forget: sends a push to each of the given user ids, but ONLY
