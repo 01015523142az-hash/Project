@@ -3332,6 +3332,29 @@
     <div class="msg" id="forcePasswordMsg"></div>
   </div>
 
+  <!-- v812 (owner decision W3): two-step sign-in. Shown instead of the app,
+       right after the password step, by establishSession() -- the same
+       intercept the forced password change uses, and deliberately BEFORE it,
+       so a stolen password cannot be used to set a new one without the code.
+       Two modes: set-up (QR code + key, for a role that requires it and has
+       no authenticator yet) and sign-in (code only, for anyone with one). -->
+  <div class="card" id="mfaPanel" style="display:none;">
+    <div id="mfaTitle" style="font-weight:700; font-size:16px; margin-bottom:6px; color:var(--text);"></div>
+    <div id="mfaIntro" style="font-size:12.5px; color:var(--text-dim); margin-bottom:12px; line-height:1.55;"></div>
+    <div id="mfaEnrollBox" style="display:none; text-align:center; margin-bottom:12px;">
+      <img id="mfaQr" alt="QR code to scan with your authenticator app" style="width:184px; height:184px; background:#fff; border-radius:8px; padding:8px; box-sizing:border-box;">
+      <div style="font-size:11.5px; color:var(--text-dim); margin-top:8px;">Can&rsquo;t scan it? Type this key into the app instead:</div>
+      <code id="mfaSecret" style="display:inline-block; margin-top:4px; font-family:var(--mono); font-size:12px; letter-spacing:.08em; word-break:break-all; user-select:all; color:var(--text);"></code>
+    </div>
+    <label for="mfaCode">6-digit code from your authenticator app</label>
+    <input id="mfaCode" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]*">
+    <button class="btn-primary" id="mfaVerifyBtn">Verify</button>
+    <div class="msg" id="mfaMsg"></div>
+    <div class="login-link-row" id="mfaHelp" style="line-height:1.5;"></div>
+    <div class="login-link-row"><a href="#" id="mfaSignOutLink">Sign out</a></div>
+  </div>
+
+
   <div class="login-footer">
     <span id="loginVersionLine"></span>
     <span id="loginSupportLine" style="display:none;">Trouble signing in? Contact <a href="#" id="loginSupportLink"></a></span>
@@ -10527,6 +10550,11 @@ async function handOverSessionToExtension(){
 
 async function establishSession(user, { isNewLogin = true } = {}){
   const { data: profile } = await sb.from('profiles').select('role, full_name, avatar_url, chat_status, chat_status_manual, status_text, status_emoji, status_until, must_change_password, password_changed_at, department, title, grade').eq('id', user.id).single();
+  // v812 (W3): the second sign-in step comes first -- before the forced
+  // password change below, so a stolen password cannot set a new one
+  // without the code. Returns true while the code panel is showing; its
+  // Verify button calls establishSession() again once the code is right.
+  if(await mfaSignInStep(user, profile?.role || '', { isNewLogin })) return;
   // v319: forced password rotation -- intercepted here, before any role/
   // permission loading or app reveal, on every call to establishSession(),
   // whether from a fresh sign-in or the boot script resuming an existing
@@ -10827,10 +10855,168 @@ if(SUPPORT_CONTACT){
 // such a link, the PASSWORD_RECOVERY listener below still needs somewhere
 // to route them.
 function showLoginPanel(panelId){
-  ['loginFormPanel', 'recoveryPanel', 'forcePasswordScreen'].forEach(id => {
+  ['loginFormPanel', 'recoveryPanel', 'forcePasswordScreen', 'mfaPanel'].forEach(id => {
     $(id).style.display = id === panelId ? 'block' : 'none';
   });
 }
+
+// v812 (owner decision W3, 2026-09-21): two-step sign-in (authenticator app,
+// TOTP) for the roles in app_settings.mfa_required_roles, and for anyone who
+// has set one up whatever their role.
+//
+// WHO: read from app_settings rather than hardcoded, so the rollout can be
+// widened -- or switched off in an emergency -- with one SQL update and no
+// deploy. It ships as ["owner"]: the Owner sets it up first and confirms the
+// flow works before admins and sales are added.
+//
+// WHAT THIS DOES NOT DO YET: stop a password-only session at the DATABASE.
+// These screens stop someone signing in to the portal with a stolen password;
+// they do not stop the same password being used against the API directly.
+// That is a restrictive RLS rule (aal2 for anyone with a verified factor),
+// and it comes next, together with the dialer's own sign-in -- which has to
+// ask for the code before sales can be added to the list, or the dialer
+// would be a way round it.
+//
+// Skipped while "Log in as" is active: that session is minted by
+// manage-user for the target account, and the person testing does not hold
+// the target's phone.
+//
+// Fails OPEN on an unexpected API error (logged to ops_error_log), not on a
+// wrong code: while this is UI-only, failing closed would turn an outage at
+// the auth service into everyone being locked out, for no security gain.
+let mfaPendingUser = null;
+let mfaPendingOpts = null;
+let mfaFactorId = null;
+let mfaMode = null;
+// Set for one pass after a code is accepted. If Supabase accepted the code
+// but the session still reads aal1, asking again would loop for ever and
+// lock the person out of the portal; instead let them through once and
+// report it, because that would be a fault on our side, not theirs.
+let mfaJustVerified = false;
+
+async function mfaRequiredRoles(){
+  try{
+    const { data } = await sb.from('app_settings').select('value').eq('key', 'mfa_required_roles').maybeSingle();
+    const v = data && data.value ? JSON.parse(data.value) : [];
+    return Array.isArray(v) ? v : [];
+  }catch(e){ return []; }
+}
+
+// Returns true when the two-step panel is showing and sign-in must stop there.
+async function mfaSignInStep(user, roleName, opts){
+  if(staffImpersonating) return false;
+  if(!sb || !sb.auth || !sb.auth.mfa || typeof sb.auth.mfa.getAuthenticatorAssuranceLevel !== 'function') return false;
+  try{
+    const { data: aal, error } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+    if(error) throw error;
+    if(aal.currentLevel === 'aal2'){ mfaJustVerified = false; return false; }
+    if(mfaJustVerified){
+      mfaJustVerified = false;
+      try{ if(window.__opsReport) window.__opsReport('two-step sign-in: code accepted but session still ' + aal.currentLevel); }catch(_){}
+      return false;
+    }
+    mfaPendingUser = user;
+    mfaPendingOpts = opts;
+    if(aal.nextLevel === 'aal2'){ await mfaShowChallenge(); return true; }
+    const required = await mfaRequiredRoles();
+    if(required.includes(roleName)){ await mfaShowEnroll(); return true; }
+    return false;
+  }catch(e){
+    try{ if(window.__opsReport) window.__opsReport('two-step sign-in could not start: ' + (e && e.message ? e.message : e)); }catch(_){}
+    return false;
+  }
+}
+
+function mfaOpenPanel(){
+  $('mfaCode').value = '';
+  $('mfaMsg').textContent = '';
+  $('mfaMsg').className = 'msg';
+  showLoginPanel('mfaPanel');
+  $('loginScreen').style.display = 'block';
+  setTimeout(() => { try{ $('mfaCode').focus(); }catch(e){} }, 0);
+}
+
+async function mfaShowChallenge(){
+  const { data, error } = await sb.auth.mfa.listFactors();
+  if(error) throw error;
+  const f = ((data && data.totp) || [])[0];
+  if(!f) throw new Error('no verified authenticator on this account');
+  mfaFactorId = f.id;
+  mfaMode = 'challenge';
+  $('mfaTitle').textContent = 'Enter your sign-in code';
+  $('mfaIntro').textContent = 'Open your authenticator app and type the 6-digit code it shows for PropTech AI.';
+  $('mfaEnrollBox').style.display = 'none';
+  $('mfaHelp').textContent = 'Lost the phone with your authenticator? Ask the Owner or an admin to reset your two-step sign-in.';
+  mfaOpenPanel();
+}
+
+async function mfaShowEnroll(){
+  // An abandoned set-up leaves an unverified factor behind; clear those first
+  // so they do not pile up against the per-account limit. Best effort.
+  try{
+    const { data } = await sb.auth.mfa.listFactors();
+    for(const f of ((data && data.all) || [])){
+      if(f.status !== 'verified') await sb.auth.mfa.unenroll({ factorId: f.id }).catch(() => {});
+    }
+  }catch(e){}
+  // A dated name, so a retry never collides with the one just abandoned.
+  const { data, error } = await sb.auth.mfa.enroll({
+    factorType: 'totp',
+    issuer: 'PropTech AI',
+    friendlyName: 'PropTech AI ' + new Date().toISOString().slice(0, 16).replace('T', ' '),
+  });
+  if(error) throw error;
+  mfaFactorId = data.id;
+  mfaMode = 'enroll';
+  $('mfaTitle').textContent = 'Set up two-step sign-in';
+  $('mfaIntro').innerHTML = 'Your account now needs a second step when you sign in. Install '
+    + '<strong>Google Authenticator</strong> or <strong>Microsoft Authenticator</strong> on your phone, '
+    + 'scan this code with it, then type the 6-digit code the app shows.';
+  $('mfaQr').src = data.totp.qr_code;
+  $('mfaSecret').textContent = data.totp.secret;
+  $('mfaEnrollBox').style.display = 'block';
+  $('mfaHelp').textContent = 'You only do this once. After that, signing in asks for the code the app shows at that moment.';
+  mfaOpenPanel();
+}
+
+$('mfaVerifyBtn').addEventListener('click', async () => {
+  const msg = $('mfaMsg');
+  const code = $('mfaCode').value.replace(/\D/g, '');
+  if(code.length !== 6){
+    msg.textContent = 'Type the 6-digit code from your authenticator app.';
+    msg.className = 'msg error';
+    return;
+  }
+  const btn = $('mfaVerifyBtn');
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  try{
+    const { error } = await sb.auth.mfa.challengeAndVerify({ factorId: mfaFactorId, code });
+    if(error){
+      msg.textContent = /invalid|expired|verif/i.test(error.message || '')
+        ? 'That code didn’t match. Codes change every 30 seconds — type the one showing now.'
+        : (error.message || 'Could not check the code.');
+      msg.className = 'msg error';
+      return;
+    }
+    msg.textContent = mfaMode === 'enroll' ? 'Two-step sign-in is on.' : 'Verified.';
+    msg.className = 'msg';
+    const u = mfaPendingUser;
+    const o = mfaPendingOpts || { isNewLogin: true };
+    mfaPendingUser = null;
+    mfaJustVerified = true;
+    await establishSession(u, o);
+  }catch(e){
+    msg.textContent = e && e.message ? e.message : 'Could not check the code.';
+    msg.className = 'msg error';
+  }finally{
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+});
+$('mfaCode').addEventListener('keydown', (e) => { if(e.key === 'Enter') $('mfaVerifyBtn').click(); });
+$('mfaSignOutLink').addEventListener('click', (e) => { e.preventDefault(); performSignOut(); });
 
 // ---------- password recovery landing (after clicking the emailed link) ----------
 // Supabase's client detects the recovery token in the URL on page load and
