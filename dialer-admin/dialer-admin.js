@@ -3642,7 +3642,7 @@ async function loadLists() {
       .select('id, name, status, dial_mode, calling_window_start, calling_window_end')
       .neq('status', 'archived').order('name'),
     sb.from('dialer_lists')
-      .select('id, name, campaign_id, status, source_type, loaded_rows, readymode_scrubbed_at, is_active, deactivated_at')
+      .select('id, name, campaign_id, status, source_type, loaded_rows, readymode_scrubbed_at, is_active, deactivated_at, deactivated_reason')
       .order('created_at', { ascending: false }).limit(500),
     sb.rpc('dialer_list_progress'),
     sb.from('dialer_campaign_agents').select('campaign_id, is_active'),
@@ -3687,7 +3687,21 @@ function lsCampTotals(campId) {
   });
   return t;
 }
+// v844: a DNC scrub is good for 31 days; the hourly dialer-expire-scrubs job
+// switches an expired list off (deactivated_reason 'scrub_expired') and the
+// database refuses to switch it back on until a new scrub is recorded.
+const LS_SCRUB_DAYS = 31;
+function lsScrubInfo(l) {
+  if (!l.readymode_scrubbed_at || l.source_type === 'manual') return null;
+  const expires = new Date(Date.parse(l.readymode_scrubbed_at) + LS_SCRUB_DAYS * 86400000);
+  const daysLeft = Math.ceil((expires.getTime() - Date.now()) / 86400000);
+  return { expires, daysLeft, expired: daysLeft <= 0 || l.deactivated_reason === 'scrub_expired' };
+}
 function lsStatus(l, camp) {
+  const sc = lsScrubInfo(l);
+  if (sc?.expired && l.status !== 'archived') {
+    return { tone: 'warn', text: 'Scrub expired' };
+  }
   if (l.is_active === false) return { tone: 'off', text: 'Switched off', sub: `on ${listDateMdy(l.deactivated_at)}` };
   if (l.source_type === 'manual') return { tone: 'off', text: 'Contacts only' };
   if (l.status === 'pending_scrub') return { tone: 'warn', text: 'Needs DNC scrub' };
@@ -3766,6 +3780,14 @@ function renderLists() {
         + (canManage ? ` · <button class="ls-link" data-lsfix="${esc(l.id)}">Fix</button>` : ''));
     }
     if (bad) notes.push(`${n(bad)} bad number${bad === 1 ? '' : 's'} removed`);
+    const sc = lsScrubInfo(l);
+    if (sc?.expired) {
+      notes.push('DNC scrub expired: re-scrub in ReadyMode'
+        + (canManage ? `, then <button class="ls-link" data-lscrub="${esc(l.id)}">Record new scrub</button>` : ''));
+    } else if (sc && sc.daysLeft <= 7) {
+      notes.push(`DNC scrub expires ${esc(listDateMdy(sc.expires.toISOString()))} (in ${sc.daysLeft} day${sc.daysLeft === 1 ? '' : 's'})`
+        + (canManage ? ` · <button class="ls-link" data-lscrub="${esc(l.id)}">Record new scrub</button>` : ''));
+    }
     const items = [];
     if (canManage) {
       if (!lsIsHandList(l)) items.push(`<button data-lren="${esc(l.id)}">Rename…</button>`);
@@ -3776,8 +3798,11 @@ function renderLists() {
       if (!lsIsHandList(l) && total >= 2) items.push(`<button data-lsp="${esc(l.id)}">Split into parts…</button>`);
       items.push(`<button data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button>`);
       if (!noTz) items.push(`<button data-val="${esc(l.id)}">Carrier check</button>`);
-      items.push(`<button data-lact="${esc(l.id)}" data-lname="${esc(l.name)}" data-on="${l.is_active === false ? '1' : '0'}">`
-        + `${l.is_active === false ? 'Reactivate' : 'Deactivate'}</button>`);
+      if (!sc?.expired) {
+        items.push(`<button data-lact="${esc(l.id)}" data-lname="${esc(l.name)}" data-on="${l.is_active === false ? '1' : '0'}">`
+          + `${l.is_active === false ? 'Reactivate' : 'Deactivate'}</button>`);
+      }
+      if (!lsIsHandList(l)) items.push(`<button data-lscrub="${esc(l.id)}">Record new scrub…</button>`);
     }
     items.push(`<button data-lsdl="${esc(l.id)}" data-lsname="${esc(l.name)}">Download</button>`);
     if (canManage && !lsIsHandList(l)) {
@@ -3830,6 +3855,9 @@ function renderLists() {
   });
   rows.querySelectorAll('button[data-lmg]').forEach((b) => {
     b.onclick = () => { closeMenus(); openListMerge(b.dataset.lmg); };
+  });
+  rows.querySelectorAll('button[data-lscrub]').forEach((b) => {
+    b.onclick = () => { closeMenus(); recordNewScrub(b.dataset.lscrub); };
   });
   rows.querySelectorAll('button[data-lren]').forEach((b) => {
     b.onclick = () => { closeMenus(); renameList(b.dataset.lren); };
@@ -4028,6 +4056,28 @@ $('lspGo').onclick = async () => {
   say($('valMsg'), `Split "${oldName}" into ${n} lists: ${(data?.names || []).join(', ')}.`, 'ok');
   loadLists();
 };
+
+// v844. Records a new ReadyMode scrub for a list (dialer_record_scrub): the
+// date must be within the last 31 days and not in the future; a list that
+// expiry switched off comes back on.
+async function recordNewScrub(id) {
+  const l = lsData.lists.find((x) => x.id === id);
+  if (!l) return;
+  const today = new Date().toLocaleDateString('en-CA');
+  const typed = prompt(`When was "${l.name}" scrubbed against Do-Not-Call in ReadyMode?\n\nDate (YYYY-MM-DD):`, today);
+  if (typed === null) return;
+  const d = String(typed).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || isNaN(Date.parse(d + 'T12:00:00Z'))) {
+    alert('Enter the date as YYYY-MM-DD, for example ' + today + '.');
+    return;
+  }
+  if (!confirm(`I confirm "${l.name}" was scrubbed against Do-Not-Call in ReadyMode on ${d}.`)) return;
+  const { data, error } = await sb.rpc('dialer_record_scrub', { p_list: id, p_scrubbed_at: d + 'T12:00:00Z' });
+  if (error) { alert(error.message); return; }
+  say($('valMsg'), `Scrub recorded for "${l.name}". Good until ${listDateMdy(data?.expires_at)}`
+    + (data?.switched_back_on ? '; the list is dialing again.' : '.'), 'ok');
+  loadLists();
+}
 
 async function setListDeleted(id, del, btn) {
   const l = lsData.lists.find((x) => x.id === id);
@@ -4614,6 +4664,33 @@ $('impMapClear').onclick = () => {
   renderMapping();
 };
 
+// v844: ask what to do with incoming rows already in the campaign.
+// Resolves 'skip' | 'all' | 'cancel'.
+function askImportDuplicates(dupIdx, total) {
+  return new Promise((resolve) => {
+    const box = $('impDupBox');
+    const byList = {};
+    let byAddr = 0;
+    dupIdx.forEach((d) => {
+      byList[d.list_name] = (byList[d.list_name] || 0) + 1;
+      if (d.matched_by === 'address') byAddr++;
+    });
+    const where = Object.entries(byList).sort((a, b) => b[1] - a[1])
+      .map(([ln, k]) => `${esc(ln)} (${k.toLocaleString()})`).join(', ');
+    const n = dupIdx.size;
+    box.innerHTML = `<b>${n.toLocaleString()} of ${total.toLocaleString()} ${n === 1 ? 'person is' : 'people are'} already in this campaign</b>`
+      + ` &mdash; in ${where}. Matched by property address${byAddr < n ? ` (${(n - byAddr).toLocaleString()} with no address, by phone)` : ''}.`
+      + '<div class="btn-row" style="margin-top:10px">'
+      + '<button class="primary sm" data-dup="skip">Skip them (recommended)</button>'
+      + '<button class="sm" data-dup="all">Import them too</button>'
+      + '<button class="sm" data-dup="cancel">Cancel</button></div>';
+    show(box, true);
+    box.querySelectorAll('button[data-dup]').forEach((b) => {
+      b.onclick = () => { show(box, false); box.innerHTML = ''; resolve(b.dataset.dup); };
+    });
+  });
+}
+
 $('impBtn').onclick = async () => {
   const campaignId = $('impCampaign').value;
   const name = $('impName').value.trim();
@@ -4624,6 +4701,15 @@ $('impBtn').onclick = async () => {
   if (!$('impScrubbed').checked || !$('impScrubDate').value) {
     say($('impMsg'), 'Confirm the DNC scrub and its date - an unscrubbed list cannot be dialled.', 'err');
     return;
+  }
+  // v844: a scrub is good for 31 days; an older one would load switched off.
+  {
+    const sd = Date.parse($('impScrubDate').value + 'T12:00:00Z');
+    if (sd > Date.now() + 86400000) { say($('impMsg'), 'The scrub date cannot be in the future.', 'err'); return; }
+    if (sd < Date.now() - 31 * 86400000) {
+      say($('impMsg'), 'That scrub is more than 31 days old. Scrub the list again in ReadyMode, then import it.', 'err');
+      return;
+    }
   }
 
   const rows = parseCsv(csv);
@@ -4649,13 +4735,6 @@ $('impBtn').onclick = async () => {
   say($('impMsg'), 'Importing...', 'ok');
 
   const scrubbedAt = new Date($('impScrubDate').value + 'T12:00:00Z').toISOString();
-  const { data: list, error: lErr } = await sb.from('dialer_lists').insert({
-    campaign_id: campaignId, name, source_type: 'csv_upload', status: 'loading',
-    readymode_scrubbed_at: scrubbedAt,
-    readymode_scrub_note: 'Manual import - scrub attested by admin in dialer admin screen',
-    total_rows: rows.length - 1,
-  }).select('id').single();
-  if (lErr) { say($('impMsg'), lErr.message, 'err'); $('impBtn').disabled = false; return; }
 
   // Optional fields go to contact_fields under their canonical key, so the
   // profile screen reads one shape whatever the file called the column.
@@ -4710,7 +4789,7 @@ $('impBtn').onclick = async () => {
     if (alts.length) altsFor.set(phone, alts);
 
     contacts.push({
-      list_id: list.id, campaign_id: campaignId, phone_e164: phone,
+      list_id: null, campaign_id: campaignId, phone_e164: phone,
       first_name: first || null, last_name: last || null,
       contact_name: [first, last].filter(Boolean).join(' ') || null,
       address: at(row, 'address') || null,
@@ -4723,6 +4802,44 @@ $('impBtn').onclick = async () => {
       status: 'new', source_row: src, contact_fields: extra,
     });
   }
+
+  // v844: people already in this campaign. Identity is the property ADDRESS
+  // (lb_address_key), the phone only for a row with no usable address -- one
+  // owner with two properties is two leads. Asked, not decided silently.
+  let alreadyIn = 0;
+  if (contacts.length) {
+    say($('impMsg'), 'Checking for people already in this campaign...', 'ok');
+    const dupIdx = new Map();
+    for (let s = 0; s < contacts.length; s += 2000) {
+      const probe = contacts.slice(s, s + 2000).map((c, k) => ({
+        i: s + k, phone: c.phone_e164, address: c.address || '', zip: c.zip || '',
+      }));
+      const { data: dups, error: dupErr } = await sb.rpc('dialer_import_duplicates',
+        { p_campaign: campaignId, p_rows: probe });
+      if (dupErr) { say($('impMsg'), 'Could not check for duplicates: ' + dupErr.message, 'err'); $('impBtn').disabled = false; return; }
+      (dups || []).forEach((d) => dupIdx.set(d.i, d));
+    }
+    if (dupIdx.size) {
+      say($('impMsg'), 'Some of these people are already in this campaign. Choose what to do with them below.', 'ok');
+      const choice = await askImportDuplicates(dupIdx, contacts.length);
+      if (choice === 'cancel') { say($('impMsg'), 'Import cancelled. Nothing was loaded.', 'ok'); $('impBtn').disabled = false; return; }
+      if (choice === 'skip') {
+        const kept = contacts.filter((_c, k) => !dupIdx.has(k));
+        alreadyIn = contacts.length - kept.length;
+        contacts.length = 0;
+        contacts.push(...kept);
+      }
+    }
+  }
+
+  const { data: list, error: lErr } = await sb.from('dialer_lists').insert({
+    campaign_id: campaignId, name, source_type: 'csv_upload', status: 'loading',
+    readymode_scrubbed_at: scrubbedAt,
+    readymode_scrub_note: 'Manual import - scrub attested by admin in dialer admin screen',
+    total_rows: rows.length - 1,
+  }).select('id').single();
+  if (lErr) { say($('impMsg'), lErr.message, 'err'); $('impBtn').disabled = false; return; }
+  contacts.forEach((c) => { c.list_id = list.id; });
 
   // Batched: a single insert of thousands of rows will not survive, and any
   // Supabase call over ~1000 rows silently truncates without explicit paging.
@@ -4795,6 +4912,7 @@ $('impBtn').onclick = async () => {
   $('impBtn').disabled = false;
   say($('impMsg'), 'Imported ' + done + ' contacts (' + phonesDone + ' numbers incl. alternates), dialable now. '
     + bad + ' skipped (no usable phone, or a duplicate of a row already in this list)'
+    + (alreadyIn ? ', ' + alreadyIn + ' skipped as already in this campaign' : '')
     + (unusable ? ', ' + unusable + ' skipped as undialable numbers (service codes, '
       + 'toll-free or placeholder digits)' : '')
     + (fake555 ? ', ' + fake555 + ' skipped as fake 555 numbers (made-up numbers that never connect)' : '')
