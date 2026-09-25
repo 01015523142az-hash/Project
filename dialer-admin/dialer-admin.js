@@ -1637,7 +1637,8 @@ async function loadCampaigns() {
         <td>${canManage ? `
           <button class="sm" data-edit="${esc(c.id)}">Edit</button>
           <button class="sm" data-camp="${esc(c.id)}" data-to="${c.status === 'active' ? 'paused' : 'active'}">
-          ${c.status === 'active' ? 'Pause' : 'Activate'}</button>` : ''}</td>
+          ${c.status === 'active' ? 'Pause' : 'Activate'}</button>
+          <button class="sm" data-cdel="${esc(c.id)}" data-cname="${esc(c.name)}" data-left="${counts[c.id]}">Delete</button>` : ''}</td>
       </tr>`).join('')
     : '<tr><td colspan="8">No campaigns yet.</td></tr>';
 
@@ -1664,7 +1665,62 @@ async function loadCampaigns() {
   $('campRows').querySelectorAll('button[data-edit]').forEach((b) => {
     b.onclick = () => toggleCampaignEditor(b.dataset.edit);
   });
+  // v837 (the owner: "make an option to delete campaign"). Delete ARCHIVES:
+  // status 'archived' is already refused everywhere a call can start (the
+  // agent console lists active campaigns only, dialer-call-control refuses
+  // anything not active, autopilot and email list imports skip archived),
+  // and every campaign picker hides it. Nothing cascades: a real DELETE would
+  // take the campaign's lists and contacts with it and orphan its call
+  // history, so that is not offered. Restore brings it back paused.
+  $('campRows').querySelectorAll('button[data-cdel]').forEach((b) => {
+    b.onclick = async () => {
+      const left = Number(b.dataset.left || 0);
+      if (!confirm(`Delete the campaign "${b.dataset.cname}"?\n\n`
+          + 'It stops dialing at once and disappears from every screen.'
+          + (left ? ` ${left.toLocaleString()} contact${left === 1 ? ' is' : 's are'} still waiting to be called.` : '')
+          + '\n\nIts lists, contacts, call history and recordings are kept, and you can restore it '
+          + 'from "Deleted campaigns" under this table.')) return;
+      await setCampaignArchived(b.dataset.cdel, true, b);
+    };
+  });
+  loadDeletedCampaigns();
   loadDispoCatPanel();   // v592
+}
+
+// v837: delete (archive) and restore a campaign. .select() so an RLS refusal
+// is visible, for the same reason as Pause (v660).
+async function setCampaignArchived(id, archive, btn) {
+  if (btn) btn.disabled = true;
+  const { data: changed, error } = await sb.from('dialer_campaigns')
+    .update({ status: archive ? 'archived' : 'paused' }).eq('id', id).select('id');
+  if (btn) btn.disabled = false;
+  if (error || !changed || !changed.length) {
+    alert(error
+      ? `Could not ${archive ? 'delete' : 'restore'} the campaign: ${error.message}`
+      : `That campaign was not changed. Your role may not be allowed to change campaigns.`);
+    return;
+  }
+  if (!archive) lsSet('da.lists.camp', id);
+  loadCampaigns();
+  if (daLoadedOnce.has('lists')) loadLists();
+}
+async function loadDeletedCampaigns() {
+  const box = $('campDeleted');
+  const { data } = await sb.from('dialer_campaigns').select('id, name, updated_at')
+    .eq('status', 'archived').order('name');
+  const rows = data || [];
+  if (!rows.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `<details class="ls-help"><summary>Deleted campaigns (${rows.length})</summary>
+    <div style="margin-top:8px">${rows.map((c) => `<div class="ls-row" style="grid-template-columns:minmax(0,1fr) auto">
+      <div><div class="ls-lname">${esc(c.name)}</div>
+        ${c.updated_at ? `<div class="ls-count">Last changed ${esc(listDateMdy(c.updated_at))}</div>` : ''}</div>
+      <div>${canManage ? `<button class="sm" data-crestore="${esc(c.id)}">Restore</button>` : ''}</div>
+    </div>`).join('')}</div>
+    <p class="hint" style="margin:8px 0 0">Restored campaigns come back <b>paused</b>; press Activate when you want them dialing.</p>
+  </details>`;
+  box.querySelectorAll('button[data-crestore]').forEach((b) => {
+    b.onclick = () => setCampaignArchived(b.dataset.crestore, false, b);
+  });
 }
 
 // ------------------------------------------------- campaign limits editor --

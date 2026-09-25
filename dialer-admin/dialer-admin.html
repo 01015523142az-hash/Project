@@ -340,6 +340,8 @@
         Edit opens the queue's autopilot, limits and the agents assigned to it. Assignment is
         a permission, not a filter: an agent who is not on a queue cannot read its
         contacts at all, whatever their screen shows them.
+        <strong>Delete</strong> stops a campaign dialing and takes it off every screen; its lists,
+        contacts, call history and recordings are kept, and it can be restored below.
       </p>
       <div class="scroll">
         <table>
@@ -348,6 +350,8 @@
           <tbody id="campRows"><tr><td colspan="8">Loading…</td></tr></tbody>
         </table>
       </div>
+      <!-- v837: deleted (archived) campaigns, restorable. -->
+      <div id="campDeleted" style="margin-top:12px"></div>
     </div>
 
     <!-- v592. The outcome catalogue every queue picks from. Admins only: the
