@@ -1712,8 +1712,7 @@ async function loadDeletedCampaigns() {
   if (!rows.length) { box.innerHTML = ''; return; }
   box.innerHTML = `<details class="ls-help"><summary>Deleted campaigns (${rows.length})</summary>
     <div style="margin-top:8px">${rows.map((c) => `<div class="ls-row" style="grid-template-columns:minmax(0,1fr) auto">
-      <div><div class="ls-lname">${esc(c.name)}</div>
-        ${c.updated_at ? `<div class="ls-count">Last changed ${esc(listDateMdy(c.updated_at))}</div>` : ''}</div>
+      <div><div class="ls-lname">${esc(c.name)}</div></div>
       <div>${canManage ? `<button class="sm" data-crestore="${esc(c.id)}">Restore</button>` : ''}</div>
     </div>`).join('')}</div>
     <p class="hint" style="margin:8px 0 0">Restored campaigns come back <b>paused</b>; press Activate when you want them dialing.</p>
@@ -3715,6 +3714,7 @@ function renderLists() {
       lsSet('da.lists.camp', lsCamp);
       showImport(false);
       show($('lrqPanel'), false);
+      show($('lmvPanel'), false);
       say($('valMsg'), '', 'ok');
       renderLists();
     };
@@ -3770,6 +3770,9 @@ function renderLists() {
     const items = [];
     if (canManage) {
       if (!lsIsHandList(l)) items.push(`<button data-lren="${esc(l.id)}">Rename…</button>`);
+      if (!lsIsHandList(l) && lsData.camps.some((c) => c.id !== l.campaign_id)) {
+        items.push(`<button data-lmv="${esc(l.id)}">Move to campaign…</button>`);
+      }
       items.push(`<button data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button>`);
       if (!noTz) items.push(`<button data-val="${esc(l.id)}">Carrier check</button>`);
       items.push(`<button data-lact="${esc(l.id)}" data-lname="${esc(l.name)}" data-on="${l.is_active === false ? '1' : '0'}">`
@@ -3813,10 +3816,13 @@ function renderLists() {
     };
   });
   rows.querySelectorAll('button[data-rq]').forEach((b) => {
-    b.onclick = () => { closeMenus(); openListRequeue(b.dataset.rq, b.dataset.rqname); };
+    b.onclick = () => { closeMenus(); show($('lmvPanel'), false); openListRequeue(b.dataset.rq, b.dataset.rqname); };
   });
   rows.querySelectorAll('button[data-lact]').forEach((b) => {
     b.onclick = () => { closeMenus(); setListActive(b.dataset.lact, b.dataset.lname, b.dataset.on === '1', b); };
+  });
+  rows.querySelectorAll('button[data-lmv]').forEach((b) => {
+    b.onclick = () => { closeMenus(); openListMove(b.dataset.lmv); };
   });
   rows.querySelectorAll('button[data-lren]').forEach((b) => {
     b.onclick = () => { closeMenus(); renameList(b.dataset.lren); };
@@ -3876,6 +3882,43 @@ async function renameList(id) {
   l.name = name;
   renderLists();
 }
+
+// v840 (the owner: "add an option to move a list to another campaign").
+// dialer_move_list moves the list AND its contacts in one transaction (the
+// contacts carry campaign_id themselves) and refuses a deleted target, a
+// same-named list already there, "Added by hand", and a list with a call in
+// progress. Past attempts keep the campaign they were made in.
+let lmvList = null;
+function openListMove(id) {
+  const l = lsData.lists.find((x) => x.id === id);
+  if (!l) return;
+  lmvList = id;
+  show($('lrqPanel'), false);
+  $('lmvName').textContent = `"${l.name}"`;
+  $('lmvTo').innerHTML = lsData.camps.filter((c) => c.id !== l.campaign_id)
+    .map((c) => `<option value="${esc(c.id)}">${esc(c.name)}${c.status === 'active' ? '' : ` (${esc(c.status)})`}</option>`).join('');
+  $('lmvMsg').textContent = '';
+  $('lmvGo').disabled = false;
+  show($('lmvPanel'), true);
+  $('lmvPanel').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+$('lmvCancel').onclick = () => { show($('lmvPanel'), false); lmvList = null; };
+$('lmvGo').onclick = async () => {
+  const l = lsData.lists.find((x) => x.id === lmvList);
+  const to = lsData.camps.find((c) => c.id === $('lmvTo').value);
+  if (!l || !to || !canManage) return;
+  const total = Number(lsData.prog[l.id]?.total || 0);
+  if (!confirm(`Move "${l.name}" and its ${total.toLocaleString()} contact${total === 1 ? '' : 's'} to ${to.name}?`)) return;
+  $('lmvGo').disabled = true;
+  $('lmvMsg').textContent = 'Moving…';
+  const { data, error } = await sb.rpc('dialer_move_list', { p_list: l.id, p_campaign: to.id });
+  $('lmvGo').disabled = false;
+  if (error) { $('lmvMsg').textContent = error.message; return; }
+  show($('lmvPanel'), false);
+  lmvList = null;
+  say($('valMsg'), `Moved "${l.name}" (${Number(data?.moved || 0).toLocaleString()} contacts) to ${to.name}.`, 'ok');
+  loadLists();
+};
 
 async function setListDeleted(id, del, btn) {
   const l = lsData.lists.find((x) => x.id === id);

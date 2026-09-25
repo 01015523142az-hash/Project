@@ -278,6 +278,18 @@
         <p class="hint" style="margin:8px 0 0">Requeued contacts go back to <b>new</b> with their retry cadence started over.
           Numbers on do-not-call, suppressed or invalid are never requeued.</p>
       </div>
+      <!-- v840: move a list (and its contacts) to another campaign -->
+      <div id="lmvPanel" class="da-addform hide" style="margin-top:12px">
+        <div class="fb-label" style="margin-bottom:8px">Move <span id="lmvName"></span> to</div>
+        <div class="btn-row">
+          <select id="lmvTo"></select>
+          <button id="lmvGo" class="primary sm">Move</button>
+          <button id="lmvCancel" class="sm">Cancel</button>
+          <span id="lmvMsg" class="hint" style="margin:0"></span>
+        </div>
+        <p class="hint" style="margin:8px 0 0">Every contact on the list goes with it and is dialed under the new
+          campaign's calling hours, agents and outcome rules. Past calls stay recorded under the campaign they were made in.</p>
+      </div>
       <details class="ls-help">
         <summary>How lists work</summary>
       <p class="hint" style="margin:10px 0 0">
