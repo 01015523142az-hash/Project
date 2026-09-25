@@ -1559,6 +1559,45 @@ $('syncBtn').onclick = async () => {
   loadPool();
 };
 
+// v835. Free Caller Registry (Hiya, First Orion, TNS) has no API. Its upload
+// takes a .txt of 10-digit numbers, one per line, no header. Downloading
+// ticks nothing: the Registry boxes are ticked only when someone says the
+// upload went through, because a file nobody uploaded registers nothing.
+$('fcrBtn').onclick = () => {
+  const msg = $('poolMsg');
+  if (!poolDids.length) { msg.textContent = 'The pool has not loaded yet.'; return; }
+  const todo = poolDids.filter((d) => d.status !== 'retired' && !d.caller_registry_registered
+    && /^\+1\d{10}$/.test(d.phone_e164 || ''));
+  if (!todo.length) { msg.textContent = 'Every number in the pool is already ticked Registry.'; return; }
+  const text = todo.map((d) => d.phone_e164.slice(2)).join('\r\n') + '\r\n';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+  a.download = `free-caller-registry-${new Date().toLocaleDateString('en-CA')}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  const n = todo.length, s = n === 1 ? '' : 's';
+  msg.innerHTML = `Downloaded ${n} number${s}. Upload the file at `
+    + '<a href="https://www.freecallerregistry.com" target="_blank" rel="noopener" style="color:#4EA8FF">freecallerregistry.com</a>'
+    + ' under "Upload Additional Numbers".'
+    + (canManage ? ` <button class="sm" id="fcrDone">Uploaded: tick these ${n} as Registry</button>` : '');
+  if (!canManage) return;
+  $('fcrDone').onclick = async () => {
+    $('fcrDone').disabled = true;
+    let failed = 0;
+    for (const d of todo) {
+      const res = await callFn('dialer-pool', { action: 'set_did_reputation', did_id: d.id,
+        caller_registry_registered: true });
+      if (!res?.ok) failed++;
+    }
+    msg.textContent = failed
+      ? `${n - failed} of ${n} ticked Registry; ${failed} could not be saved. Registry file again lists only those.`
+      : `${n} number${s} ticked Registry.`;
+    loadPool();
+  };
+};
+
 // ------------------------------------------------------------- campaigns --
 async function loadCampaigns() {
   const { data } = await sb.from('dialer_campaigns')

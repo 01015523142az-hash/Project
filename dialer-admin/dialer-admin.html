@@ -168,8 +168,15 @@
         it goes back into rotation and the dispute is closed. Tick <em>CNAM</em> once the caller
         name is set in Telnyx, and <em>Registry</em> once it is registered.
       </p>
+      <!-- v835. Free Caller Registry has no API, but it takes a file. -->
+      <p class="hint">
+        <strong>Registry file</strong> downloads every number not yet ticked <em>Registry</em>,
+        in the format freecallerregistry.com takes ("Upload Additional Numbers"). Register a
+        number once, when it is new; it does not need doing again.
+      </p>
       <div class="row">
         <button id="syncBtn">Sync from Telnyx</button>
+        <button id="fcrBtn" title="Download the numbers not yet registered at freecallerregistry.com">Registry file</button>
         <span id="poolMsg" style="color:var(--ink2);font-size:13px"></span>
       </div>
       <div class="scroll">
