@@ -319,6 +319,19 @@
           state, named "… part 1 of N", "… part 2 of N" and so on. Contacts are shared out evenly, so every part gets
           the same number of people still to call.</p>
       </div>
+      <!-- v845: give a list to one agent -->
+      <div id="lasPanel" class="da-addform hide" style="margin-top:12px">
+        <div class="fb-label" style="margin-bottom:8px">Who dials <span id="lasName"></span></div>
+        <div class="btn-row">
+          <select id="lasAgent"></select>
+          <button id="lasGo" class="primary sm">Save</button>
+          <button id="lasCancel" class="sm">Cancel</button>
+          <span id="lasMsg" class="hint" style="margin:0"></span>
+        </div>
+        <p class="hint" style="margin:8px 0 0">When a list belongs to one agent, only that agent is handed its contacts.
+          Everyone else on the campaign keeps dialing the other lists. Only people already on this campaign can be picked
+          (Campaigns, Edit).</p>
+      </div>
       <details class="ls-help">
         <summary>How lists work</summary>
       <p class="hint" style="margin:10px 0 0">

@@ -2627,6 +2627,11 @@ function ruleCard(r) {
       When that runs out, call again after <input type="number" min="1" data-r="after_retries_days" value="${num('after_retries_days')}"> days.
     </div>
     <div class="rule-line">
+      Or call back on days <input data-r="retry_schedule_days" placeholder="1, 3, 7" style="width:110px"
+        value="${esc((r.retry_schedule_days || []).join(', '))}"> after the first call
+      <span class="hint" style="margin:0">(days 1 to 30; used instead of "retry every" when filled in)</span>
+    </div>
+    <div class="rule-line">
       Also <select data-r="action">${opt(RULE_ACTIONS, action)}</select>
       and <select data-r="opportunity_stage">${opt(RULE_STAGES, r.opportunity_stage || '')}</select>
     </div>
@@ -2678,6 +2683,21 @@ async function renderRulesEditor(td, id) {
   };
 }
 
+// v845: "1, 3, 7" -> [1, 3, 7]; blank -> null; anything else -> a sentence
+// (a string), which saveRules shows instead of saving.
+function ruleScheduleDays(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return null;
+  const parts = s.split(/[\s,;]+/).filter(Boolean);
+  const days = parts.map(Number);
+  if (days.some((d) => !Number.isInteger(d) || d < 1 || d > 30)) return 'call-back days must be whole days from 1 to 30, e.g. 1, 3, 7.';
+  if (days.length > 10) return 'at most 10 call-back days.';
+  for (let i = 1; i < days.length; i++) {
+    if (days[i] <= days[i - 1]) return 'list the call-back days in order, each later than the one before (1, 3, 7).';
+  }
+  return days;
+}
+
 function ruleChoice(td) {
   const n = (el, k) => { const v = el.querySelector(`[data-r="${k}"]`).value.trim(); return v === '' ? null : Number(v); };
   return [...td.querySelectorAll('[data-rules] [data-rule]')].map((el, i) => {
@@ -2695,6 +2715,7 @@ function ruleChoice(td) {
         retry_max_calls: n(el, 'retry_max_calls'),
         retry_window_days: n(el, 'retry_window_days'),
         after_retries_days: n(el, 'after_retries_days'),
+        retry_schedule_days: ruleScheduleDays(el.querySelector('[data-r="retry_schedule_days"]').value),
         owned_follow_up: action === 'owned_follow_up',
         park_number: action === 'park_number',
         handoff_to_sales: action === 'handoff_to_sales',
@@ -2718,6 +2739,7 @@ async function saveRules(td, id) {
   for (const { row } of live) {
     if (!row.name) return 'Every rule needs a name.';
     if (!row.disposition_codes.length) return `"${row.name}" has no outcomes ticked.`;
+    if (typeof row.retry_schedule_days === 'string') return `"${row.name}": ${row.retry_schedule_days}`;
     for (const k of ['retry_every_hours', 'retry_max_calls', 'retry_window_days', 'after_retries_days']) {
       if (row[k] !== null && !(row[k] > 0)) return `"${row.name}": numbers must be above zero, or blank.`;
     }
@@ -3642,11 +3664,19 @@ async function loadLists() {
       .select('id, name, status, dial_mode, calling_window_start, calling_window_end')
       .neq('status', 'archived').order('name'),
     sb.from('dialer_lists')
-      .select('id, name, campaign_id, status, source_type, loaded_rows, readymode_scrubbed_at, is_active, deactivated_at, deactivated_reason')
+      .select('id, name, campaign_id, status, source_type, loaded_rows, readymode_scrubbed_at, is_active, deactivated_at, deactivated_reason, assigned_agent_id')
       .order('created_at', { ascending: false }).limit(500),
     sb.rpc('dialer_list_progress'),
-    sb.from('dialer_campaign_agents').select('campaign_id, is_active'),
+    sb.from('dialer_campaign_agents').select('campaign_id, agent_id, is_active'),
   ]);
+  // v845: names for "Only <agent> dials this list" and the assign picker.
+  const { data: people } = await sb.from('profiles').select('id, full_name');
+  const names = {};
+  (people || []).forEach((p) => { names[p.id] = p.full_name || 'Unnamed'; });
+  const onCampaign = {};
+  (ar.data || []).forEach((a) => {
+    if (a.is_active) (onCampaign[a.campaign_id] = onCampaign[a.campaign_id] || []).push(a.agent_id);
+  });
   if (lr.error || pr.error) {
     $('listRows').innerHTML = `<div class="ls-empty">${esc((lr.error || pr.error).message)}</div>`;
     return;
@@ -3655,7 +3685,7 @@ async function loadLists() {
   (pr.data || []).forEach((p) => { prog[p.list_id] = p; });
   const agents = {};
   (ar.data || []).forEach((a) => { if (a.is_active) agents[a.campaign_id] = (agents[a.campaign_id] || 0) + 1; });
-  lsData = { camps: cr.data || [], lists: lr.data || [], prog, agents };
+  lsData = { camps: cr.data || [], lists: lr.data || [], prog, agents, names, onCampaign };
 
   // Upload goes to the campaign on screen; keep the importer's picker in step.
   if (lsData.camps.length) {
@@ -3780,6 +3810,12 @@ function renderLists() {
         + (canManage ? ` · <button class="ls-link" data-lsfix="${esc(l.id)}">Fix</button>` : ''));
     }
     if (bad) notes.push(`${n(bad)} bad number${bad === 1 ? '' : 's'} removed`);
+    if (l.assigned_agent_id) {
+      const who = esc(lsData.names?.[l.assigned_agent_id] || 'one agent');
+      const stillOn = (lsData.onCampaign?.[l.campaign_id] || []).includes(l.assigned_agent_id);
+      notes.push(stillOn ? `Only ${who} dials this list`
+        : `Assigned to ${who}, who is no longer on this campaign: nobody is dialing it`);
+    }
     const sc = lsScrubInfo(l);
     if (sc?.expired) {
       notes.push('DNC scrub expired: re-scrub in ReadyMode'
@@ -3795,6 +3831,7 @@ function renderLists() {
         items.push(`<button data-lmv="${esc(l.id)}">Move to campaign…</button>`);
       }
       if (lsMergeTargets(l).length) items.push(`<button data-lmg="${esc(l.id)}">Merge into another list…</button>`);
+      if (!lsIsHandList(l)) items.push(`<button data-las="${esc(l.id)}">Assign to an agent…</button>`);
       if (!lsIsHandList(l) && total >= 2) items.push(`<button data-lsp="${esc(l.id)}">Split into parts…</button>`);
       items.push(`<button data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button>`);
       if (!noTz) items.push(`<button data-val="${esc(l.id)}">Carrier check</button>`);
@@ -3852,6 +3889,9 @@ function renderLists() {
   });
   rows.querySelectorAll('button[data-lsp]').forEach((b) => {
     b.onclick = () => { closeMenus(); openListSplit(b.dataset.lsp); };
+  });
+  rows.querySelectorAll('button[data-las]').forEach((b) => {
+    b.onclick = () => { closeMenus(); openListAssign(b.dataset.las); };
   });
   rows.querySelectorAll('button[data-lmg]').forEach((b) => {
     b.onclick = () => { closeMenus(); openListMerge(b.dataset.lmg); };
@@ -3961,10 +4001,11 @@ $('lmvGo').onclick = async () => {
 // campaign only; never "Added by hand"; never an unscrubbed list into a
 // scrubbed one (the database says so in a sentence, shown here).
 function lsClosePanels() {
-  ['lrqPanel', 'lmvPanel', 'lmgPanel', 'lspPanel'].forEach((id) => show($(id), false));
+  ['lrqPanel', 'lmvPanel', 'lmgPanel', 'lspPanel', 'lasPanel'].forEach((id) => show($(id), false));
   lmvList = null;
   lmgList = null;
   lspList = null;
+  lasList = null;
 }
 function lsMergeTargets(l) {
   if (lsIsHandList(l) || lsDeleted(l)) return [];
@@ -4078,6 +4119,42 @@ async function recordNewScrub(id) {
     + (data?.switched_back_on ? '; the list is dialing again.' : '.'), 'ok');
   loadLists();
 }
+
+// v845 (the owner: "assigning a list to a specific agent"). The list's
+// contacts go only to that agent (dialer_claim_next_contact checks
+// dialer_lists.assigned_agent_id); dialer_assign_list refuses anyone who is
+// not on the campaign.
+let lasList = null;
+function openListAssign(id) {
+  const l = lsData.lists.find((x) => x.id === id);
+  if (!l) return;
+  lsClosePanels();
+  lasList = id;
+  $('lasName').textContent = `"${l.name}"`;
+  const ids = (lsData.onCampaign?.[l.campaign_id] || []).slice()
+    .sort((a, b) => (lsData.names[a] || '').localeCompare(lsData.names[b] || ''));
+  $('lasAgent').innerHTML = '<option value="">Anyone on the campaign</option>'
+    + ids.map((a) => `<option value="${esc(a)}"${a === l.assigned_agent_id ? ' selected' : ''}>${esc(lsData.names[a] || a)}</option>`).join('');
+  $('lasMsg').textContent = ids.length ? '' : 'Nobody is on this campaign yet.';
+  $('lasGo').disabled = false;
+  show($('lasPanel'), true);
+  $('lasPanel').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+$('lasCancel').onclick = () => lsClosePanels();
+$('lasGo').onclick = async () => {
+  const l = lsData.lists.find((x) => x.id === lasList);
+  if (!l || !canManage) return;
+  const agent = $('lasAgent').value || null;
+  $('lasGo').disabled = true;
+  $('lasMsg').textContent = 'Saving…';
+  const { data, error } = await sb.rpc('dialer_assign_list', { p_list: l.id, p_agent: agent });
+  $('lasGo').disabled = false;
+  if (error) { $('lasMsg').textContent = error.message; return; }
+  lsClosePanels();
+  say($('valMsg'), agent ? `"${l.name}" is now dialed only by ${data?.agent_name || 'that agent'}.`
+    : `"${l.name}" is open to everyone on the campaign again.`, 'ok');
+  loadLists();
+};
 
 async function setListDeleted(id, del, btn) {
   const l = lsData.lists.find((x) => x.id === id);
@@ -4750,8 +4827,13 @@ $('impBtn').onclick = async () => {
   for (let r = 1; r < rows.length; r++) {
     const row = rows[r];
     const phone = toE164(at(row, 'phone'));
-    if (!phone || seen.has(phone)) { bad++; continue; }
-    seen.add(phone);
+    // v845: one row per phone PER PROPERTY -- an owner's second property in
+    // the same file is a second lead (unique key: list, phone, address_key).
+    // Rows with no address still collapse on the phone.
+    const addrNorm = at(row, 'address').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const seenKey = addrNorm ? `${phone}|${addrNorm}|${at(row, 'zip').replace(/\D/g, '').slice(0, 5)}` : phone;
+    if (!phone || seen.has(seenKey)) { bad++; continue; }
+    seen.add(seenKey);
 
     // Screened here rather than loaded and screened later: a service code
     // or a toll-free switchboard is knowable from the digits, and letting
@@ -4846,7 +4928,7 @@ $('impBtn').onclick = async () => {
   let done = 0;
   for (let i = 0; i < contacts.length; i += 500) {
     const { error } = await sb.from('dialer_contacts')
-      .upsert(contacts.slice(i, i + 500), { onConflict: 'list_id,phone_e164', ignoreDuplicates: true });
+      .upsert(contacts.slice(i, i + 500), { onConflict: 'list_id,phone_e164,address_key', ignoreDuplicates: true });
     if (error) { say($('impMsg'), 'Stopped after ' + done + ': ' + error.message, 'err'); $('impBtn').disabled = false; return; }
     done += Math.min(500, contacts.length - i);
     say($('impMsg'), 'Imported ' + done + ' of ' + contacts.length + '...', 'ok');
