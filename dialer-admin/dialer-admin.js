@@ -3773,6 +3773,7 @@ function renderLists() {
         items.push(`<button data-lmv="${esc(l.id)}">Move to campaign…</button>`);
       }
       if (lsMergeTargets(l).length) items.push(`<button data-lmg="${esc(l.id)}">Merge into another list…</button>`);
+      if (!lsIsHandList(l) && total >= 2) items.push(`<button data-lsp="${esc(l.id)}">Split into parts…</button>`);
       items.push(`<button data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button>`);
       if (!noTz) items.push(`<button data-val="${esc(l.id)}">Carrier check</button>`);
       items.push(`<button data-lact="${esc(l.id)}" data-lname="${esc(l.name)}" data-on="${l.is_active === false ? '1' : '0'}">`
@@ -3823,6 +3824,9 @@ function renderLists() {
   });
   rows.querySelectorAll('button[data-lmv]').forEach((b) => {
     b.onclick = () => { closeMenus(); openListMove(b.dataset.lmv); };
+  });
+  rows.querySelectorAll('button[data-lsp]').forEach((b) => {
+    b.onclick = () => { closeMenus(); openListSplit(b.dataset.lsp); };
   });
   rows.querySelectorAll('button[data-lmg]').forEach((b) => {
     b.onclick = () => { closeMenus(); openListMerge(b.dataset.lmg); };
@@ -3929,9 +3933,10 @@ $('lmvGo').onclick = async () => {
 // campaign only; never "Added by hand"; never an unscrubbed list into a
 // scrubbed one (the database says so in a sentence, shown here).
 function lsClosePanels() {
-  ['lrqPanel', 'lmvPanel', 'lmgPanel'].forEach((id) => show($(id), false));
+  ['lrqPanel', 'lmvPanel', 'lmgPanel', 'lspPanel'].forEach((id) => show($(id), false));
   lmvList = null;
   lmgList = null;
+  lspList = null;
 }
 function lsMergeTargets(l) {
   if (lsIsHandList(l) || lsDeleted(l)) return [];
@@ -3970,6 +3975,57 @@ $('lmgGo').onclick = async () => {
   const dup = Number(data?.duplicates_left || 0);
   say($('valMsg'), `Merged "${from.name}" into "${into.name}": ${moved.toLocaleString()} contact${moved === 1 ? '' : 's'} moved.`
     + (dup ? ` ${dup.toLocaleString()} ${dup === 1 ? 'was' : 'were'} already on "${into.name}" and stayed behind in the deleted "${from.name}".` : ''), 'ok');
+  loadLists();
+};
+
+// v842 (the owner: "add an option to split a list", chose equal parts).
+// dialer_split_list deals the contacts out evenly in one transaction --
+// separately for "still to call" and everyone else, so each part gets the
+// same share of fresh contacts -- and the original becomes part 1.
+let lspList = null;
+function lspPreview() {
+  const l = lsData.lists.find((x) => x.id === lspList);
+  if (!l) return;
+  const p = lsData.prog[l.id] || {};
+  const n = Number($('lspParts').value || 2);
+  const total = Number(p.total || 0);
+  const left = Number(p.left_to_call || 0);
+  const each = (v) => (v % n ? `${Math.floor(v / n).toLocaleString()}–${Math.ceil(v / n).toLocaleString()}`
+                             : (v / n).toLocaleString());
+  $('lspPreview').textContent = `${n} lists of about ${each(total)} contacts each`
+    + (left ? `, ${each(left)} of them still to call.` : '.');
+}
+function openListSplit(id) {
+  const l = lsData.lists.find((x) => x.id === id);
+  if (!l) return;
+  lsClosePanels();
+  lspList = id;
+  const total = Number(lsData.prog[l.id]?.total || 0);
+  $('lspName').textContent = `"${l.name}"`;
+  const max = Math.min(10, total);
+  $('lspParts').innerHTML = Array.from({ length: max - 1 }, (_, i) => i + 2)
+    .map((k) => `<option value="${k}">${k} parts</option>`).join('');
+  $('lspMsg').textContent = '';
+  $('lspGo').disabled = false;
+  lspPreview();
+  show($('lspPanel'), true);
+  $('lspPanel').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+$('lspParts').onchange = lspPreview;
+$('lspCancel').onclick = () => lsClosePanels();
+$('lspGo').onclick = async () => {
+  const l = lsData.lists.find((x) => x.id === lspList);
+  const n = Number($('lspParts').value || 0);
+  if (!l || n < 2 || !canManage) return;
+  const oldName = l.name;
+  if (!confirm(`Split "${l.name}" into ${n} lists?\n\n${$('lspPreview').textContent}`)) return;
+  $('lspGo').disabled = true;
+  $('lspMsg').textContent = 'Splitting…';
+  const { data, error } = await sb.rpc('dialer_split_list', { p_list: l.id, p_parts: n });
+  $('lspGo').disabled = false;
+  if (error) { $('lspMsg').textContent = error.message; return; }
+  lsClosePanels();
+  say($('valMsg'), `Split "${oldName}" into ${n} lists: ${(data?.names || []).join(', ')}.`, 'ok');
   loadLists();
 };
 

@@ -303,6 +303,20 @@
           restore it). A number already on the other list stays behind with the deleted one, so nobody is called twice.
           The merged list keeps the older of the two DNC scrub dates.</p>
       </div>
+      <!-- v842: split a list into equal parts -->
+      <div id="lspPanel" class="da-addform hide" style="margin-top:12px">
+        <div class="fb-label" style="margin-bottom:8px">Split <span id="lspName"></span> into</div>
+        <div class="btn-row">
+          <select id="lspParts"></select>
+          <button id="lspGo" class="primary sm">Split</button>
+          <button id="lspCancel" class="sm">Cancel</button>
+          <span id="lspMsg" class="hint" style="margin:0"></span>
+        </div>
+        <p class="hint" style="margin:8px 0 0" id="lspPreview"></p>
+        <p class="hint" style="margin:6px 0 0">The parts stay in this campaign with the same DNC scrub date and on/off
+          state, named "… part 1 of N", "… part 2 of N" and so on. Contacts are shared out evenly, so every part gets
+          the same number of people still to call.</p>
+      </div>
       <details class="ls-help">
         <summary>How lists work</summary>
       <p class="hint" style="margin:10px 0 0">
