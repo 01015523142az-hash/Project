@@ -3769,6 +3769,7 @@ function renderLists() {
     if (bad) notes.push(`${n(bad)} bad number${bad === 1 ? '' : 's'} removed`);
     const items = [];
     if (canManage) {
+      if (!lsIsHandList(l)) items.push(`<button data-lren="${esc(l.id)}">Rename…</button>`);
       items.push(`<button data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button>`);
       if (!noTz) items.push(`<button data-val="${esc(l.id)}">Carrier check</button>`);
       items.push(`<button data-lact="${esc(l.id)}" data-lname="${esc(l.name)}" data-on="${l.is_active === false ? '1' : '0'}">`
@@ -3817,6 +3818,9 @@ function renderLists() {
   rows.querySelectorAll('button[data-lact]').forEach((b) => {
     b.onclick = () => { closeMenus(); setListActive(b.dataset.lact, b.dataset.lname, b.dataset.on === '1', b); };
   });
+  rows.querySelectorAll('button[data-lren]').forEach((b) => {
+    b.onclick = () => { closeMenus(); renameList(b.dataset.lren); };
+  });
   rows.querySelectorAll('button[data-ldel]').forEach((b) => {
     b.onclick = () => {
       closeMenus();
@@ -3837,6 +3841,42 @@ function renderLists() {
 // history loose. is_active false is what stops dialing (the claim RPC skips
 // switched-off lists); status 'archived' is what hides it. Restore brings it
 // back switched off, so nothing dials until someone presses Reactivate.
+// v839 (the owner: "add an option to rename the list"). Names carry no
+// constraint in the database, so the rules live here: not empty, at most 120
+// characters, and not the name of another list in the same campaign (two
+// lists called the same would be told apart by nothing on any screen).
+// "Added by hand" is never offered: dialer_create_contact finds it BY NAME.
+async function renameList(id) {
+  const l = lsData.lists.find((x) => x.id === id);
+  if (!l || lsIsHandList(l)) return;
+  let name = l.name;
+  for (;;) {
+    const typed = prompt(`New name for "${l.name}":`, name);
+    if (typed === null) return;
+    name = typed.replace(/\s+/g, ' ').trim();
+    let problem = '';
+    if (!name) problem = 'The name cannot be empty.';
+    else if (name.length > 120) problem = 'Keep the name to 120 characters or fewer.';
+    else if (name === 'Added by hand') problem = '"Added by hand" is reserved for contacts added one at a time.';
+    else if (lsData.lists.some((x) => x.id !== id && x.campaign_id === l.campaign_id
+        && x.name.trim().toLowerCase() === name.toLowerCase())) {
+      problem = `This campaign already has a list called "${name}".`;
+    }
+    if (!problem) break;
+    alert(problem);
+    name = name || l.name;
+  }
+  if (name === l.name) return;
+  const { data: changed, error } = await sb.from('dialer_lists').update({ name }).eq('id', id).select('id');
+  if (error || !changed || !changed.length) {
+    alert(error ? `Could not rename the list: ${error.message}`
+      : 'That list was not renamed. Your role may not be allowed to change lists.');
+    return;
+  }
+  l.name = name;
+  renderLists();
+}
+
 async function setListDeleted(id, del, btn) {
   const l = lsData.lists.find((x) => x.id === id);
   if (!l) return;
