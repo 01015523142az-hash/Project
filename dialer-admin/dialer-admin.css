@@ -346,6 +346,7 @@
   border:1px solid var(--border-light);border-radius:10px;padding:6px;display:flex;flex-direction:column;gap:2px;
   min-width:180px;box-shadow:0 12px 30px -10px rgba(0,0,0,.45)}
 #daHost .ls-more>div button{border:0;background:transparent;border-radius:6px;text-align:left;padding:8px 10px;font-weight:600}
+#daHost .ls-more>div button.ls-danger{color:var(--danger)}
 #daHost .ls-empty{padding:18px 0;border-top:1px solid var(--border);color:var(--text-2);font-size:13.5px}
 #daHost .ls-help{margin-top:14px}
 #daHost .ls-help>summary{cursor:pointer;color:var(--focus);font-size:13px;font-weight:600}

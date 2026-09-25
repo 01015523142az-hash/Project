@@ -3673,9 +3673,14 @@ async function loadLists() {
 
 // Only lists that will actually dial count toward "left to call".
 const lsLeft = (l) => (l.is_active === false ? 0 : Number(lsData.prog[l.id]?.left_to_call ?? 0));
+const lsDeleted = (l) => l.status === 'archived';   // v838: "Delete list" archives
+// The dialer files every hand-added contact into its campaign's "Added by
+// hand" list (dialer_create_contact finds it by name), so that one is never
+// deleted: new contacts would land in a hidden list.
+const lsIsHandList = (l) => l.source_type === 'manual' && l.name === 'Added by hand';
 function lsCampTotals(campId) {
   const t = { left: 0, done: 0, bad: 0 };
-  lsData.lists.filter((l) => l.campaign_id === campId).forEach((l) => {
+  lsData.lists.filter((l) => l.campaign_id === campId && !lsDeleted(l)).forEach((l) => {
     const p = lsData.prog[l.id] || {};
     t.left += lsLeft(l);
     t.done += Number(p.finished || 0);
@@ -3741,7 +3746,8 @@ function renderLists() {
   $('lsDone').textContent = n(t.done);
   $('lsBad').textContent = n(t.bad);
 
-  const lists = lsData.lists.filter((l) => l.campaign_id === camp.id);
+  renderDeletedLists(camp);
+  const lists = lsData.lists.filter((l) => l.campaign_id === camp.id && !lsDeleted(l));
   if (!lists.length) {
     $('listRows').innerHTML = `<div class="ls-empty">No lists in ${esc(camp.name)} yet.`
       + (canManage ? ' Use <b>Upload list</b> to add one.' : '') + '</div>';
@@ -3769,6 +3775,9 @@ function renderLists() {
         + `${l.is_active === false ? 'Reactivate' : 'Deactivate'}</button>`);
     }
     items.push(`<button data-lsdl="${esc(l.id)}" data-lsname="${esc(l.name)}">Download</button>`);
+    if (canManage && !lsIsHandList(l)) {
+      items.push(`<button class="ls-danger" data-ldel="${esc(l.id)}" data-lname="${esc(l.name)}" data-left="${left}">Delete list</button>`);
+    }
     return `<div class="ls-row">
       <div class="ls-cell-name"><div class="ls-lname">${esc(l.name)}</div>
         ${notes.map((x) => `<div class="ls-note">${x}</div>`).join('')}</div>
@@ -3807,6 +3816,66 @@ function renderLists() {
   });
   rows.querySelectorAll('button[data-lact]').forEach((b) => {
     b.onclick = () => { closeMenus(); setListActive(b.dataset.lact, b.dataset.lname, b.dataset.on === '1', b); };
+  });
+  rows.querySelectorAll('button[data-ldel]').forEach((b) => {
+    b.onclick = () => {
+      closeMenus();
+      const left = Number(b.dataset.left || 0);
+      if (!confirm(`Delete the list "${b.dataset.lname}"?\n\n`
+          + (left ? `Its ${left.toLocaleString()} contact${left === 1 ? ' not yet called stops' : 's not yet called stop'} being dialed at once, and the list`
+                  : 'The list')
+          + ' disappears from this screen.\n\nIts contacts, call history and recordings are kept, and you '
+          + 'can restore it from "Deleted lists" below.')) return;
+      setListDeleted(b.dataset.ldel, true, b);
+    };
+  });
+}
+
+// v838 (the owner: "add an option to delete the list"). Delete ARCHIVES and
+// switches the list off, never a real DELETE: dialer_contacts.list_id
+// cascades, so that would erase every contact on the list and cut their call
+// history loose. is_active false is what stops dialing (the claim RPC skips
+// switched-off lists); status 'archived' is what hides it. Restore brings it
+// back switched off, so nothing dials until someone presses Reactivate.
+async function setListDeleted(id, del, btn) {
+  const l = lsData.lists.find((x) => x.id === id);
+  if (!l) return;
+  if (btn) btn.disabled = true;
+  const patch = del
+    ? { status: 'archived', is_active: false,
+        deactivated_at: l.is_active === false && l.deactivated_at ? l.deactivated_at : new Date().toISOString(),
+        deactivated_by: meId || null }
+    : { status: l.readymode_scrubbed_at ? 'ready' : 'pending_scrub', is_active: false };
+  const { data: changed, error } = await sb.from('dialer_lists').update(patch).eq('id', id).select('id');
+  if (btn) btn.disabled = false;
+  if (error || !changed || !changed.length) {
+    alert(error
+      ? `Could not ${del ? 'delete' : 'restore'} the list: ${error.message}`
+      : 'That list was not changed. Your role may not be allowed to change lists.');
+    return;
+  }
+  show($('lrqPanel'), false);
+  loadLists();
+}
+function renderDeletedLists(camp) {
+  const box = $('lsDeleted');
+  const gone = lsData.lists.filter((l) => l.campaign_id === camp.id && lsDeleted(l));
+  if (!gone.length) { box.innerHTML = ''; return; }
+  const wasOpen = !!box.querySelector('details[open]');
+  box.innerHTML = `<details class="ls-help"${wasOpen ? ' open' : ''}><summary>Deleted lists (${gone.length})</summary>
+    <div style="margin-top:8px">${gone.map((l) => {
+      const p = lsData.prog[l.id] || {};
+      return `<div class="ls-row" style="grid-template-columns:minmax(0,1fr) auto">
+        <div><div class="ls-lname">${esc(l.name)}</div>
+          <div class="ls-count">${Number(p.total || 0).toLocaleString()} contacts`
+          + `${l.deactivated_at ? ` · switched off ${esc(listDateMdy(l.deactivated_at))}` : ''}</div></div>
+        <div>${canManage ? `<button class="sm" data-lrestore="${esc(l.id)}">Restore</button>` : ''}</div>
+      </div>`;
+    }).join('')}</div>
+    <p class="hint" style="margin:8px 0 0">A restored list comes back <b>switched off</b>; choose Reactivate in its menu when you want it dialed.</p>
+  </details>`;
+  box.querySelectorAll('button[data-lrestore]').forEach((b) => {
+    b.onclick = () => setListDeleted(b.dataset.lrestore, false, b);
   });
 }
 // A click anywhere else closes an open list menu.
