@@ -185,7 +185,7 @@ async function showSection(path) {
   // v679: boot() draws this table before the section's edit permission is
   // known, so it came up with no Edit/Pause buttons for anyone.
   if (pane === 'campaigns') loadCampaigns();
-  if (pane === 'lists' && first) loadLists();
+  if (pane === 'lists') { if (first) loadLists(); else renderLists(); }   // v836: redraw keeps buttons in step with edit rights
   if (pane === 'numbers' && first) { loadCoverage(); loadPool(); }
 }
 
@@ -3571,55 +3571,207 @@ $('cCreate').onclick = async () => {
 };
 
 // ----------------------------------------------------------------- lists --
+// v836. Campaign first (the owner, 2026-09-24: "the structure of list
+// building is a bit misleading ... make it more simple for users"). Pick a
+// campaign, see only its lists, each with how many people are LEFT TO CALL
+// -- the number that matters, which the old one-table view never showed.
+// One request for every list's progress (dialer_list_progress, v836) instead
+// of one count request per list. Actions sit in one menu per list.
+let lsCamp = lsGet('da.lists.camp');
+let lsData = { camps: [], lists: [], prog: {}, agents: {} };
+const LS_TONE = { good: 'ls-good', warn: 'ls-warn', off: 'ls-off' };
+
 async function loadLists() {
-  const { data } = await sb.from('dialer_lists')
-    .select('id, name, campaign_id, status, loaded_rows, readymode_scrubbed_at, is_active, deactivated_at')
-    .order('created_at', { ascending: false }).limit(50);
-
-  // The column that matters is no longer "has this been paid for" but "can
-  // this be dialled" -- which is one question: does the number have a time
-  // zone. Import resolves that from the area code for nothing, so this
-  // count reads zero on an ordinary list and only lifts off zero for an
-  // area code the table does not carry.
-  const rows = [];
-  for (const l of (data || [])) {
-    const { count } = await sb.from('dialer_contacts')
-      .select('id', { count: 'exact', head: true })
-      .eq('list_id', l.id).is('timezone', null).in('status', ['new', 'queued']);
-    rows.push({ ...l, blocked: count ?? 0 });
+  const [cr, lr, pr, ar] = await Promise.all([
+    sb.from('dialer_campaigns')
+      .select('id, name, status, dial_mode, calling_window_start, calling_window_end')
+      .neq('status', 'archived').order('name'),
+    sb.from('dialer_lists')
+      .select('id, name, campaign_id, status, source_type, loaded_rows, readymode_scrubbed_at, is_active, deactivated_at')
+      .order('created_at', { ascending: false }).limit(500),
+    sb.rpc('dialer_list_progress'),
+    sb.from('dialer_campaign_agents').select('campaign_id, is_active'),
+  ]);
+  if (lr.error || pr.error) {
+    $('listRows').innerHTML = `<div class="ls-empty">${esc((lr.error || pr.error).message)}</div>`;
+    return;
   }
+  const prog = {};
+  (pr.data || []).forEach((p) => { prog[p.list_id] = p; });
+  const agents = {};
+  (ar.data || []).forEach((a) => { if (a.is_active) agents[a.campaign_id] = (agents[a.campaign_id] || 0) + 1; });
+  lsData = { camps: cr.data || [], lists: lr.data || [], prog, agents };
 
-  $('listRows').innerHTML = rows.length
-    ? rows.map((l) => `<tr>
-        <td>${esc(l.name)}</td>
-        <td>${esc(campaigns.find((c) => c.id === l.campaign_id)?.name || '—')}</td>
-        <td>${l.is_active === false
-            ? `<span class="tag t-resting">deactivated</span> <span style="font-size:11px;opacity:.75;white-space:nowrap">on ${esc(listDateMdy(l.deactivated_at))}</span>`
-            : `<span class="tag ${l.status === 'ready' ? 't-active' : 't-resting'}">${esc(l.status)}</span>`}</td>
-        <td class="num">${(l.loaded_rows ?? 0).toLocaleString()}</td>
-        <td class="num ${l.blocked ? 'gap' : ''}">${l.blocked.toLocaleString()}</td>
-        <td>${l.readymode_scrubbed_at ? esc(l.readymode_scrubbed_at.slice(0, 10)) : '—'}</td>
-        <td style="white-space:nowrap">${canManage ? (l.blocked
-            ? `<button class="sm" data-val="${esc(l.id)}" data-tz="1">Resolve ${l.blocked.toLocaleString()} time zones</button>`
-            : `<button class="sm" data-val="${esc(l.id)}">Carrier check</button>`)
-            + ` <button class="sm" data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button> `
-            + `<button class="sm" data-lact="${esc(l.id)}" data-lname="${esc(l.name)}" data-on="${l.is_active === false ? '1' : '0'}">${l.is_active === false ? 'Reactivate' : 'Deactivate'}</button> ` : ''}<button class="sm" data-lsdl="${esc(l.id)}" data-lsname="${esc(l.name)}">Download</button></td>
-      </tr>`).join('')
-    : '<tr><td colspan="7">No lists yet.</td></tr>';
+  // Upload goes to the campaign on screen; keep the importer's picker in step.
+  if (lsData.camps.length) {
+    $('impCampaign').innerHTML = lsData.camps.map((c) =>
+      `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+    if (lsCamp) $('impCampaign').value = lsCamp;
+  }
+  if (!lsData.camps.some((c) => c.id === lsCamp)) {
+    const withLists = lsData.camps.filter((c) => lsData.lists.some((l) => l.campaign_id === c.id));
+    lsCamp = (withLists.find((c) => c.status === 'active') || withLists[0] || lsData.camps[0] || {}).id || null;
+  }
+  renderLists();
+}
 
-  $('listRows').querySelectorAll('button[data-val]').forEach((b) => {
-    b.onclick = () => validateList(b.dataset.val, b, b.dataset.tz === '1');
+// Only lists that will actually dial count toward "left to call".
+const lsLeft = (l) => (l.is_active === false ? 0 : Number(lsData.prog[l.id]?.left_to_call ?? 0));
+function lsCampTotals(campId) {
+  const t = { left: 0, done: 0, bad: 0 };
+  lsData.lists.filter((l) => l.campaign_id === campId).forEach((l) => {
+    const p = lsData.prog[l.id] || {};
+    t.left += lsLeft(l);
+    t.done += Number(p.finished || 0);
+    t.bad += Number(p.bad || 0);
   });
-  $('listRows').querySelectorAll('button[data-lsdl]').forEach((b) => {
-    b.onclick = () => downloadList(b.dataset.lsdl, b.dataset.lsname, b);
+  return t;
+}
+function lsStatus(l, camp) {
+  if (l.is_active === false) return { tone: 'off', text: 'Switched off', sub: `on ${listDateMdy(l.deactivated_at)}` };
+  if (l.source_type === 'manual') return { tone: 'off', text: 'Contacts only' };
+  if (l.status === 'pending_scrub') return { tone: 'warn', text: 'Needs DNC scrub' };
+  if (l.status === 'loading') return { tone: 'off', text: 'Loading' };
+  if (l.status === 'archived') return { tone: 'off', text: 'Archived' };
+  const p = lsData.prog[l.id];
+  if (l.status === 'exhausted' || (p && Number(p.total) > 0 && Number(p.left_to_call) === 0)) {
+    return { tone: 'off', text: 'Finished' };
+  }
+  if (camp && camp.status !== 'active') return { tone: 'warn', text: 'Campaign paused' };
+  return { tone: 'good', text: 'Dialing' };
+}
+
+function renderLists() {
+  const n = (v) => Number(v || 0).toLocaleString();
+  $('lsChips').innerHTML = lsData.camps.map((c) => {
+    const t = lsCampTotals(c.id);
+    return `<button class="ls-chip${c.id === lsCamp ? ' on' : ''}" data-lscamp="${esc(c.id)}">${esc(c.name)}`
+      + ` <span>${n(t.left)} left</span></button>`;
+  }).join('') || '<span class="hint" style="margin:0">No campaigns yet. Create one on the Campaigns tab.</span>';
+  $('lsChips').querySelectorAll('button[data-lscamp]').forEach((b) => {
+    b.onclick = () => {
+      lsCamp = b.dataset.lscamp;
+      lsSet('da.lists.camp', lsCamp);
+      showImport(false);
+      show($('lrqPanel'), false);
+      say($('valMsg'), '', 'ok');
+      renderLists();
+    };
   });
-  $('listRows').querySelectorAll('button[data-rq]').forEach((b) => {
-    b.onclick = () => openListRequeue(b.dataset.rq, b.dataset.rqname);
+
+  const camp = lsData.camps.find((c) => c.id === lsCamp);
+  const up = $('lsUpload');
+  if (!camp) {
+    $('lsName').textContent = 'No campaign';
+    $('lsMeta').textContent = '';
+    ['lsLeft', 'lsDone', 'lsBad'].forEach((id) => { $(id).textContent = '—'; });
+    $('listRows').innerHTML = '';
+    show(up, false);
+    return;
+  }
+  const ag = lsData.agents[camp.id] || 0;
+  $('lsName').textContent = camp.name;
+  $('lsMeta').textContent = [
+    camp.status === 'active' ? 'Dialing now' : 'Paused',
+    `${ag} agent${ag === 1 ? '' : 's'}`,
+    camp.calling_window_start && camp.calling_window_end
+      ? `calling hours ${String(camp.calling_window_start).slice(0, 5)}–${String(camp.calling_window_end).slice(0, 5)}` : '',
+    camp.dial_mode ? `${camp.dial_mode} dial` : '',
+  ].filter(Boolean).join(' · ');
+  up.textContent = `Upload list to ${camp.name}`;
+  show(up, canManage);
+  const t = lsCampTotals(camp.id);
+  $('lsLeft').textContent = n(t.left);
+  $('lsDone').textContent = n(t.done);
+  $('lsBad').textContent = n(t.bad);
+
+  const lists = lsData.lists.filter((l) => l.campaign_id === camp.id);
+  if (!lists.length) {
+    $('listRows').innerHTML = `<div class="ls-empty">No lists in ${esc(camp.name)} yet.`
+      + (canManage ? ' Use <b>Upload list</b> to add one.' : '') + '</div>';
+    return;
+  }
+  $('listRows').innerHTML = lists.map((l) => {
+    const p = lsData.prog[l.id] || {};
+    const total = Number(p.total || 0);
+    const left = Number(p.left_to_call || 0);
+    const pct = total ? Math.round(((total - left) / total) * 100) : 0;
+    const st = lsStatus(l, camp);
+    const noTz = Number(p.no_tz || 0);
+    const bad = Number(p.bad || 0);
+    const notes = [];
+    if (noTz) {
+      notes.push(`${n(noTz)} number${noTz === 1 ? ' has' : 's have'} no time zone`
+        + (canManage ? ` · <button class="ls-link" data-lsfix="${esc(l.id)}">Fix</button>` : ''));
+    }
+    if (bad) notes.push(`${n(bad)} bad number${bad === 1 ? '' : 's'} removed`);
+    const items = [];
+    if (canManage) {
+      items.push(`<button data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button>`);
+      if (!noTz) items.push(`<button data-val="${esc(l.id)}">Carrier check</button>`);
+      items.push(`<button data-lact="${esc(l.id)}" data-lname="${esc(l.name)}" data-on="${l.is_active === false ? '1' : '0'}">`
+        + `${l.is_active === false ? 'Reactivate' : 'Deactivate'}</button>`);
+    }
+    items.push(`<button data-lsdl="${esc(l.id)}" data-lsname="${esc(l.name)}">Download</button>`);
+    return `<div class="ls-row">
+      <div class="ls-cell-name"><div class="ls-lname">${esc(l.name)}</div>
+        ${notes.map((x) => `<div class="ls-note">${x}</div>`).join('')}</div>
+      <div class="ls-cell-bar"><div class="ls-bar"><i style="width:${pct}%"></i></div>
+        <div class="ls-count">${n(left)} left of ${n(total)}${l.readymode_scrubbed_at ? ` · DNC scrubbed ${esc(listDateMdy(l.readymode_scrubbed_at))}` : ''}</div></div>
+      <div><span class="ls-pill ${LS_TONE[st.tone]}">${esc(st.text)}</span>
+        ${st.sub ? `<div class="ls-count">${esc(st.sub)}</div>` : ''}</div>
+      <details class="ls-more"><summary aria-label="More actions for ${esc(l.name)}">…</summary>
+        <div>${items.join('')}</div></details>
+    </div>`;
+  }).join('');
+
+  const rows = $('listRows');
+  const closeMenus = () => rows.querySelectorAll('details.ls-more[open]').forEach((d) => { d.open = false; });
+  rows.querySelectorAll('details.ls-more').forEach((d) => {
+    d.addEventListener('toggle', () => {
+      if (d.open) rows.querySelectorAll('details.ls-more[open]').forEach((o) => { if (o !== d) o.open = false; });
+    });
   });
-  $('listRows').querySelectorAll('button[data-lact]').forEach((b) => {
-    b.onclick = () => setListActive(b.dataset.lact, b.dataset.lname, b.dataset.on === '1', b);
+  rows.querySelectorAll('button[data-lsfix]').forEach((b) => {
+    b.onclick = () => validateList(b.dataset.lsfix, b, true);
+  });
+  rows.querySelectorAll('button[data-val]').forEach((b) => {
+    b.onclick = () => { closeMenus(); validateList(b.dataset.val, b, false); };
+  });
+  rows.querySelectorAll('button[data-lsdl]').forEach((b) => {
+    b.onclick = async () => {
+      closeMenus();
+      say($('valMsg'), `Preparing ${b.dataset.lsname}…`, 'ok');
+      await downloadList(b.dataset.lsdl, b.dataset.lsname, b);
+      say($('valMsg'), '', 'ok');
+    };
+  });
+  rows.querySelectorAll('button[data-rq]').forEach((b) => {
+    b.onclick = () => { closeMenus(); openListRequeue(b.dataset.rq, b.dataset.rqname); };
+  });
+  rows.querySelectorAll('button[data-lact]').forEach((b) => {
+    b.onclick = () => { closeMenus(); setListActive(b.dataset.lact, b.dataset.lname, b.dataset.on === '1', b); };
   });
 }
+// A click anywhere else closes an open list menu.
+document.addEventListener('click', (e) => {
+  document.querySelectorAll('#listRows details.ls-more[open]').forEach((d) => {
+    if (!d.contains(e.target)) d.open = false;
+  });
+});
+
+function showImport(on) {
+  const camp = lsData.camps.find((c) => c.id === lsCamp);
+  if (on && (!camp || !canManage)) return;
+  $('impPanel').style.display = on ? '' : 'none';
+  if (!on) return;
+  $('impCampName').textContent = camp.name;
+  $('impCampaign').value = camp.id;
+  say($('impMsg'), '', 'ok');
+  $('impPanel').scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+$('lsUpload').onclick = () => showImport(true);
+$('impCancel').onclick = () => showImport(false);
 
 // v727 (the owner: "allow the option to deactivate lists on campaign and
 // reactivate it when needed, and mention when it was deactivated, like

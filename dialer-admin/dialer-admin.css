@@ -311,3 +311,46 @@
 #daHost .fms-alert1{border-color:var(--danger);box-shadow:0 0 0 1px var(--danger)}
 #daHost .fms-alert2{background:color-mix(in srgb,var(--danger) 26%,var(--card));border-color:var(--danger)}
 #daHost #tab-floor.da-wall .fm-canvas{height:62vh}
+
+/* v836: Lists, campaign first. */
+#daHost .ls-chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+#daHost .ls-chip{display:inline-flex;gap:8px;align-items:center;border-radius:10px;padding:8px 14px;font-size:13px}
+#daHost .ls-chip span{font-weight:500;font-size:12px;color:var(--text-2)}
+#daHost .ls-chip.on{border:2px solid var(--focus);background:var(--focus-dim);color:var(--focus);padding:7px 13px}
+#daHost .ls-chip.on span{color:var(--focus)}
+#daHost .ls-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+#daHost .ls-name{font-size:17px;font-weight:700;color:var(--text)}
+#daHost .ls-meta{font-size:13px;color:var(--text-2);margin-top:2px}
+#daHost .ls-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0 6px}
+#daHost .ls-metric{background:var(--inset);border:1px solid var(--border);border-radius:10px;padding:12px 16px}
+#daHost .ls-metric div{font-size:12.5px;color:var(--text-2)}
+#daHost .ls-metric b{display:block;font-size:22px;font-weight:700;color:var(--num);margin-top:2px}
+#daHost .ls-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,2fr) 150px 44px;gap:16px;align-items:center;
+  padding:13px 0;border-top:1px solid var(--border);font-size:13.5px}
+#daHost .ls-lname{font-weight:700;color:var(--text)}
+#daHost .ls-note{font-size:12px;color:var(--away);margin-top:3px}
+#daHost .ls-count{font-size:12px;color:var(--text-2);margin-top:4px}
+#daHost .ls-bar{height:8px;border-radius:4px;background:var(--inset);border:1px solid var(--border);overflow:hidden}
+#daHost .ls-bar i{display:block;height:100%;background:var(--focus)}
+#daHost .ls-pill{display:inline-block;font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;border:1px solid}
+#daHost .ls-good{color:var(--good);background:var(--good-dim);border-color:var(--good)}
+#daHost .ls-warn{color:var(--away);background:var(--away-dim);border-color:var(--away)}
+#daHost .ls-off{color:var(--text-2);background:var(--inset);border-color:var(--border-light)}
+#daHost .ls-link{border:0;background:none;padding:0;color:var(--focus);font-size:12px;text-decoration:underline;border-radius:0}
+#daHost .ls-link:hover:not(:disabled){background:none}
+#daHost .ls-more{position:relative;justify-self:end}
+#daHost .ls-more>summary{list-style:none;cursor:pointer;border:1px solid var(--border-light);border-radius:999px;
+  padding:2px 12px;font-weight:800;background:var(--inset);color:var(--text);user-select:none}
+#daHost .ls-more>summary::-webkit-details-marker{display:none}
+#daHost .ls-more>div{position:absolute;right:0;top:calc(100% + 6px);z-index:30;background:var(--card);
+  border:1px solid var(--border-light);border-radius:10px;padding:6px;display:flex;flex-direction:column;gap:2px;
+  min-width:180px;box-shadow:0 12px 30px -10px rgba(0,0,0,.45)}
+#daHost .ls-more>div button{border:0;background:transparent;border-radius:6px;text-align:left;padding:8px 10px;font-weight:600}
+#daHost .ls-empty{padding:18px 0;border-top:1px solid var(--border);color:var(--text-2);font-size:13.5px}
+#daHost .ls-help{margin-top:14px}
+#daHost .ls-help>summary{cursor:pointer;color:var(--focus);font-size:13px;font-weight:600}
+@media (max-width: 700px){
+  #daHost .ls-row{grid-template-columns:minmax(0,1fr) auto 44px;gap:8px 12px}
+  #daHost .ls-cell-bar{grid-column:1 / -1;order:3}
+  #daHost .ls-metric b{font-size:18px}
+}
