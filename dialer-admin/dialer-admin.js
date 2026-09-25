@@ -3713,8 +3713,7 @@ function renderLists() {
       lsCamp = b.dataset.lscamp;
       lsSet('da.lists.camp', lsCamp);
       showImport(false);
-      show($('lrqPanel'), false);
-      show($('lmvPanel'), false);
+      lsClosePanels();
       say($('valMsg'), '', 'ok');
       renderLists();
     };
@@ -3773,6 +3772,7 @@ function renderLists() {
       if (!lsIsHandList(l) && lsData.camps.some((c) => c.id !== l.campaign_id)) {
         items.push(`<button data-lmv="${esc(l.id)}">Move to campaign…</button>`);
       }
+      if (lsMergeTargets(l).length) items.push(`<button data-lmg="${esc(l.id)}">Merge into another list…</button>`);
       items.push(`<button data-rq="${esc(l.id)}" data-rqname="${esc(l.name)}">Requeue…</button>`);
       if (!noTz) items.push(`<button data-val="${esc(l.id)}">Carrier check</button>`);
       items.push(`<button data-lact="${esc(l.id)}" data-lname="${esc(l.name)}" data-on="${l.is_active === false ? '1' : '0'}">`
@@ -3816,13 +3816,16 @@ function renderLists() {
     };
   });
   rows.querySelectorAll('button[data-rq]').forEach((b) => {
-    b.onclick = () => { closeMenus(); show($('lmvPanel'), false); openListRequeue(b.dataset.rq, b.dataset.rqname); };
+    b.onclick = () => { closeMenus(); lsClosePanels(); openListRequeue(b.dataset.rq, b.dataset.rqname); };
   });
   rows.querySelectorAll('button[data-lact]').forEach((b) => {
     b.onclick = () => { closeMenus(); setListActive(b.dataset.lact, b.dataset.lname, b.dataset.on === '1', b); };
   });
   rows.querySelectorAll('button[data-lmv]').forEach((b) => {
     b.onclick = () => { closeMenus(); openListMove(b.dataset.lmv); };
+  });
+  rows.querySelectorAll('button[data-lmg]').forEach((b) => {
+    b.onclick = () => { closeMenus(); openListMerge(b.dataset.lmg); };
   });
   rows.querySelectorAll('button[data-lren]').forEach((b) => {
     b.onclick = () => { closeMenus(); renameList(b.dataset.lren); };
@@ -3893,7 +3896,7 @@ function openListMove(id) {
   const l = lsData.lists.find((x) => x.id === id);
   if (!l) return;
   lmvList = id;
-  show($('lrqPanel'), false);
+  lsClosePanels();
   $('lmvName').textContent = `"${l.name}"`;
   $('lmvTo').innerHTML = lsData.camps.filter((c) => c.id !== l.campaign_id)
     .map((c) => `<option value="${esc(c.id)}">${esc(c.name)}${c.status === 'active' ? '' : ` (${esc(c.status)})`}</option>`).join('');
@@ -3917,6 +3920,56 @@ $('lmvGo').onclick = async () => {
   show($('lmvPanel'), false);
   lmvList = null;
   say($('valMsg'), `Moved "${l.name}" (${Number(data?.moved || 0).toLocaleString()} contacts) to ${to.name}.`, 'ok');
+  loadLists();
+};
+
+// v841 (the owner: "add an option to merge two lists"). dialer_merge_lists
+// moves the contacts across in one transaction and deletes (archives) the
+// emptied list; a number already on the target stays behind with it. Same
+// campaign only; never "Added by hand"; never an unscrubbed list into a
+// scrubbed one (the database says so in a sentence, shown here).
+function lsClosePanels() {
+  ['lrqPanel', 'lmvPanel', 'lmgPanel'].forEach((id) => show($(id), false));
+  lmvList = null;
+  lmgList = null;
+}
+function lsMergeTargets(l) {
+  if (lsIsHandList(l) || lsDeleted(l)) return [];
+  return lsData.lists.filter((x) => x.id !== l.id && x.campaign_id === l.campaign_id
+    && !lsDeleted(x) && !lsIsHandList(x));
+}
+let lmgList = null;
+function openListMerge(id) {
+  const l = lsData.lists.find((x) => x.id === id);
+  if (!l) return;
+  lsClosePanels();
+  lmgList = id;
+  $('lmgName').textContent = `"${l.name}"`;
+  $('lmgInto').innerHTML = lsMergeTargets(l).map((x) =>
+    `<option value="${esc(x.id)}">${esc(x.name)} (${Number(lsData.prog[x.id]?.total || 0).toLocaleString()})</option>`).join('');
+  $('lmgMsg').textContent = '';
+  $('lmgGo').disabled = false;
+  show($('lmgPanel'), true);
+  $('lmgPanel').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+$('lmgCancel').onclick = () => lsClosePanels();
+$('lmgGo').onclick = async () => {
+  const from = lsData.lists.find((x) => x.id === lmgList);
+  const into = lsData.lists.find((x) => x.id === $('lmgInto').value);
+  if (!from || !into || !canManage) return;
+  const total = Number(lsData.prog[from.id]?.total || 0);
+  if (!confirm(`Merge "${from.name}" (${total.toLocaleString()} contact${total === 1 ? '' : 's'}) into "${into.name}"?\n\n`
+      + `"${from.name}" is then deleted. You can restore it from "Deleted lists".`)) return;
+  $('lmgGo').disabled = true;
+  $('lmgMsg').textContent = 'Merging…';
+  const { data, error } = await sb.rpc('dialer_merge_lists', { p_from: from.id, p_into: into.id });
+  $('lmgGo').disabled = false;
+  if (error) { $('lmgMsg').textContent = error.message; return; }
+  lsClosePanels();
+  const moved = Number(data?.moved || 0);
+  const dup = Number(data?.duplicates_left || 0);
+  say($('valMsg'), `Merged "${from.name}" into "${into.name}": ${moved.toLocaleString()} contact${moved === 1 ? '' : 's'} moved.`
+    + (dup ? ` ${dup.toLocaleString()} ${dup === 1 ? 'was' : 'were'} already on "${into.name}" and stayed behind in the deleted "${from.name}".` : ''), 'ok');
   loadLists();
 };
 

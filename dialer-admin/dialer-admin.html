@@ -290,6 +290,19 @@
         <p class="hint" style="margin:8px 0 0">Every contact on the list goes with it and is dialed under the new
           campaign's calling hours, agents and outcome rules. Past calls stay recorded under the campaign they were made in.</p>
       </div>
+      <!-- v841: merge one list into another in the same campaign -->
+      <div id="lmgPanel" class="da-addform hide" style="margin-top:12px">
+        <div class="fb-label" style="margin-bottom:8px">Merge <span id="lmgName"></span> into</div>
+        <div class="btn-row">
+          <select id="lmgInto"></select>
+          <button id="lmgGo" class="primary sm">Merge</button>
+          <button id="lmgCancel" class="sm">Cancel</button>
+          <span id="lmgMsg" class="hint" style="margin:0"></span>
+        </div>
+        <p class="hint" style="margin:8px 0 0">Its contacts move into the list you pick, then this list is deleted (you can
+          restore it). A number already on the other list stays behind with the deleted one, so nobody is called twice.
+          The merged list keeps the older of the two DNC scrub dates.</p>
+      </div>
       <details class="ls-help">
         <summary>How lists work</summary>
       <p class="hint" style="margin:10px 0 0">
